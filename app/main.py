@@ -1,5 +1,5 @@
 """
-Pokemon card pricing API: upload a photo, OCR the card, search Pokémon TCG API, return prices.
+Pokemon card pricing API: upload a photo, OCR the card, search PokéWallet, return prices.
 """
 
 from __future__ import annotations
@@ -7,17 +7,18 @@ from __future__ import annotations
 import os
 from typing import Any
 
+import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from rapidfuzz import fuzz
 
 from app.ocr_extract import extract_text_candidates
+from app.pokewallet import get_api_key, pokewallet_image_url, search_cards_multi
 from app.schemas import CardMatch, PriceLookupResponse
-from app.tcg_api import search_cards_multi
 
 app = FastAPI(
     title="Pokemon Card Price API",
-    description="Upload a card photo; returns TCGPlayer / Cardmarket pricing via Pokémon TCG API v2.",
+    description="Upload a card photo; returns TCGPlayer & Cardmarket pricing via PokéWallet API.",
     version="0.1.0",
 )
 
@@ -31,9 +32,9 @@ app.add_middleware(
 
 
 def _score_card(ocr_blob: str, card: dict[str, Any]) -> float:
-    name = (card.get("name") or "").lower()
-    set_name = (card.get("set", {}) or {}).get("name", "") or ""
-    set_name = set_name.lower()
+    info = card.get("card_info") or {}
+    name = (info.get("name") or info.get("clean_name") or "").lower()
+    set_name = (info.get("set_name") or "").lower()
     blob = ocr_blob.lower()
     a = fuzz.token_set_ratio(name, blob)
     b = fuzz.partial_ratio(name, blob)
@@ -55,6 +56,13 @@ async def price_from_image(
     ),
     max_results: int = Form(8, ge=1, le=25),
 ) -> PriceLookupResponse:
+    api_key = get_api_key()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Set environment variable POKEWALLET_API_KEY to your PokéWallet API key.",
+        )
+
     if not image.content_type or not image.content_type.startswith("image/"):
         raise HTTPException(
             status_code=400,
@@ -85,7 +93,26 @@ async def price_from_image(
             detail="No readable text from image. Try a clearer photo or pass card_name_hint.",
         )
 
-    cards = await search_cards_multi(fragments, per_fragment_limit=10)
+    try:
+        cards = await search_cards_multi(
+            fragments, per_fragment_limit=15, api_key=api_key
+        )
+    except httpx.HTTPStatusError as e:
+        detail: str | dict[str, Any] = str(e.response.status_code)
+        try:
+            detail = e.response.json()
+        except Exception:
+            detail = e.response.text or detail
+        raise HTTPException(
+            status_code=502,
+            detail={"message": "PokéWallet request failed", "upstream": detail},
+        ) from e
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"PokéWallet API unreachable: {e}",
+        ) from e
+
     if not cards:
         raise HTTPException(
             status_code=404,
@@ -102,15 +129,16 @@ async def price_from_image(
 
     matches: list[CardMatch] = []
     for score, c in top:
-        set_obj = c.get("set") or {}
+        info = c.get("card_info") or {}
+        cid = c["id"]
         matches.append(
             CardMatch(
-                id=c["id"],
-                name=c.get("name") or "",
-                set_name=set_obj.get("name"),
-                number=c.get("number"),
-                rarity=c.get("rarity"),
-                images=c.get("images"),
+                id=cid,
+                name=info.get("name") or info.get("clean_name") or "",
+                set_name=info.get("set_name"),
+                number=info.get("card_number"),
+                rarity=info.get("rarity"),
+                images={"high": pokewallet_image_url(cid)},
                 tcgplayer=c.get("tcgplayer"),
                 cardmarket=c.get("cardmarket"),
                 match_score=round(float(score), 2),

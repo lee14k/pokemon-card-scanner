@@ -5,11 +5,13 @@ Pokemon card pricing API: upload a photo, OCR the card, search PokéWallet, retu
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from rapidfuzz import fuzz
 
 from app.ocr_extract import extract_text_candidates
@@ -150,3 +152,25 @@ async def price_from_image(
         query_fragments=fragments[:15],
         matches=matches,
     )
+
+
+# Production (e.g. Railway): Railpack builds frontend/dist; same origin as API.
+# Mount last so /health, /docs, /openapi.json, /v1/* stay on FastAPI routes.
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if _STATIC_DIR.is_dir():
+    app.mount(
+        "/",
+        StaticFiles(directory=str(_STATIC_DIR), html=True),
+        name="spa",
+    )
+else:
+
+    @app.get("/")
+    async def root() -> dict[str, str]:
+        """JSON landing when the Vite build is not present (local API-only dev)."""
+        return {
+            "service": "pokemon-card-scanner",
+            "health": "/health",
+            "api_docs": "/docs",
+            "price_endpoint": "POST /v1/cards/price-from-image",
+        }

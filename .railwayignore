@@ -1,0 +1,8 @@
+# Smaller upload for `railway up` (git deploys use the repo as-is).
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+frontend/node_modules
+frontend/dist
+*.egg-info

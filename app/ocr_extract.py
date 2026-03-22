@@ -106,6 +106,8 @@ _JUNK_NAME_RE = re.compile(
     r"\bflip a coin\b|\bdamage done\b|\bon your bench\b|\bprevent all\b",
     re.I,
 )
+_HP_LINE_RE = re.compile(r"^\s*hp\s*[\dOo]+\s*$", re.I)
+_STAGE_LINE_RE = re.compile(r"^\s*stage\s+\d", re.I)
 
 _NAME_TOKEN_STOP = frozenset(
     {
@@ -148,6 +150,8 @@ def _is_junk_name_line(s: str) -> bool:
     if letters < len(s) * 0.2:
         return True
     if _JUNK_NAME_RE.search(s):
+        return True
+    if _HP_LINE_RE.search(s) or _STAGE_LINE_RE.search(s):
         return True
     low = _ascii_lower(s)
     if "pokemon" in low or "nintendo" in low:
@@ -204,6 +208,7 @@ def pick_primary_name_from_top_band(raw_top: str) -> str | None:
     """
     Name lives in the top band; never use the longest line (copyright/footer wins).
     Scan top-to-bottom, skip legal/flavor junk, prefer clean title lines then tokens.
+    Fallback: among early non-junk lines, prefer longest plausible lines (often the name line).
     """
     ordered = _lines_from_raw_top_to_bottom(raw_top)
     for line in ordered:
@@ -215,27 +220,45 @@ def pick_primary_name_from_top_band(raw_top: str) -> str | None:
         tok = _extract_capitalized_name_token(line)
         if tok:
             return tok
+    # Fallback: first lines are often title/name; longest non-junk line is rarely copyright
+    # once junk filters remove © / Illus. (unlike sorting all lines by length globally).
+    pool = [l for l in ordered[:14] if not _is_junk_name_line(l)]
+    pool.sort(key=len, reverse=True)
+    for line in pool[:8]:
+        title = _extract_title_style_name(line)
+        if title:
+            return title
+        tok = _extract_capitalized_name_token(line)
+        if tok:
+            return tok
     return None
 
 
 def _symbol_crop_boxes(w: int, h: int) -> list[tuple[int, int, int, int]]:
     """
-    Expansion symbol sits in the bottom info strip (left of card number), not the
-    whole lower third of the art box. Use several short vertical spans so crops
-    mostly contain that strip; matching then takes a bottom-left square for the hash.
+    Expansion symbol sits in the bottom info strip (left of card number), but
+    framing/angle varies. Include tight bottom strips plus looser legacy boxes so
+    multi-crop matching can still find the symbol.
     """
     boxes: list[tuple[int, int, int, int]] = []
     seen: set[tuple[int, int, int, int]] = set()
+
+    def add(box: tuple[int, int, int, int]) -> None:
+        if box not in seen:
+            seen.add(box)
+            boxes.append(box)
+
     for y_frac in (0.82, 0.86, 0.88, 0.90, 0.92, 0.94):
         y0 = int(h * y_frac)
         if y0 >= h - 12:
             continue
         for x_frac in (0.11, 0.14, 0.18):
             x1 = max(int(w * x_frac), 24)
-            box = (0, y0, x1, h)
-            if box not in seen:
-                seen.add(box)
-                boxes.append(box)
+            add((0, y0, x1, h))
+    # Looser bottom-left crops (photos / older layouts)
+    add((0, int(h * 0.76), max(int(w * 0.26), 48), h))
+    add((0, int(h * 0.78), max(int(w * 0.22), 40), h))
+    add((0, int(h * 0.80), max(int(w * 0.18), 36), h))
     return boxes
 
 
@@ -308,7 +331,7 @@ def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSi
     log.info("ocr.words_from_lines count=%s sample=%s", len(words), words[:30])
     log.info("ocr.final_candidates count=%s values=%s", len(out), out)
 
-    card_number = pick_collection_number(raw_full + "\n" + raw_top, raw_bottom)
+    card_number = pick_collection_number(raw_full, raw_top, raw_bottom)
 
     set_id: str | None = None
     set_code: str | None = None

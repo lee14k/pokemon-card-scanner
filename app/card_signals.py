@@ -6,19 +6,22 @@ import re
 from dataclasses import dataclass, field
 
 
+# ASCII /, fullwidth ／, fraction slash ⁄, division slash ∕
+_COLLECTION_NUM_RE = re.compile(r"(\d{1,4})\s*[/／\u2044\u2215]\s*(\d{1,4})")
+
+
 def pick_collection_number(*text_blobs: str) -> str | None:
     """
     Parse NNN/NNN collection number from OCR text.
-    Pass blobs in order: earlier = lower priority, later = higher (e.g. full card, then bottom strip).
+    Pass blobs in order: earlier = lower priority, later = higher (e.g. full card, top band, bottom strip).
     """
-    pat = re.compile(r"\b(\d{1,4})\s*/\s*(\d{1,4})\b")
     best_str: str | None = None
     best_key = (-1, -1)
 
     for bi, blob in enumerate(text_blobs):
         if not blob:
             continue
-        for m in pat.finditer(blob):
+        for m in _COLLECTION_NUM_RE.finditer(blob):
             try:
                 a, b = int(m.group(1)), int(m.group(2))
             except ValueError:

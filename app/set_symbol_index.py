@@ -75,7 +75,7 @@ def _normalize_live_crop_for_hash(crop: Image.Image) -> Image.Image:
     g = ImageOps.autocontrast(ImageOps.grayscale(crop))
     w, h = g.size
     side = min(w, h)
-    if side < 8:
+    if side < 32:
         return g
     return g.crop((0, h - side, side, h))
 
@@ -153,27 +153,36 @@ def reload_symbol_index() -> None:
 
 
 def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int] | None:
-    """Best reference and Hamming distance for this crop, or None if index empty."""
+    """
+    Best reference and Hamming distance, or None if index empty.
+    Uses the better of (a) bottom-left square aHash and (b) full-crop aHash so
+    tight vs loose framing can both score against the normalized reference PNGs.
+    """
     refs = load_symbol_index()
     if not refs:
         return None
     norm = _normalize_live_crop_for_hash(crop)
-    h = _average_hash_int(norm)
+    h_sq = _average_hash_int(norm)
+    g_full = ImageOps.autocontrast(ImageOps.grayscale(crop))
+    h_full = _average_hash_int(g_full)
     if log.isEnabledFor(logging.DEBUG):
         cw, ch = crop.size
         nw, nh = norm.size
         log.debug(
-            "set_symbol.ahash crop_px=%sx%s norm_px=%sx%s value=%s",
+            "set_symbol.ahash crop_px=%sx%s norm_px=%sx%s h_sq=%s h_full=%s",
             cw,
             ch,
             nw,
             nh,
-            h,
+            h_sq,
+            h_full,
         )
     best: tuple[SymbolRef, int] | None = None
     second_d: int | None = None
     for ref in refs:
-        d = _hamming(h, ref.hash_int)
+        d_sq = _hamming(h_sq, ref.hash_int)
+        d_full = _hamming(h_full, ref.hash_int)
+        d = d_sq if d_sq <= d_full else d_full
         if best is None or d < best[1]:
             if best is not None:
                 prev = best[1]
@@ -202,7 +211,7 @@ def match_set_symbol(crop: Image.Image, max_distance: int | None = None) -> tupl
     import os
 
     if max_distance is None:
-        max_distance = int(os.environ.get("SET_SYMBOL_MAX_DISTANCE", "28"))
+        max_distance = int(os.environ.get("SET_SYMBOL_MAX_DISTANCE", "34"))
 
     best = best_set_symbol_match(crop)
     if best is None:
@@ -234,7 +243,7 @@ def match_set_symbol_best_of_crops(
     import os
 
     if max_distance is None:
-        max_distance = int(os.environ.get("SET_SYMBOL_MAX_DISTANCE", "28"))
+        max_distance = int(os.environ.get("SET_SYMBOL_MAX_DISTANCE", "34"))
 
     w, h = processed.size
     n_refs = len(load_symbol_index())

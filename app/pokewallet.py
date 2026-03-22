@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any
@@ -10,6 +11,8 @@ from urllib.parse import quote
 import httpx
 
 BASE_URL = "https://api.pokewallet.io"
+
+log = logging.getLogger("pokemon_scanner.pokewallet")
 
 
 def get_api_key() -> str | None:
@@ -33,10 +36,17 @@ async def search_cards(
     """Call GET /search. Returns full JSON (results, pagination, metadata)."""
     q = _sanitize_query_fragment(query)
     if len(q) < 2:
+        log.info("pokewallet.search skipped (query too short after sanitize) raw=%r", query[:80])
         return {"results": [], "pagination": {}, "metadata": {}}
 
     params = {"q": q, "limit": min(limit, 100), "page": max(page, 1)}
     headers = {"X-API-Key": api_key}
+    log.info(
+        "pokewallet.search q=%r limit=%s page=%s",
+        q,
+        params["limit"],
+        params["page"],
+    )
 
     own_client = client is None
     if own_client:
@@ -45,7 +55,10 @@ async def search_cards(
     try:
         resp = await client.get("/search", params=params, headers=headers)
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        n = len(data.get("results") or [])
+        log.info("pokewallet.search_results count=%s", n)
+        return data
     finally:
         if own_client and client is not None:
             await client.aclose()
@@ -82,6 +95,11 @@ async def search_cards_multi(
         if own_client and client is not None:
             await client.aclose()
 
+    log.info(
+        "pokewallet.search_multi merged_unique=%s from_queries=%s",
+        len(merged),
+        fragments,
+    )
     return merged
 
 

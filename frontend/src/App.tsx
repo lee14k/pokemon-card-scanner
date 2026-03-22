@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import {
+  analyzeCardImage,
   lookupPricesFromImage,
+  type CardAnalyzeResponse,
   type CardMatch,
   type PriceLookupResponse,
 } from "./api";
@@ -108,14 +110,34 @@ function CardResult({ card }: { card: CardMatch }) {
   );
 }
 
+function applyAnalyzeToReview(a: CardAnalyzeResponse) {
+  return {
+    reviewName: a.pokemon_name ?? "",
+    reviewSetId: a.set_id ?? "",
+    reviewNumber: a.collection_number ?? "",
+    reviewSetCode: a.set_code ?? "",
+  };
+}
+
+type Phase = "pick" | "review" | "results";
+
 export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileId = useId();
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [hint, setHint] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [preHint, setPreHint] = useState("");
+  const [phase, setPhase] = useState<Phase>("pick");
+  const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [priceLoading, setPriceLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [analyzeMeta, setAnalyzeMeta] = useState<CardAnalyzeResponse | null>(
+    null
+  );
+  const [reviewName, setReviewName] = useState("");
+  const [reviewSetId, setReviewSetId] = useState("");
+  const [reviewNumber, setReviewNumber] = useState("");
+  const [reviewSetCode, setReviewSetCode] = useState("");
   const [data, setData] = useState<PriceLookupResponse | null>(null);
 
   useEffect(() => {
@@ -139,36 +161,84 @@ export default function App() {
     el.click();
   }, []);
 
+  const resetFlow = useCallback(() => {
+    setPhase("pick");
+    setAnalyzeMeta(null);
+    setData(null);
+    setError(null);
+    setReviewName("");
+    setReviewSetId("");
+    setReviewNumber("");
+    setReviewSetCode("");
+  }, []);
+
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     setFile(f ?? null);
     setError(null);
     setData(null);
+    setAnalyzeMeta(null);
+    setPhase(f ? "pick" : "pick");
+    setReviewName("");
+    setReviewSetId("");
+    setReviewNumber("");
+    setReviewSetCode("");
   };
 
-  const onSubmit = async () => {
+  const onReadCard = async () => {
     if (!file) return;
-    setLoading(true);
+    setAnalyzeLoading(true);
+    setError(null);
+    setAnalyzeMeta(null);
+    setData(null);
+    try {
+      const res = await analyzeCardImage(file, {
+        cardNameHint: preHint || undefined,
+      });
+      setAnalyzeMeta(res);
+      const r = applyAnalyzeToReview(res);
+      setReviewName(r.reviewName);
+      setReviewSetId(r.reviewSetId);
+      setReviewNumber(r.reviewNumber);
+      setReviewSetCode(r.reviewSetCode);
+      setPhase("review");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Read card failed");
+    } finally {
+      setAnalyzeLoading(false);
+    }
+  };
+
+  const onFindPrice = async () => {
+    if (!file) return;
+    setPriceLoading(true);
     setError(null);
     setData(null);
     try {
       const res = await lookupPricesFromImage(file, {
-        cardNameHint: hint || undefined,
+        cardNameHint: reviewName || preHint || undefined,
         maxResults: 10,
+        useReviewedFields: true,
+        collectionNumber: reviewNumber,
+        setId: reviewSetId,
+        setCode: reviewSetCode,
       });
       setData(res);
+      setPhase("results");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(err instanceof Error ? err.message : "Price lookup failed");
     } finally {
-      setLoading(false);
+      setPriceLoading(false);
     }
   };
+
+  const busy = analyzeLoading || priceLoading;
 
   return (
     <div className="app">
       <header className="app-header">
         <h1>Card price check</h1>
-        <p>Photo of your card → live TCGPlayer &amp; Cardmarket prices</p>
+        <p>Read the card, confirm details, then look up prices</p>
       </header>
 
       <input
@@ -211,42 +281,196 @@ export default function App() {
         <button
           type="button"
           className="btn btn-ghost"
-          onClick={() => openPicker(false)}
+          onClick={() => {
+            openPicker(false);
+          }}
         >
           Choose different photo
         </button>
       ) : null}
 
-      <div>
-        <label className="field-label" htmlFor="hint">
-          Name hint (optional)
-        </label>
-        <input
-          id="hint"
-          className="hint-input"
-          placeholder="e.g. Charizard ex — skips OCR if filled"
-          value={hint}
-          onChange={(e) => setHint(e.target.value)}
-          autoComplete="off"
-          enterKeyHint="done"
-        />
-      </div>
+      {phase === "pick" ? (
+        <div>
+          <label className="field-label" htmlFor="prehint">
+            Name hint (optional, before read)
+          </label>
+          <input
+            id="prehint"
+            className="hint-input"
+            placeholder="Helps OCR if the name is hard to read"
+            value={preHint}
+            onChange={(e) => setPreHint(e.target.value)}
+            autoComplete="off"
+            enterKeyHint="done"
+          />
+        </div>
+      ) : null}
 
-      <button
-        type="button"
-        className="btn btn-primary"
-        disabled={!file || loading}
-        onClick={onSubmit}
-      >
-        {loading ? "Checking…" : "Get prices"}
-      </button>
+      {phase === "pick" ? (
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={!file || busy}
+          onClick={onReadCard}
+        >
+          {analyzeLoading ? "Reading card…" : "Read card"}
+        </button>
+      ) : null}
+
+      {phase === "review" ? (
+        <section className="review-panel">
+          <h2 className="review-title">Check detected info</h2>
+          <p className="review-sub">
+            Edit anything that looks wrong, then run the price lookup.
+          </p>
+          {analyzeMeta?.symbol_match_distance != null ? (
+            <p className="review-hint">
+              Set symbol match distance: {analyzeMeta.symbol_match_distance}{" "}
+              (lower is closer to your reference PNG)
+            </p>
+          ) : null}
+
+          <div className="review-fields">
+            <div>
+              <label className="field-label" htmlFor="rev-name">
+                Pokémon name
+              </label>
+              <input
+                id="rev-name"
+                className="hint-input"
+                value={reviewName}
+                onChange={(e) => setReviewName(e.target.value)}
+                autoComplete="off"
+                enterKeyHint="next"
+              />
+            </div>
+            <div>
+              <label className="field-label" htmlFor="rev-setid">
+                Set ID (PokéWallet)
+              </label>
+              <input
+                id="rev-setid"
+                className="hint-input"
+                placeholder="From symbol table or API"
+                value={reviewSetId}
+                onChange={(e) => setReviewSetId(e.target.value)}
+                autoComplete="off"
+                enterKeyHint="next"
+              />
+            </div>
+            <div>
+              <label className="field-label" htmlFor="rev-num">
+                Card number
+              </label>
+              <input
+                id="rev-num"
+                className="hint-input"
+                placeholder="e.g. 15/198"
+                value={reviewNumber}
+                onChange={(e) => setReviewNumber(e.target.value)}
+                autoComplete="off"
+                enterKeyHint="next"
+              />
+            </div>
+            <div>
+              <label className="field-label" htmlFor="rev-code">
+                Set code (optional)
+              </label>
+              <input
+                id="rev-code"
+                className="hint-input"
+                placeholder="e.g. SV1"
+                value={reviewSetCode}
+                onChange={(e) => setReviewSetCode(e.target.value)}
+                autoComplete="off"
+                enterKeyHint="done"
+              />
+            </div>
+          </div>
+
+          {analyzeMeta?.suggested_search_queries?.length ? (
+            <div className="meta-strip review-queries">
+              <strong>Planned searches</strong>
+              <ul className="query-chips">
+                {analyzeMeta.suggested_search_queries.map((q) => (
+                  <li key={q}>{q}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          <div className="review-actions">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy}
+              onClick={() => {
+                resetFlow();
+                setFile(null);
+              }}
+            >
+              New photo
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy}
+              onClick={onReadCard}
+            >
+              Re-read card
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={onFindPrice}
+            >
+              {priceLoading ? "Looking up…" : "Find the price"}
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {phase === "results" ? (
+        <section className="review-panel">
+          <div className="review-actions">
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => {
+                setPhase("review");
+                setData(null);
+              }}
+            >
+              Back to edit
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => {
+                resetFlow();
+                setFile(null);
+              }}
+            >
+              Start over
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {error ? <div className="error-box">{error}</div> : null}
 
-      {loading ? (
+      {analyzeLoading ? (
         <div className="loading-row">
           <div className="spinner" aria-hidden />
-          <span>Looking up prices…</span>
+          <span>Reading text from card…</span>
+        </div>
+      ) : null}
+
+      {priceLoading ? (
+        <div className="loading-row">
+          <div className="spinner" aria-hidden />
+          <span>Calling PokéWallet…</span>
         </div>
       ) : null}
 

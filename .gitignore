@@ -3,3 +3,5 @@
 __pycache__/
 *.pyc
 .Python
+frontend/node_modules/
+frontend/dist/

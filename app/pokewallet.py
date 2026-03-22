@@ -85,6 +85,22 @@ async def search_cards_multi(
     return merged
 
 
+async def search_cards_for_lookup(
+    search_queries: list[str],
+    *,
+    limit_per_query: int = 40,
+    api_key: str,
+) -> list[dict[str, Any]]:
+    """Run a small set of search queries and merge unique cards (breadth, not 12× noisy queries)."""
+    if not search_queries:
+        return []
+    return await search_cards_multi(
+        search_queries,
+        per_fragment_limit=limit_per_query,
+        api_key=api_key,
+    )
+
+
 def pokewallet_image_url(card_id: str, size: str = "high") -> str:
     safe = quote(card_id, safe="")
     return f"{BASE_URL}/images/{safe}?size={size}"

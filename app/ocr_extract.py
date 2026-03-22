@@ -65,6 +65,14 @@ def _preprocess(image: Image.Image) -> Image.Image:
     return ImageOps.autocontrast(gray)
 
 
+# Uniform block of text; works better than default for game cards.
+_TESS_CONFIG = "--psm 6 --oem 3"
+
+
+def _ocr_string(img: Image.Image) -> str:
+    return pytesseract.image_to_string(img, lang="eng", config=_TESS_CONFIG)
+
+
 def extract_text_candidates(image_bytes: bytes, max_candidates: int = 12) -> list[str]:
     """
     Run OCR and return distinct string candidates (longest / most word-like first).
@@ -74,7 +82,15 @@ def extract_text_candidates(image_bytes: bytes, max_candidates: int = 12) -> lis
     img = ImageOps.exif_transpose(img)
     processed = _preprocess(img)
 
-    raw = pytesseract.image_to_string(processed, lang="eng")
+    # Name + HP usually sit in the top band; OCR that first so real lines rank higher.
+    w, h = processed.size
+    top_h = max(int(h * 0.28), 48)
+    name_band = processed.crop((0, 0, w, top_h))
+
+    raw_top = _ocr_string(name_band)
+    raw_full = _ocr_string(processed)
+    raw = raw_top + "\n" + raw_full
+
     lines = []
     for line in raw.splitlines():
         s = line.strip()

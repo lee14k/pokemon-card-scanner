@@ -12,10 +12,9 @@ import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from rapidfuzz import fuzz
-
+from app.matching import build_search_queries, score_card_against_blob
 from app.ocr_extract import extract_text_candidates
-from app.pokewallet import get_api_key, pokewallet_image_url, search_cards_multi
+from app.pokewallet import get_api_key, pokewallet_image_url, search_cards_for_lookup
 from app.schemas import CardMatch, PriceLookupResponse
 
 app = FastAPI(
@@ -33,15 +32,8 @@ app.add_middleware(
 )
 
 
-def _score_card(ocr_blob: str, card: dict[str, Any]) -> float:
-    info = card.get("card_info") or {}
-    name = (info.get("name") or info.get("clean_name") or "").lower()
-    set_name = (info.get("set_name") or "").lower()
-    blob = ocr_blob.lower()
-    a = fuzz.token_set_ratio(name, blob)
-    b = fuzz.partial_ratio(name, blob)
-    c = fuzz.token_set_ratio(set_name, blob) if set_name else 0
-    return max(a, b, c * 0.85)
+# Drop matches below this unless nothing passes (then return top few with low scores).
+_MIN_MATCH_SCORE = 52
 
 
 @app.get("/health")
@@ -75,29 +67,37 @@ async def price_from_image(
     if len(data) > 15 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Image too large (max 15MB).")
 
-    fragments: list[str] = []
+    ocr_fragments: list[str] = []
     ocr_sample: str | None = None
 
-    if card_name_hint and card_name_hint.strip():
-        fragments.append(card_name_hint.strip())
-    else:
-        try:
-            fragments = extract_text_candidates(data)
-        except RuntimeError as e:
+    try:
+        ocr_fragments = extract_text_candidates(data)
+    except RuntimeError as e:
+        if not (card_name_hint and card_name_hint.strip()):
             raise HTTPException(status_code=503, detail=str(e)) from e
+        ocr_fragments = []
 
-        if fragments:
-            ocr_sample = " ".join(fragments[:3])[:500]
+    if ocr_fragments:
+        ocr_sample = " ".join(ocr_fragments[:3])[:500]
 
-    if not fragments:
+    # Hint-only search keeps PokéWallet results on-target; OCR still refines scoring.
+    search_queries = build_search_queries(
+        card_name_hint=card_name_hint,
+        ocr_fragments=ocr_fragments,
+        max_queries=3,
+    )
+
+    if not search_queries:
         raise HTTPException(
             status_code=422,
-            detail="No readable text from image. Try a clearer photo or pass card_name_hint.",
+            detail="No usable search text from image. Try a clearer photo or pass card_name_hint.",
         )
 
     try:
-        cards = await search_cards_multi(
-            fragments, per_fragment_limit=15, api_key=api_key
+        cards = await search_cards_for_lookup(
+            search_queries,
+            limit_per_query=40,
+            api_key=api_key,
         )
     except httpx.HTTPStatusError as e:
         detail: str | dict[str, Any] = str(e.response.status_code)
@@ -118,16 +118,24 @@ async def price_from_image(
     if not cards:
         raise HTTPException(
             status_code=404,
-            detail="No cards found for OCR fragments. Try card_name_hint or a sharper image.",
+            detail="No cards found for search. Try card_name_hint or a sharper image.",
         )
 
-    ocr_blob = " ".join(fragments)
+    hint_part = (card_name_hint or "").strip()
+    ocr_blob = " ".join([hint_part, *ocr_fragments]).strip() if (hint_part or ocr_fragments) else ""
+    if not ocr_blob:
+        ocr_blob = " ".join(search_queries)
+
     scored: list[tuple[float, dict[str, Any]]] = []
     for c in cards:
-        scored.append((_score_card(ocr_blob, c), c))
+        scored.append((score_card_against_blob(c, ocr_blob), c))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:max_results]
+    strong = [(s, c) for s, c in scored if s >= _MIN_MATCH_SCORE]
+    if strong:
+        top = strong[:max_results]
+    else:
+        top = scored[: min(5, max_results)]
 
     matches: list[CardMatch] = []
     for score, c in top:
@@ -147,9 +155,17 @@ async def price_from_image(
             )
         )
 
+    _seen_q = set()
+    _frag_display: list[str] = []
+    for x in (*search_queries, *ocr_fragments):
+        k = x.strip().lower()
+        if k and k not in _seen_q:
+            _seen_q.add(k)
+            _frag_display.append(x.strip())
+
     return PriceLookupResponse(
         ocr_text_sample=ocr_sample,
-        query_fragments=fragments[:15],
+        query_fragments=_frag_display[:20],
         matches=matches,
     )
 

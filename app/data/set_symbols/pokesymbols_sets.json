@@ -1,0 +1,1332 @@
+[
+  {
+    "slug": "ascended-heroes",
+    "name": "Ascended Heroes",
+    "released": "January 2026",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/ascended-heroes.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/ascended-heroes"
+  },
+  {
+    "slug": "phantasmal-flames",
+    "name": "Phantasmal Flames",
+    "released": "November 2025",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/phantasmal-flames.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/phantasmal-flames"
+  },
+  {
+    "slug": "mega-evolution",
+    "name": "Mega Evolution",
+    "released": "September 2025",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mega-evolution.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mega-evolution"
+  },
+  {
+    "slug": "white-flare",
+    "name": "White Flare",
+    "released": "July 2025",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/white-flare.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/white-flare"
+  },
+  {
+    "slug": "black-bolt",
+    "name": "Black Bolt",
+    "released": "July 2025",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/black-bolt.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/black-bolt"
+  },
+  {
+    "slug": "destined-rivals",
+    "name": "Destined Rivals",
+    "released": "May 2025",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/destined-rivals.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/destined-rivals"
+  },
+  {
+    "slug": "journey-together",
+    "name": "Journey Together",
+    "released": "March 2025",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/journey-together.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/journey-together"
+  },
+  {
+    "slug": "prismatic-evolutions",
+    "name": "Prismatic Evolutions",
+    "released": "January 2025",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/prismatic-evolutions.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/prismatic-evolutions"
+  },
+  {
+    "slug": "mc-donalds-collection-2024",
+    "name": "McDonald's Collection 2024",
+    "released": "December 2024",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-dragon-discovery-2024.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2024"
+  },
+  {
+    "slug": "surging-sparks",
+    "name": "Surging Sparks",
+    "released": "November 2024",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/surging-sparks.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/surging-sparks"
+  },
+  {
+    "slug": "stellar-crown",
+    "name": "Stellar Crown",
+    "released": "September 2024",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/stellar-crown.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/stellar-crown"
+  },
+  {
+    "slug": "shrouded-fable",
+    "name": "Shrouded Fable",
+    "released": "August 2024",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/shrouded-fable.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/shrouded-fable"
+  },
+  {
+    "slug": "twilight-masquerade",
+    "name": "Twilight Masquerade",
+    "released": "May 2024",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/twilight-masquerade.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/twilight-masquerade"
+  },
+  {
+    "slug": "temporal-forces",
+    "name": "Temporal Forces",
+    "released": "March 2024",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/temporal-forces.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/temporal-forces"
+  },
+  {
+    "slug": "paldean-fates",
+    "name": "Paldean Fates",
+    "released": "January 2024",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/paldean-fates.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/paldean-fates"
+  },
+  {
+    "slug": "pokemon-trading-card-game-classic-blastoise",
+    "name": "Pokémon Trading Card Game Classic (Blastoise)",
+    "released": "November 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/classic-blastoise.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pokemon-trading-card-game-classic-blastoise"
+  },
+  {
+    "slug": "pokemon-trading-card-game-classic-charizard",
+    "name": "Pokémon Trading Card Game Classic (Charizard)",
+    "released": "November 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/classic-charizard.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pokemon-trading-card-game-classic-charizard"
+  },
+  {
+    "slug": "pokemon-trading-card-game-classic-venusaur",
+    "name": "Pokémon Trading Card Game Classic (Venusaur)",
+    "released": "November 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/classic-venusaur.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pokemon-trading-card-game-classic-venusaur"
+  },
+  {
+    "slug": "paradox-rift",
+    "name": "Paradox Rift",
+    "released": "November 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/paradox-rift.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/paradox-rift"
+  },
+  {
+    "slug": "151",
+    "name": "151",
+    "released": "September 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/151.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/151"
+  },
+  {
+    "slug": "obsidian-flames",
+    "name": "Obsidian Flames",
+    "released": "August 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/obsidian-flames.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/obsidian-flames"
+  },
+  {
+    "slug": "mc-donalds-collection-2023",
+    "name": "McDonald's Collection 2023",
+    "released": "July 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2023.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2023"
+  },
+  {
+    "slug": "paldea-evolved",
+    "name": "Paldea Evolved",
+    "released": "June 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/paldea-evolved.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/paldea-evolved"
+  },
+  {
+    "slug": "scarlet-and-violet",
+    "name": "Scarlet & Violet",
+    "released": "March 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/scarlet-and-violet.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/scarlet-and-violet"
+  },
+  {
+    "slug": "scarlet-and-violet-energies",
+    "name": "Scarlet & Violet Energies",
+    "released": "March 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/scarlet-and-violet-energies.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/scarlet-and-violet-energies"
+  },
+  {
+    "slug": "crown-zenith",
+    "name": "Crown Zenith",
+    "released": "January 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/crown-zenith.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/crown-zenith"
+  },
+  {
+    "slug": "crown-zenith-galarian-gallery",
+    "name": "Crown Zenith Galarian Gallery",
+    "released": "January 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/crown-zenith.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/crown-zenith-galarian-gallery"
+  },
+  {
+    "slug": "scarlet-and-violet-black-star-promos",
+    "name": "Scarlet & Violet Black Star Promos",
+    "released": "January 2023",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/_promo.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/scarlet-and-violet-black-star-promos"
+  },
+  {
+    "slug": "silver-tempest",
+    "name": "Silver Tempest",
+    "released": "November 2022",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/silver-tempest.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/silver-tempest"
+  },
+  {
+    "slug": "silver-tempest-trainer-gallery",
+    "name": "Silver Tempest Trainer Gallery",
+    "released": "November 2022",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/silver-tempest.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/silver-tempest-trainer-gallery"
+  },
+  {
+    "slug": "lost-origin",
+    "name": "Lost Origin",
+    "released": "September 2022",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/lost-origin.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/lost-origin"
+  },
+  {
+    "slug": "lost-origin-trainer-gallery",
+    "name": "Lost Origin Trainer Gallery",
+    "released": "September 2022",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/lost-origin.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/lost-origin-trainer-gallery"
+  },
+  {
+    "slug": "mc-donalds-collection-2022",
+    "name": "McDonald's Collection 2022",
+    "released": "August 2022",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2022.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2022"
+  },
+  {
+    "slug": "pokemon-go",
+    "name": "Pokémon GO",
+    "released": "June 2022",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pokemon-go.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pokemon-go"
+  },
+  {
+    "slug": "astral-radiance",
+    "name": "Astral Radiance",
+    "released": "May 2022",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/astral-radiance.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/astral-radiance"
+  },
+  {
+    "slug": "astral-radiance-trainer-gallery",
+    "name": "Astral Radiance Trainer Gallery",
+    "released": "May 2022",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/astral-radiance.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/astral-radiance-trainer-gallery"
+  },
+  {
+    "slug": "brilliant-stars",
+    "name": "Brilliant Stars",
+    "released": "February 2022",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/brilliant-stars.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/brilliant-stars"
+  },
+  {
+    "slug": "brilliant-stars-trainer-gallery",
+    "name": "Brilliant Stars Trainer Gallery",
+    "released": "February 2022",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/brilliant-stars.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/brilliant-stars-trainer-gallery"
+  },
+  {
+    "slug": "fusion-strike",
+    "name": "Fusion Strike",
+    "released": "November 2021",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/fusion-strike.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/fusion-strike"
+  },
+  {
+    "slug": "celebrations",
+    "name": "Celebrations",
+    "released": "October 2021",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/celebrations.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/celebrations"
+  },
+  {
+    "slug": "celebrations-classic-collection",
+    "name": "Celebrations: Classic Collection",
+    "released": "October 2021",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/celebrations.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/celebrations-classic-collection"
+  },
+  {
+    "slug": "evolving-skies",
+    "name": "Evolving Skies",
+    "released": "August 2021",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/evolving-skies.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/evolving-skies"
+  },
+  {
+    "slug": "chilling-reign",
+    "name": "Chilling Reign",
+    "released": "June 2021",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/chilling-reign.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/chilling-reign"
+  },
+  {
+    "slug": "battle-styles",
+    "name": "Battle Styles",
+    "released": "March 2021",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/battle-styles.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/battle-styles"
+  },
+  {
+    "slug": "shining-fates",
+    "name": "Shining Fates",
+    "released": "February 2021",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/shining-fates.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/shining-fates"
+  },
+  {
+    "slug": "shining-fates-shiny-vault",
+    "name": "Shining Fates Shiny Vault",
+    "released": "February 2021",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/shining-fates.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/shining-fates-shiny-vault"
+  },
+  {
+    "slug": "mc-donalds-collection-2021",
+    "name": "McDonald's Collection 2021",
+    "released": "February 2021",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2021.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2021"
+  },
+  {
+    "slug": "vivid-voltage",
+    "name": "Vivid Voltage",
+    "released": "November 2020",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/vivid-voltage.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/vivid-voltage"
+  },
+  {
+    "slug": "champions-path",
+    "name": "Champion's Path",
+    "released": "September 2020",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/champions-path.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/champions-path"
+  },
+  {
+    "slug": "pokemon-futsal-collection",
+    "name": "Pokémon Futsal Collection",
+    "released": "September 2020",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/fustal-promos.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pokemon-futsal-collection"
+  },
+  {
+    "slug": "darkness-ablaze",
+    "name": "Darkness Ablaze",
+    "released": "August 2020",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/darkness-ablaze.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/darkness-ablaze"
+  },
+  {
+    "slug": "rebel-clash",
+    "name": "Rebel Clash",
+    "released": "April 2020",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/rebel-clash.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/rebel-clash"
+  },
+  {
+    "slug": "sword-and-shield",
+    "name": "Sword & Shield",
+    "released": "February 2020",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/sword-and-shield.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/sword-and-shield"
+  },
+  {
+    "slug": "swsh-black-star-promos",
+    "name": "SWSH Black Star Promos",
+    "released": "November 2019",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/_promo.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/swsh-black-star-promos"
+  },
+  {
+    "slug": "cosmic-eclipse",
+    "name": "Cosmic Eclipse",
+    "released": "November 2019",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/cosmic-eclipse.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/cosmic-eclipse"
+  },
+  {
+    "slug": "mc-donalds-collection-2019",
+    "name": "McDonald's Collection 2019",
+    "released": "October 2019",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2019.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2019"
+  },
+  {
+    "slug": "hidden-fates",
+    "name": "Hidden Fates",
+    "released": "August 2019",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/hidden-fates.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/hidden-fates"
+  },
+  {
+    "slug": "unified-minds",
+    "name": "Unified Minds",
+    "released": "August 2019",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/unified-minds.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/unified-minds"
+  },
+  {
+    "slug": "unbroken-bonds",
+    "name": "Unbroken Bonds",
+    "released": "May 2019",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/unbroken-bonds.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/unbroken-bonds"
+  },
+  {
+    "slug": "detective-pikachu",
+    "name": "Detective Pikachu",
+    "released": "April 2019",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/detective-pikachu.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/detective-pikachu"
+  },
+  {
+    "slug": "team-up",
+    "name": "Team Up",
+    "released": "February 2019",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/team-up.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/team-up"
+  },
+  {
+    "slug": "lost-thunder",
+    "name": "Lost Thunder",
+    "released": "November 2018",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/lost-thunder.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/lost-thunder"
+  },
+  {
+    "slug": "mc-donalds-collection-2018",
+    "name": "McDonald's Collection 2018",
+    "released": "October 2018",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2018.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2018"
+  },
+  {
+    "slug": "dragon-majesty",
+    "name": "Dragon Majesty",
+    "released": "September 2018",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/dragon-majesty.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/dragon-majesty"
+  },
+  {
+    "slug": "celestial-storm",
+    "name": "Celestial Storm",
+    "released": "August 2018",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/celestial-storm.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/celestial-storm"
+  },
+  {
+    "slug": "forbidden-light",
+    "name": "Forbidden Light",
+    "released": "May 2018",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/forbidden-light.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/forbidden-light"
+  },
+  {
+    "slug": "ultra-prism",
+    "name": "Ultra Prism",
+    "released": "February 2018",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/ultra-prism.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/ultra-prism"
+  },
+  {
+    "slug": "mc-donalds-collection-2017",
+    "name": "McDonald's Collection 2017",
+    "released": "November 2017",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2017.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2017"
+  },
+  {
+    "slug": "crimson-invasion",
+    "name": "Crimson Invasion",
+    "released": "November 2017",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/crimson-invasion.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/crimson-invasion"
+  },
+  {
+    "slug": "shining-legends",
+    "name": "Shining Legends",
+    "released": "October 2017",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/shining-legends.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/shining-legends"
+  },
+  {
+    "slug": "burning-shadows",
+    "name": "Burning Shadows",
+    "released": "August 2017",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/burning-shadows.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/burning-shadows"
+  },
+  {
+    "slug": "guardians-rising",
+    "name": "Guardians Rising",
+    "released": "May 2017",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/guardians-rising.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/guardians-rising"
+  },
+  {
+    "slug": "sun-and-moon-trainer-kit-lycanroc",
+    "name": "Sun & Moon Trainer Kit Lycanroc",
+    "released": "April 2017",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/sun-and-moon-trainer-kit-lycanroc.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/sun-and-moon-trainer-kit-lycanroc"
+  },
+  {
+    "slug": "sun-and-moon-trainer-kit-alolan-raichu",
+    "name": "Sun & Moon Trainer Kit Alolan Raichu",
+    "released": "April 2017",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/sun-and-moon-trainer-kit-raichu.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/sun-and-moon-trainer-kit-alolan-raichu"
+  },
+  {
+    "slug": "sun-and-moon",
+    "name": "Sun & Moon",
+    "released": "February 2017",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/sun-and-moon.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/sun-and-moon"
+  },
+  {
+    "slug": "sm-black-star-promos",
+    "name": "SM Black Star Promos",
+    "released": "February 2017",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/_promo.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/sm-black-star-promos"
+  },
+  {
+    "slug": "evolutions",
+    "name": "Evolutions",
+    "released": "November 2016",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-evolutions.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/evolutions"
+  },
+  {
+    "slug": "mc-donalds-collection-2016",
+    "name": "McDonald's Collection 2016",
+    "released": "August 2016",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2016.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2016"
+  },
+  {
+    "slug": "steam-siege",
+    "name": "Steam Siege",
+    "released": "August 2016",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-steam-siege.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/steam-siege"
+  },
+  {
+    "slug": "fates-collide",
+    "name": "Fates Collide",
+    "released": "May 2016",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-fates-collide.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/fates-collide"
+  },
+  {
+    "slug": "xy-trainer-kit-pikachu-libre",
+    "name": "XY Trainer Kit Pikachu Libre",
+    "released": "April 2016",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-trainer-kit-libre-pikachu.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/xy-trainer-kit-pikachu-libre"
+  },
+  {
+    "slug": "xy-trainer-kit-suicune",
+    "name": "XY Trainer Kit Suicune",
+    "released": "April 2016",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-trainer-kit-suicune.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/xy-trainer-kit-suicune"
+  },
+  {
+    "slug": "generations",
+    "name": "Generations",
+    "released": "February 2016",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-generations.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/generations"
+  },
+  {
+    "slug": "breakpoint",
+    "name": "BREAKpoint",
+    "released": "February 2016",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/breakpoint.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/breakpoint"
+  },
+  {
+    "slug": "mc-donalds-collection-2015",
+    "name": "McDonald's Collection 2015",
+    "released": "November 2015",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2015.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2015"
+  },
+  {
+    "slug": "breakthrough",
+    "name": "BREAKthrough",
+    "released": "November 2015",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/breakthrough.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/breakthrough"
+  },
+  {
+    "slug": "ancient-origins",
+    "name": "Ancient Origins",
+    "released": "August 2015",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/ancient-origins.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/ancient-origins"
+  },
+  {
+    "slug": "roaring-skies",
+    "name": "Roaring Skies",
+    "released": "May 2015",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/roaring-skies.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/roaring-skies"
+  },
+  {
+    "slug": "xy-trainer-kit-latias",
+    "name": "XY Trainer Kit Latias",
+    "released": "April 2015",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-trainer-kit-latias.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/xy-trainer-kit-latias"
+  },
+  {
+    "slug": "xy-trainer-kit-latios",
+    "name": "XY Trainer Kit Latios",
+    "released": "April 2015",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-trainer-kit-latios.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/xy-trainer-kit-latios"
+  },
+  {
+    "slug": "double-crisis",
+    "name": "Double Crisis",
+    "released": "March 2015",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/double-crisis.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/double-crisis"
+  },
+  {
+    "slug": "primal-clash",
+    "name": "Primal Clash",
+    "released": "February 2015",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/primal-clash.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/primal-clash"
+  },
+  {
+    "slug": "xy-trainer-kit-bisharp",
+    "name": "XY Trainer Kit Bisharp",
+    "released": "November 2014",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-trainer-kit-bisharp.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/xy-trainer-kit-bisharp"
+  },
+  {
+    "slug": "xy-trainer-kit-wigglytuff",
+    "name": "XY Trainer Kit Wigglytuff",
+    "released": "November 2014",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-trainer-kit-wigglytuff.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/xy-trainer-kit-wigglytuff"
+  },
+  {
+    "slug": "phantom-forces",
+    "name": "Phantom Forces",
+    "released": "November 2014",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/phantom-forces.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/phantom-forces"
+  },
+  {
+    "slug": "furious-fists",
+    "name": "Furious Fists",
+    "released": "August 2014",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/furious-fists.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/furious-fists"
+  },
+  {
+    "slug": "mc-donalds-collection-2014",
+    "name": "McDonald's Collection 2014",
+    "released": "May 2014",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2014.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2014"
+  },
+  {
+    "slug": "flashfire",
+    "name": "Flashfire",
+    "released": "May 2014",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-flashfire.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/flashfire"
+  },
+  {
+    "slug": "xy-trainer-kit-sylveon",
+    "name": "XY Trainer Kit Sylveon",
+    "released": "March 2014",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-trainer-kit-sylveon.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/xy-trainer-kit-sylveon"
+  },
+  {
+    "slug": "xy-trainer-kit-noivern",
+    "name": "XY Trainer Kit Noivern",
+    "released": "March 2014",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy-trainer-kit-noivern.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/xy-trainer-kit-noivern"
+  },
+  {
+    "slug": "xy",
+    "name": "XY",
+    "released": "February 2014",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/xy.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/xy"
+  },
+  {
+    "slug": "kalos-starter-set",
+    "name": "Kalos Starter Set",
+    "released": "November 2013",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/kalos-starter-set.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/kalos-starter-set"
+  },
+  {
+    "slug": "legendary-treasures",
+    "name": "Legendary Treasures",
+    "released": "November 2013",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/legendary-treasures.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/legendary-treasures"
+  },
+  {
+    "slug": "xy-black-star-promos",
+    "name": "XY Black Star Promos",
+    "released": "October 2013",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/_promo.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/xy-black-star-promos"
+  },
+  {
+    "slug": "plasma-blast",
+    "name": "Plasma Blast",
+    "released": "August 2013",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/plasma-blast.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/plasma-blast"
+  },
+  {
+    "slug": "plasma-freeze",
+    "name": "Plasma Freeze",
+    "released": "May 2013",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/plasma-freeze.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/plasma-freeze"
+  },
+  {
+    "slug": "plasma-storm",
+    "name": "Plasma Storm",
+    "released": "February 2013",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/plasma-storm.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/plasma-storm"
+  },
+  {
+    "slug": "boundaries-crossed",
+    "name": "Boundaries Crossed",
+    "released": "November 2012",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/boundaries-crossed.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/boundaries-crossed"
+  },
+  {
+    "slug": "dragon-vault",
+    "name": "Dragon Vault",
+    "released": "October 2012",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/dragon-vault.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/dragon-vault"
+  },
+  {
+    "slug": "dragons-exalted",
+    "name": "Dragons Exalted",
+    "released": "August 2012",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/dragons-exalted.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/dragons-exalted"
+  },
+  {
+    "slug": "mc-donalds-collection-2012",
+    "name": "McDonald's Collection 2012",
+    "released": "June 2012",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2012.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2012"
+  },
+  {
+    "slug": "dark-explorers",
+    "name": "Dark Explorers",
+    "released": "May 2012",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/dark-explorers.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/dark-explorers"
+  },
+  {
+    "slug": "next-destinies",
+    "name": "Next Destinies",
+    "released": "February 2012",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/next-destinies.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/next-destinies"
+  },
+  {
+    "slug": "noble-victories",
+    "name": "Noble Victories",
+    "released": "November 2011",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/noble-victories.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/noble-victories"
+  },
+  {
+    "slug": "black-and-white-trainer-kit-excadrill",
+    "name": "Black & White Trainer Kit Excadrill",
+    "released": "September 2011",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/black-and-white-trainer-kit-excadrill.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/black-and-white-trainer-kit-excadrill"
+  },
+  {
+    "slug": "black-and-white-trainer-kit-zoroark",
+    "name": "Black & White Trainer Kit Zoroark",
+    "released": "September 2011",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/black-and-white-trainer-kit-zoroark.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/black-and-white-trainer-kit-zoroark"
+  },
+  {
+    "slug": "emerging-powers",
+    "name": "Emerging Powers",
+    "released": "August 2011",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/emerging-powers.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/emerging-powers"
+  },
+  {
+    "slug": "mc-donalds-collection-2011",
+    "name": "McDonald's Collection 2011",
+    "released": "June 2011",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mcdonalds-collection-2011.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mc-donalds-collection-2011"
+  },
+  {
+    "slug": "black-and-white",
+    "name": "Black & White",
+    "released": "April 2011",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/black-and-white.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/black-and-white"
+  },
+  {
+    "slug": "bw-black-star-promos",
+    "name": "BW Black Star Promos",
+    "released": "March 2011",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/_promo.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/bw-black-star-promos"
+  },
+  {
+    "slug": "call-of-legends",
+    "name": "Call of Legends",
+    "released": "February 2011",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/call-of-legends.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/call-of-legends"
+  },
+  {
+    "slug": "hs-triumphant",
+    "name": "HS—Triumphant",
+    "released": "November 2010",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/triumphant.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/hs-triumphant"
+  },
+  {
+    "slug": "hs-undaunted",
+    "name": "HS—Undaunted",
+    "released": "August 2010",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/undaunted.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/hs-undaunted"
+  },
+  {
+    "slug": "hs-unleashed",
+    "name": "HS—Unleashed",
+    "released": "May 2010",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/unleashed.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/hs-unleashed"
+  },
+  {
+    "slug": "hs-trainer-kit-gyarados",
+    "name": "HS Trainer Kit Gyarados",
+    "released": "May 2010",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/heartgold-and-soulsilver-trainer-kit-gyarados.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/hs-trainer-kit-gyarados"
+  },
+  {
+    "slug": "hs-trainer-kit-raichu",
+    "name": "HS Trainer Kit Raichu",
+    "released": "May 2010",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/heartgold-and-soulsilver-trainer-kit-raichu.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/hs-trainer-kit-raichu"
+  },
+  {
+    "slug": "heart-gold-and-soul-silver",
+    "name": "HeartGold & SoulSilver",
+    "released": "February 2010",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/heartgold-soulsilver.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/heart-gold-and-soul-silver"
+  },
+  {
+    "slug": "hgss-black-star-promos",
+    "name": "HGSS Black Star Promos",
+    "released": "February 2010",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/_promo.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/hgss-black-star-promos"
+  },
+  {
+    "slug": "pokemon-rumble",
+    "name": "Pokémon Rumble",
+    "released": "December 2009",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pokemon-rumble.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pokemon-rumble"
+  },
+  {
+    "slug": "arceus",
+    "name": "Arceus",
+    "released": "November 2009",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/arceus.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/arceus"
+  },
+  {
+    "slug": "supreme-victors",
+    "name": "Supreme Victors",
+    "released": "August 2009",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/supreme-victors.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/supreme-victors"
+  },
+  {
+    "slug": "rising-rivals",
+    "name": "Rising Rivals",
+    "released": "May 2009",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/rising-rivals.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/rising-rivals"
+  },
+  {
+    "slug": "pop-series-9",
+    "name": "POP Series 9",
+    "released": "March 2009",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pop-9.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pop-series-9"
+  },
+  {
+    "slug": "platinum",
+    "name": "Platinum",
+    "released": "February 2009",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/platinum.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/platinum"
+  },
+  {
+    "slug": "stormfront",
+    "name": "Stormfront",
+    "released": "November 2008",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/stormfront.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/stormfront"
+  },
+  {
+    "slug": "pop-series-8",
+    "name": "POP Series 8",
+    "released": "August 2008",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pop-8.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pop-series-8"
+  },
+  {
+    "slug": "legends-awakened",
+    "name": "Legends Awakened",
+    "released": "July 2008",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/legends-awakened.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/legends-awakened"
+  },
+  {
+    "slug": "majestic-dawn",
+    "name": "Majestic Dawn",
+    "released": "April 2008",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/majestic-dawn.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/majestic-dawn"
+  },
+  {
+    "slug": "pop-series-7",
+    "name": "POP Series 7",
+    "released": "March 2008",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pop-7.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pop-series-7"
+  },
+  {
+    "slug": "great-encounters",
+    "name": "Great Encounters",
+    "released": "February 2008",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/great-encounters.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/great-encounters"
+  },
+  {
+    "slug": "secret-wonders",
+    "name": "Secret Wonders",
+    "released": "November 2007",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/secret-wonders.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/secret-wonders"
+  },
+  {
+    "slug": "diamond-and-pearl-trainer-kit-manaphy",
+    "name": "Diamond & Pearl Trainer Kit Manaphy",
+    "released": "September 2007",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/diamond-and-pearl-trainer-kit-manaphy.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/diamond-and-pearl-trainer-kit-manaphy"
+  },
+  {
+    "slug": "diamond-and-pearl-trainer-kit-lucario",
+    "name": "Diamond & Pearl Trainer Kit Lucario",
+    "released": "September 2007",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/diamond-and-pearl-trainer-kit-lucario.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/diamond-and-pearl-trainer-kit-lucario"
+  },
+  {
+    "slug": "pop-series-6",
+    "name": "POP Series 6",
+    "released": "August 2007",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pop-6.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pop-series-6"
+  },
+  {
+    "slug": "mysterious-treasures",
+    "name": "Mysterious Treasures",
+    "released": "July 2007",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/mysterious-treasures.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/mysterious-treasures"
+  },
+  {
+    "slug": "diamond-and-pearl",
+    "name": "Diamond & Pearl",
+    "released": "April 2007",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/diamond-and-pearl.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/diamond-and-pearl"
+  },
+  {
+    "slug": "dp-black-star-promos",
+    "name": "DP Black Star Promos",
+    "released": "April 2007",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/_promo.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/dp-black-star-promos"
+  },
+  {
+    "slug": "pop-series-5",
+    "name": "POP Series 5",
+    "released": "March 2007",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pop-5.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pop-series-5"
+  },
+  {
+    "slug": "power-keepers",
+    "name": "Power Keepers",
+    "released": "February 2007",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/power-keepers.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/power-keepers"
+  },
+  {
+    "slug": "dragon-frontiers",
+    "name": "Dragon Frontiers",
+    "released": "November 2006",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/dragon-frontiers.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/dragon-frontiers"
+  },
+  {
+    "slug": "crystal-guardians",
+    "name": "Crystal Guardians",
+    "released": "July 2006",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/crystal-guardians.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/crystal-guardians"
+  },
+  {
+    "slug": "pop-series-4",
+    "name": "POP Series 4",
+    "released": "July 2006",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pop-4.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pop-series-4"
+  },
+  {
+    "slug": "holon-phantoms",
+    "name": "Holon Phantoms",
+    "released": "April 2006",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/holon-phantoms.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/holon-phantoms"
+  },
+  {
+    "slug": "pop-series-3",
+    "name": "POP Series 3",
+    "released": "March 2006",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pop-3.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pop-series-3"
+  },
+  {
+    "slug": "ex-trainer-kit-2-plusle",
+    "name": "EX Trainer Kit 2 Plusle",
+    "released": "March 2006",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/ex-trainer-kit-2-plusle.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/ex-trainer-kit-2-plusle"
+  },
+  {
+    "slug": "ex-trainer-kit-2-minun",
+    "name": "EX Trainer Kit 2 Minun",
+    "released": "March 2006",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/ex-trainer-kit-2-minun.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/ex-trainer-kit-2-minun"
+  },
+  {
+    "slug": "legend-maker",
+    "name": "Legend Maker",
+    "released": "February 2006",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/legend-maker.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/legend-maker"
+  },
+  {
+    "slug": "delta-species",
+    "name": "Delta Species",
+    "released": "October 2005",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/delta-species.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/delta-species"
+  },
+  {
+    "slug": "unseen-forces",
+    "name": "Unseen Forces",
+    "released": "July 2005",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/unseen-forces.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/unseen-forces"
+  },
+  {
+    "slug": "pop-series-2",
+    "name": "POP Series 2",
+    "released": "July 2005",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pop-2.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pop-series-2"
+  },
+  {
+    "slug": "emerald",
+    "name": "Emerald",
+    "released": "April 2005",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/emerald.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/emerald"
+  },
+  {
+    "slug": "deoxys",
+    "name": "Deoxys",
+    "released": "February 2005",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/deoxys.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/deoxys"
+  },
+  {
+    "slug": "team-rocket-returns",
+    "name": "Team Rocket Returns",
+    "released": "November 2004",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/team-rocket-returns.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/team-rocket-returns"
+  },
+  {
+    "slug": "fire-red-and-leaf-green",
+    "name": "FireRed & LeafGreen",
+    "released": "August 2004",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/firered-leafgreen.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/fire-red-and-leaf-green"
+  },
+  {
+    "slug": "pop-series-1",
+    "name": "POP Series 1",
+    "released": "August 2004",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/pop-1.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/pop-series-1"
+  },
+  {
+    "slug": "hidden-legends",
+    "name": "Hidden Legends",
+    "released": "May 2004",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/hidden-legends.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/hidden-legends"
+  },
+  {
+    "slug": "ex-trainer-kit-latias",
+    "name": "EX Trainer Kit Latias",
+    "released": "May 2004",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/ex-trainer-kit-latias.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/ex-trainer-kit-latias"
+  },
+  {
+    "slug": "ex-trainer-kit-latios",
+    "name": "EX Trainer Kit Latios",
+    "released": "May 2004",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/ex-trainer-kit-latios.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/ex-trainer-kit-latios"
+  },
+  {
+    "slug": "team-magma-vs-team-aqua",
+    "name": "Team Magma vs Team Aqua",
+    "released": "March 2004",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/team-magma-vs-team-aqua.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/team-magma-vs-team-aqua"
+  },
+  {
+    "slug": "dragon",
+    "name": "Dragon",
+    "released": "November 2003",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/dragon.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/dragon"
+  },
+  {
+    "slug": "nintendo-black-star-promos",
+    "name": "Nintendo Black Star Promos",
+    "released": "September 2003",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/_promo.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/nintendo-black-star-promos"
+  },
+  {
+    "slug": "sandstorm",
+    "name": "Sandstorm",
+    "released": "September 2003",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/sandstorm.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/sandstorm"
+  },
+  {
+    "slug": "ruby-and-sapphire",
+    "name": "Ruby & Sapphire",
+    "released": "June 2003",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/ruby-and-sapphire-fixed.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/ruby-and-sapphire"
+  },
+  {
+    "slug": "skyridge",
+    "name": "Skyridge",
+    "released": "May 2003",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/skyridge.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/skyridge"
+  },
+  {
+    "slug": "aquapolis",
+    "name": "Aquapolis",
+    "released": "January 2003",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/aquapolis.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/aquapolis"
+  },
+  {
+    "slug": "best-of-game",
+    "name": "Best of Game",
+    "released": "December 2002",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/best-of-game.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/best-of-game"
+  },
+  {
+    "slug": "expedition-base-set",
+    "name": "Expedition Base Set",
+    "released": "September 2002",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/expedition.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/expedition-base-set"
+  },
+  {
+    "slug": "legendary-collection",
+    "name": "Legendary Collection",
+    "released": "May 2002",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/legendary-collection.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/legendary-collection"
+  },
+  {
+    "slug": "neo-destiny",
+    "name": "Neo Destiny",
+    "released": "February 2002",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/neo-destiny.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/neo-destiny"
+  },
+  {
+    "slug": "neo-revelation",
+    "name": "Neo Revelation",
+    "released": "September 2001",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/neo-revelation.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/neo-revelation"
+  },
+  {
+    "slug": "southern-islands",
+    "name": "Southern Islands",
+    "released": "July 2001",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/southern-islands.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/southern-islands"
+  },
+  {
+    "slug": "neo-discovery",
+    "name": "Neo Discovery",
+    "released": "May 2001",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/neo-discovery.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/neo-discovery"
+  },
+  {
+    "slug": "neo-genesis",
+    "name": "Neo Genesis",
+    "released": "December 2000",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/neo-genesis.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/neo-genesis"
+  },
+  {
+    "slug": "gym-challenge",
+    "name": "Gym Challenge",
+    "released": "October 2000",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/gym-challenge.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/gym-challenge"
+  },
+  {
+    "slug": "gym-heroes",
+    "name": "Gym Heroes",
+    "released": "August 2000",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/gym-heroes.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/gym-heroes"
+  },
+  {
+    "slug": "team-rocket",
+    "name": "Team Rocket",
+    "released": "April 2000",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/team-rocket.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/team-rocket"
+  },
+  {
+    "slug": "base-set-2",
+    "name": "Base Set 2",
+    "released": "February 2000",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/base-set-2.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/base-set-2"
+  },
+  {
+    "slug": "fossil",
+    "name": "Fossil",
+    "released": "October 1999",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/fossil-fixed.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/fossil"
+  },
+  {
+    "slug": "wizards-black-star-promos",
+    "name": "Wizards Black Star Promos",
+    "released": "June 1999",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/_promo.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/wizards-black-star-promos"
+  },
+  {
+    "slug": "jungle",
+    "name": "Jungle",
+    "released": "June 1999",
+    "symbol_png_url": "https://pokesymbols.com/images/tcg/sets/symbols/jungle.png",
+    "detail_url": "https://pokesymbols.com/tcg/sets/jungle"
+  }
+]

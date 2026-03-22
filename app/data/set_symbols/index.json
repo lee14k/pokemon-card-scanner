@@ -1,1 +1,952 @@
-[]
+[
+  {
+    "set_id": "24541",
+    "set_code": "ASC",
+    "file": "ascended-heroes.png"
+  },
+  {
+    "set_id": "24448",
+    "set_code": "PFL",
+    "file": "phantasmal-flames.png"
+  },
+  {
+    "set_id": "24380",
+    "set_code": "MEG",
+    "file": "mega-evolution.png"
+  },
+  {
+    "set_id": "24326",
+    "set_code": "WHT",
+    "file": "white-flare.png"
+  },
+  {
+    "set_id": "24325",
+    "set_code": "BLK",
+    "file": "black-bolt.png"
+  },
+  {
+    "set_id": "24269",
+    "set_code": "DRI",
+    "file": "destined-rivals.png"
+  },
+  {
+    "set_id": "24073",
+    "set_code": "JTG",
+    "file": "journey-together.png"
+  },
+  {
+    "set_id": "23821",
+    "set_code": "PRE",
+    "file": "prismatic-evolutions.png"
+  },
+  {
+    "set_id": "-116",
+    "set_code": "MCD12",
+    "file": "mc-donalds-collection-2024.png"
+  },
+  {
+    "set_id": "23651",
+    "set_code": "SSP",
+    "file": "surging-sparks.png"
+  },
+  {
+    "set_id": "23537",
+    "set_code": "SCR",
+    "file": "stellar-crown.png"
+  },
+  {
+    "set_id": "23529",
+    "set_code": "SFA",
+    "file": "shrouded-fable.png"
+  },
+  {
+    "set_id": "23473",
+    "set_code": "TWM",
+    "file": "twilight-masquerade.png"
+  },
+  {
+    "set_id": "23381",
+    "set_code": "TEF",
+    "file": "temporal-forces.png"
+  },
+  {
+    "set_id": "23353",
+    "set_code": "PAF",
+    "file": "paldean-fates.png"
+  },
+  {
+    "set_id": "23323",
+    "set_code": "CL",
+    "file": "pokemon-trading-card-game-classic-blastoise.png"
+  },
+  {
+    "set_id": "23323",
+    "set_code": "CL",
+    "file": "pokemon-trading-card-game-classic-charizard.png"
+  },
+  {
+    "set_id": "23323",
+    "set_code": "CL",
+    "file": "pokemon-trading-card-game-classic-venusaur.png"
+  },
+  {
+    "set_id": "23286",
+    "set_code": "PAR",
+    "file": "paradox-rift.png"
+  },
+  {
+    "set_id": "-1",
+    "set_code": "151C",
+    "file": "151.png"
+  },
+  {
+    "set_id": "23228",
+    "set_code": "OBF",
+    "file": "obsidian-flames.png"
+  },
+  {
+    "set_id": "-116",
+    "set_code": "MCD12",
+    "file": "mc-donalds-collection-2023.png"
+  },
+  {
+    "set_id": "23120",
+    "set_code": "PAL",
+    "file": "paldea-evolved.png"
+  },
+  {
+    "set_id": "23237",
+    "set_code": "MEW",
+    "file": "scarlet-and-violet.png"
+  },
+  {
+    "set_id": "24382",
+    "set_code": "SVE",
+    "file": "scarlet-and-violet-energies.png"
+  },
+  {
+    "set_id": "17688",
+    "set_code": "CRZ",
+    "file": "crown-zenith.png"
+  },
+  {
+    "set_id": "17689",
+    "set_code": "CRZ:GG",
+    "file": "crown-zenith-galarian-gallery.png"
+  },
+  {
+    "set_id": "-172",
+    "set_code": "T-P",
+    "file": "scarlet-and-violet-black-star-promos.png"
+  },
+  {
+    "set_id": "3170",
+    "set_code": "SWSH12",
+    "file": "silver-tempest.png"
+  },
+  {
+    "set_id": "17674",
+    "set_code": "SWSH12: TG",
+    "file": "silver-tempest-trainer-gallery.png"
+  },
+  {
+    "set_id": "3118",
+    "set_code": "SWSH11",
+    "file": "lost-origin.png"
+  },
+  {
+    "set_id": "3172",
+    "set_code": "SWSH11: TG",
+    "file": "lost-origin-trainer-gallery.png"
+  },
+  {
+    "set_id": "-116",
+    "set_code": "MCD12",
+    "file": "mc-donalds-collection-2022.png"
+  },
+  {
+    "set_id": "3064",
+    "set_code": "PGO",
+    "file": "pokemon-go.png"
+  },
+  {
+    "set_id": "3040",
+    "set_code": "SWSH10",
+    "file": "astral-radiance.png"
+  },
+  {
+    "set_id": "3068",
+    "set_code": "SWSH10:TG",
+    "file": "astral-radiance-trainer-gallery.png"
+  },
+  {
+    "set_id": "2948",
+    "set_code": "SWSH09",
+    "file": "brilliant-stars.png"
+  },
+  {
+    "set_id": "3020",
+    "set_code": "SWSH09:TG",
+    "file": "brilliant-stars-trainer-gallery.png"
+  },
+  {
+    "set_id": "2906",
+    "set_code": "SWSH08",
+    "file": "fusion-strike.png"
+  },
+  {
+    "set_id": "2867",
+    "set_code": "CLB",
+    "file": "celebrations.png"
+  },
+  {
+    "set_id": "2931",
+    "set_code": "CCC",
+    "file": "celebrations-classic-collection.png"
+  },
+  {
+    "set_id": "2848",
+    "set_code": "SWSH07",
+    "file": "evolving-skies.png"
+  },
+  {
+    "set_id": "2807",
+    "set_code": "SWSH06",
+    "file": "chilling-reign.png"
+  },
+  {
+    "set_id": "2765",
+    "set_code": "SWSH05",
+    "file": "battle-styles.png"
+  },
+  {
+    "set_id": "2754",
+    "set_code": "SHF",
+    "file": "shining-fates.png"
+  },
+  {
+    "set_id": "2781",
+    "set_code": "SHFSV",
+    "file": "shining-fates-shiny-vault.png"
+  },
+  {
+    "set_id": "-115",
+    "set_code": "MCD11",
+    "file": "mc-donalds-collection-2021.png"
+  },
+  {
+    "set_id": "2701",
+    "set_code": "SWSH04",
+    "file": "vivid-voltage.png"
+  },
+  {
+    "set_id": "2685",
+    "set_code": "CHP",
+    "file": "champions-path.png"
+  },
+  {
+    "set_id": "23981",
+    "set_code": "CP5",
+    "file": "pokemon-futsal-collection.png"
+  },
+  {
+    "set_id": "2675",
+    "set_code": "SWSH03",
+    "file": "darkness-ablaze.png"
+  },
+  {
+    "set_id": "2626",
+    "set_code": "SWSH02",
+    "file": "rebel-clash.png"
+  },
+  {
+    "set_id": "23876",
+    "set_code": "S-P",
+    "file": "sword-and-shield.png"
+  },
+  {
+    "set_id": "-172",
+    "set_code": "T-P",
+    "file": "swsh-black-star-promos.png"
+  },
+  {
+    "set_id": "-16",
+    "set_code": "CEC",
+    "file": "cosmic-eclipse.png"
+  },
+  {
+    "set_id": "-115",
+    "set_code": "MCD11",
+    "file": "mc-donalds-collection-2019.png"
+  },
+  {
+    "set_id": "2480",
+    "set_code": "HIF",
+    "file": "hidden-fates.png"
+  },
+  {
+    "set_id": "-186",
+    "set_code": "UNM",
+    "file": "unified-minds.png"
+  },
+  {
+    "set_id": "-185",
+    "set_code": "UNB",
+    "file": "unbroken-bonds.png"
+  },
+  {
+    "set_id": "2409",
+    "set_code": "DEP",
+    "file": "detective-pikachu.png"
+  },
+  {
+    "set_id": "-173",
+    "set_code": "TEU",
+    "file": "team-up.png"
+  },
+  {
+    "set_id": "-113",
+    "set_code": "LOT",
+    "file": "lost-thunder.png"
+  },
+  {
+    "set_id": "-115",
+    "set_code": "MCD11",
+    "file": "mc-donalds-collection-2018.png"
+  },
+  {
+    "set_id": "2295",
+    "set_code": "DRM",
+    "file": "dragon-majesty.png"
+  },
+  {
+    "set_id": "2278",
+    "set_code": "CES",
+    "file": "celestial-storm.png"
+  },
+  {
+    "set_id": "2209",
+    "set_code": "SM06",
+    "file": "forbidden-light.png"
+  },
+  {
+    "set_id": "2178",
+    "set_code": "SM05",
+    "file": "ultra-prism.png"
+  },
+  {
+    "set_id": "-115",
+    "set_code": "MCD11",
+    "file": "mc-donalds-collection-2017.png"
+  },
+  {
+    "set_id": "2071",
+    "set_code": "SM04",
+    "file": "crimson-invasion.png"
+  },
+  {
+    "set_id": "2054",
+    "set_code": "SHL",
+    "file": "shining-legends.png"
+  },
+  {
+    "set_id": "1957",
+    "set_code": "SM03",
+    "file": "burning-shadows.png"
+  },
+  {
+    "set_id": "1919",
+    "set_code": "SM02",
+    "file": "guardians-rising.png"
+  },
+  {
+    "set_id": "-201",
+    "set_code": "advG",
+    "file": "sun-and-moon-trainer-kit-lycanroc.png"
+  },
+  {
+    "set_id": "-201",
+    "set_code": "advG",
+    "file": "sun-and-moon-trainer-kit-alolan-raichu.png"
+  },
+  {
+    "set_id": "23692",
+    "set_code": "SM1+",
+    "file": "sun-and-moon.png"
+  },
+  {
+    "set_id": "-172",
+    "set_code": "T-P",
+    "file": "sm-black-star-promos.png"
+  },
+  {
+    "set_id": "1842",
+    "set_code": "EVO",
+    "file": "evolutions.png"
+  },
+  {
+    "set_id": "-115",
+    "set_code": "MCD11",
+    "file": "mc-donalds-collection-2016.png"
+  },
+  {
+    "set_id": "1815",
+    "set_code": "STS",
+    "file": "steam-siege.png"
+  },
+  {
+    "set_id": "1780",
+    "set_code": "FCO",
+    "file": "fates-collide.png"
+  },
+  {
+    "set_id": "1796",
+    "set_code": "PR",
+    "file": "xy-trainer-kit-pikachu-libre.png"
+  },
+  {
+    "set_id": "-201",
+    "set_code": "advG",
+    "file": "xy-trainer-kit-suicune.png"
+  },
+  {
+    "set_id": "1728",
+    "set_code": "GEN",
+    "file": "generations.png"
+  },
+  {
+    "set_id": "2175",
+    "set_code": "BKP",
+    "file": "breakpoint.png"
+  },
+  {
+    "set_id": "-115",
+    "set_code": "MCD11",
+    "file": "mc-donalds-collection-2015.png"
+  },
+  {
+    "set_id": "1661",
+    "set_code": "BKT",
+    "file": "breakthrough.png"
+  },
+  {
+    "set_id": "1576",
+    "set_code": "AOR",
+    "file": "ancient-origins.png"
+  },
+  {
+    "set_id": "1534",
+    "set_code": "ROS",
+    "file": "roaring-skies.png"
+  },
+  {
+    "set_id": "1536",
+    "set_code": "PR",
+    "file": "xy-trainer-kit-latias.png"
+  },
+  {
+    "set_id": "1536",
+    "set_code": "PR",
+    "file": "xy-trainer-kit-latios.png"
+  },
+  {
+    "set_id": "1525",
+    "set_code": "DCR",
+    "file": "double-crisis.png"
+  },
+  {
+    "set_id": "1509",
+    "set_code": "PRC",
+    "file": "primal-clash.png"
+  },
+  {
+    "set_id": "1533",
+    "set_code": "PR",
+    "file": "xy-trainer-kit-bisharp.png"
+  },
+  {
+    "set_id": "1533",
+    "set_code": "PR",
+    "file": "xy-trainer-kit-wigglytuff.png"
+  },
+  {
+    "set_id": "1494",
+    "set_code": "PHF",
+    "file": "phantom-forces.png"
+  },
+  {
+    "set_id": "1481",
+    "set_code": "FFI",
+    "file": "furious-fists.png"
+  },
+  {
+    "set_id": "-115",
+    "set_code": "MCD11",
+    "file": "mc-donalds-collection-2014.png"
+  },
+  {
+    "set_id": "1464",
+    "set_code": "FLF",
+    "file": "flashfire.png"
+  },
+  {
+    "set_id": "1532",
+    "set_code": "PR",
+    "file": "xy-trainer-kit-sylveon.png"
+  },
+  {
+    "set_id": "-201",
+    "set_code": "advG",
+    "file": "xy-trainer-kit-noivern.png"
+  },
+  {
+    "set_id": "1404",
+    "set_code": "DX",
+    "file": "xy.png"
+  },
+  {
+    "set_id": "1522",
+    "set_code": "KSS",
+    "file": "kalos-starter-set.png"
+  },
+  {
+    "set_id": "1409",
+    "set_code": "LTR",
+    "file": "legendary-treasures.png"
+  },
+  {
+    "set_id": "-172",
+    "set_code": "T-P",
+    "file": "xy-black-star-promos.png"
+  },
+  {
+    "set_id": "1370",
+    "set_code": "PLB",
+    "file": "plasma-blast.png"
+  },
+  {
+    "set_id": "1382",
+    "set_code": "PLF",
+    "file": "plasma-freeze.png"
+  },
+  {
+    "set_id": "1413",
+    "set_code": "PLS",
+    "file": "plasma-storm.png"
+  },
+  {
+    "set_id": "1408",
+    "set_code": "BCR",
+    "file": "boundaries-crossed.png"
+  },
+  {
+    "set_id": "1426",
+    "set_code": "DRV",
+    "file": "dragon-vault.png"
+  },
+  {
+    "set_id": "1394",
+    "set_code": "DRX",
+    "file": "dragons-exalted.png"
+  },
+  {
+    "set_id": "-116",
+    "set_code": "MCD12",
+    "file": "mc-donalds-collection-2012.png"
+  },
+  {
+    "set_id": "1386",
+    "set_code": "DEX",
+    "file": "dark-explorers.png"
+  },
+  {
+    "set_id": "1412",
+    "set_code": "NXD",
+    "file": "next-destinies.png"
+  },
+  {
+    "set_id": "1385",
+    "set_code": "NVI",
+    "file": "noble-victories.png"
+  },
+  {
+    "set_id": "1400",
+    "set_code": "BLW",
+    "file": "black-and-white-trainer-kit-excadrill.png"
+  },
+  {
+    "set_id": "1400",
+    "set_code": "BLW",
+    "file": "black-and-white-trainer-kit-zoroark.png"
+  },
+  {
+    "set_id": "1424",
+    "set_code": "EPO",
+    "file": "emerging-powers.png"
+  },
+  {
+    "set_id": "-115",
+    "set_code": "MCD11",
+    "file": "mc-donalds-collection-2011.png"
+  },
+  {
+    "set_id": "1400",
+    "set_code": "BLW",
+    "file": "black-and-white.png"
+  },
+  {
+    "set_id": "-172",
+    "set_code": "T-P",
+    "file": "bw-black-star-promos.png"
+  },
+  {
+    "set_id": "1415",
+    "set_code": "CL",
+    "file": "call-of-legends.png"
+  },
+  {
+    "set_id": "1381",
+    "set_code": "TM",
+    "file": "hs-triumphant.png"
+  },
+  {
+    "set_id": "1403",
+    "set_code": "UD",
+    "file": "hs-undaunted.png"
+  },
+  {
+    "set_id": "1399",
+    "set_code": "UL",
+    "file": "hs-unleashed.png"
+  },
+  {
+    "set_id": "1540",
+    "set_code": "PR",
+    "file": "hs-trainer-kit-gyarados.png"
+  },
+  {
+    "set_id": "-201",
+    "set_code": "advG",
+    "file": "hs-trainer-kit-raichu.png"
+  },
+  {
+    "set_id": "1402",
+    "set_code": "HS",
+    "file": "heart-gold-and-soul-silver.png"
+  },
+  {
+    "set_id": "-172",
+    "set_code": "T-P",
+    "file": "hgss-black-star-promos.png"
+  },
+  {
+    "set_id": "1433",
+    "set_code": "RUM",
+    "file": "pokemon-rumble.png"
+  },
+  {
+    "set_id": "1391",
+    "set_code": "AR",
+    "file": "arceus.png"
+  },
+  {
+    "set_id": "1384",
+    "set_code": "SV",
+    "file": "supreme-victors.png"
+  },
+  {
+    "set_id": "1367",
+    "set_code": "RR",
+    "file": "rising-rivals.png"
+  },
+  {
+    "set_id": "1446",
+    "set_code": "POP",
+    "file": "pop-series-9.png"
+  },
+  {
+    "set_id": "1406",
+    "set_code": "PL",
+    "file": "platinum.png"
+  },
+  {
+    "set_id": "1369",
+    "set_code": "SF",
+    "file": "stormfront.png"
+  },
+  {
+    "set_id": "1450",
+    "set_code": "POP",
+    "file": "pop-series-8.png"
+  },
+  {
+    "set_id": "1417",
+    "set_code": "LA",
+    "file": "legends-awakened.png"
+  },
+  {
+    "set_id": "1390",
+    "set_code": "MD",
+    "file": "majestic-dawn.png"
+  },
+  {
+    "set_id": "1414",
+    "set_code": "POP",
+    "file": "pop-series-7.png"
+  },
+  {
+    "set_id": "1405",
+    "set_code": "GE",
+    "file": "great-encounters.png"
+  },
+  {
+    "set_id": "1380",
+    "set_code": "SW",
+    "file": "secret-wonders.png"
+  },
+  {
+    "set_id": "1430",
+    "set_code": "DP",
+    "file": "diamond-and-pearl-trainer-kit-manaphy.png"
+  },
+  {
+    "set_id": "1430",
+    "set_code": "DP",
+    "file": "diamond-and-pearl-trainer-kit-lucario.png"
+  },
+  {
+    "set_id": "1432",
+    "set_code": "POP",
+    "file": "pop-series-6.png"
+  },
+  {
+    "set_id": "1368",
+    "set_code": "MT",
+    "file": "mysterious-treasures.png"
+  },
+  {
+    "set_id": "1430",
+    "set_code": "DP",
+    "file": "diamond-and-pearl.png"
+  },
+  {
+    "set_id": "-172",
+    "set_code": "T-P",
+    "file": "dp-black-star-promos.png"
+  },
+  {
+    "set_id": "1439",
+    "set_code": "POP",
+    "file": "pop-series-5.png"
+  },
+  {
+    "set_id": "1383",
+    "set_code": "PK",
+    "file": "power-keepers.png"
+  },
+  {
+    "set_id": "1411",
+    "set_code": "DF",
+    "file": "dragon-frontiers.png"
+  },
+  {
+    "set_id": "1395",
+    "set_code": "CG",
+    "file": "crystal-guardians.png"
+  },
+  {
+    "set_id": "1452",
+    "set_code": "POP",
+    "file": "pop-series-4.png"
+  },
+  {
+    "set_id": "1379",
+    "set_code": "HP",
+    "file": "holon-phantoms.png"
+  },
+  {
+    "set_id": "1442",
+    "set_code": "POP",
+    "file": "pop-series-3.png"
+  },
+  {
+    "set_id": "1542",
+    "set_code": "PR",
+    "file": "ex-trainer-kit-2-plusle.png"
+  },
+  {
+    "set_id": "-201",
+    "set_code": "advG",
+    "file": "ex-trainer-kit-2-minun.png"
+  },
+  {
+    "set_id": "1378",
+    "set_code": "LM",
+    "file": "legend-maker.png"
+  },
+  {
+    "set_id": "1429",
+    "set_code": "DS",
+    "file": "delta-species.png"
+  },
+  {
+    "set_id": "1398",
+    "set_code": "UF",
+    "file": "unseen-forces.png"
+  },
+  {
+    "set_id": "1447",
+    "set_code": "POP",
+    "file": "pop-series-2.png"
+  },
+  {
+    "set_id": "1410",
+    "set_code": "EM",
+    "file": "emerald.png"
+  },
+  {
+    "set_id": "1404",
+    "set_code": "DX",
+    "file": "deoxys.png"
+  },
+  {
+    "set_id": "1428",
+    "set_code": "RR",
+    "file": "team-rocket-returns.png"
+  },
+  {
+    "set_id": "1419",
+    "set_code": "RG",
+    "file": "fire-red-and-leaf-green.png"
+  },
+  {
+    "set_id": "1422",
+    "set_code": "POP",
+    "file": "pop-series-1.png"
+  },
+  {
+    "set_id": "1416",
+    "set_code": "HL",
+    "file": "hidden-legends.png"
+  },
+  {
+    "set_id": "-174",
+    "set_code": "TK1",
+    "file": "ex-trainer-kit-latias.png"
+  },
+  {
+    "set_id": "-174",
+    "set_code": "TK1",
+    "file": "ex-trainer-kit-latios.png"
+  },
+  {
+    "set_id": "1377",
+    "set_code": "MA",
+    "file": "team-magma-vs-team-aqua.png"
+  },
+  {
+    "set_id": "1376",
+    "set_code": "DR",
+    "file": "dragon.png"
+  },
+  {
+    "set_id": "-172",
+    "set_code": "T-P",
+    "file": "nintendo-black-star-promos.png"
+  },
+  {
+    "set_id": "1392",
+    "set_code": "SS",
+    "file": "sandstorm.png"
+  },
+  {
+    "set_id": "1393",
+    "set_code": "RS",
+    "file": "ruby-and-sapphire.png"
+  },
+  {
+    "set_id": "1372",
+    "set_code": "SK",
+    "file": "skyridge.png"
+  },
+  {
+    "set_id": "1397",
+    "set_code": "AQ",
+    "file": "aquapolis.png"
+  },
+  {
+    "set_id": "-8",
+    "set_code": "BEST",
+    "file": "best-of-game.png"
+  },
+  {
+    "set_id": "-93",
+    "set_code": "EXP",
+    "file": "expedition-base-set.png"
+  },
+  {
+    "set_id": "1374",
+    "set_code": "LC",
+    "file": "legendary-collection.png"
+  },
+  {
+    "set_id": "1444",
+    "set_code": "N4",
+    "file": "neo-destiny.png"
+  },
+  {
+    "set_id": "1389",
+    "set_code": "N3",
+    "file": "neo-revelation.png"
+  },
+  {
+    "set_id": "648",
+    "set_code": "SI",
+    "file": "southern-islands.png"
+  },
+  {
+    "set_id": "1434",
+    "set_code": "N2",
+    "file": "neo-discovery.png"
+  },
+  {
+    "set_id": "1396",
+    "set_code": "N1",
+    "file": "neo-genesis.png"
+  },
+  {
+    "set_id": "1440",
+    "set_code": "G2",
+    "file": "gym-challenge.png"
+  },
+  {
+    "set_id": "1441",
+    "set_code": "G1",
+    "file": "gym-heroes.png"
+  },
+  {
+    "set_id": "1373",
+    "set_code": "TR",
+    "file": "team-rocket.png"
+  },
+  {
+    "set_id": "605",
+    "set_code": "BS2",
+    "file": "base-set-2.png"
+  },
+  {
+    "set_id": "630",
+    "set_code": "FO",
+    "file": "fossil.png"
+  },
+  {
+    "set_id": "-193",
+    "set_code": "WPR",
+    "file": "wizards-black-star-promos.png"
+  },
+  {
+    "set_id": "635",
+    "set_code": "JU",
+    "file": "jungle.png"
+  }
+]

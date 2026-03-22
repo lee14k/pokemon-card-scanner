@@ -1,8 +1,14 @@
 """
 Match the bottom-left set symbol crop to reference PNGs.
 
-Add rows to data/set_symbols/index.json and matching PNG files (same approximate
-crop as the live symbol region: bottom-left of the English card frame).
+Reference art from pokesymbols is usually a large canvas (e.g. 600×600) with the
+icon centered and transparent margins. Phone crops were often the whole bottom
+quarter of the card, so a 16×16 average hash was dominated by artwork/text, not
+the tiny symbol. We trim reference alpha to the glyph, pad to a square on white,
+and for live crops take a bottom-left square after autocontrast so the hash sees
+the same kind of “icon-sized” patch as the PNGs.
+
+Add rows to data/set_symbols/index.json and matching PNG files.
 """
 
 from __future__ import annotations
@@ -42,6 +48,36 @@ def _average_hash_int(img: Image.Image, size: int = 16) -> int:
         if p >= mean:
             val |= 1 << i
     return val
+
+
+def _normalize_reference_for_hash(im: Image.Image) -> Image.Image:
+    """Trim transparent margins, flatten onto white, center on a square (matches icon focus)."""
+    im = im.convert("RGBA")
+    alpha = im.split()[3]
+    bbox = alpha.getbbox()
+    if bbox:
+        im = im.crop(bbox)
+        alpha = im.split()[3]
+    rgb = Image.new("RGB", im.size, (255, 255, 255))
+    rgb.paste(im, mask=alpha)
+    w, h = rgb.size
+    side = max(w, h, 1)
+    sheet = Image.new("RGB", (side, side), (255, 255, 255))
+    sheet.paste(rgb, ((side - w) // 2, (side - h) // 2))
+    return sheet
+
+
+def _normalize_live_crop_for_hash(crop: Image.Image) -> Image.Image:
+    """
+    Emphasize the bottom-left corner (where the expansion symbol sits) so it
+    fills the hash instead of the whole tall/wide crop rectangle.
+    """
+    g = ImageOps.autocontrast(ImageOps.grayscale(crop))
+    w, h = g.size
+    side = min(w, h)
+    if side < 8:
+        return g
+    return g.crop((0, h - side, side, h))
 
 
 def _hamming(a: int, b: int) -> int:
@@ -90,7 +126,8 @@ def load_symbol_index() -> list[SymbolRef]:
         try:
             with Image.open(path) as im:
                 im = ImageOps.exif_transpose(im)
-                h = _average_hash_int(im)
+                norm = _normalize_reference_for_hash(im)
+                h = _average_hash_int(norm)
         except OSError as e:
             log.warning("set_symbol.skip bad_image set_id=%s err=%s", sid, e)
             continue
@@ -120,10 +157,19 @@ def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int] | None:
     refs = load_symbol_index()
     if not refs:
         return None
-    h = _average_hash_int(crop)
+    norm = _normalize_live_crop_for_hash(crop)
+    h = _average_hash_int(norm)
     if log.isEnabledFor(logging.DEBUG):
         cw, ch = crop.size
-        log.debug("set_symbol.ahash crop_px=%sx%s value=%s", cw, ch, h)
+        nw, nh = norm.size
+        log.debug(
+            "set_symbol.ahash crop_px=%sx%s norm_px=%sx%s value=%s",
+            cw,
+            ch,
+            nw,
+            nh,
+            h,
+        )
     best: tuple[SymbolRef, int] | None = None
     second_d: int | None = None
     for ref in refs:

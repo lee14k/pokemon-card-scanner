@@ -219,13 +219,24 @@ def pick_primary_name_from_top_band(raw_top: str) -> str | None:
 
 
 def _symbol_crop_boxes(w: int, h: int) -> list[tuple[int, int, int, int]]:
-    """Several bottom-left boxes; symbol position varies slightly by era / photo angle."""
-    return [
-        (0, int(h * 0.84), max(int(w * 0.12), 24), h),
-        (0, int(h * 0.80), max(int(w * 0.16), 32), h),
-        (0, int(h * 0.78), max(int(w * 0.20), 40), h),
-        (0, int(h * 0.76), max(int(w * 0.26), 48), h),
-    ]
+    """
+    Expansion symbol sits in the bottom info strip (left of card number), not the
+    whole lower third of the art box. Use several short vertical spans so crops
+    mostly contain that strip; matching then takes a bottom-left square for the hash.
+    """
+    boxes: list[tuple[int, int, int, int]] = []
+    seen: set[tuple[int, int, int, int]] = set()
+    for y_frac in (0.82, 0.86, 0.88, 0.90, 0.92, 0.94):
+        y0 = int(h * y_frac)
+        if y0 >= h - 12:
+            continue
+        for x_frac in (0.11, 0.14, 0.18):
+            x1 = max(int(w * x_frac), 24)
+            box = (0, y0, x1, h)
+            if box not in seen:
+                seen.add(box)
+                boxes.append(box)
+    return boxes
 
 
 def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSignals:

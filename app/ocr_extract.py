@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import io
+import os
 import re
+import shutil
+import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytesseract
@@ -12,15 +16,46 @@ from PIL import Image, ImageOps
 if TYPE_CHECKING:
     pass
 
+_TESSERACT_CONFIGURED = False
+
+
+def _configure_tesseract_cmd() -> None:
+    """Point pytesseract at the binary (env override, PATH, or common Homebrew paths)."""
+    global _TESSERACT_CONFIGURED
+    if _TESSERACT_CONFIGURED:
+        return
+    _TESSERACT_CONFIGURED = True
+
+    env_cmd = os.environ.get("TESSERACT_CMD", "").strip()
+    if env_cmd:
+        pytesseract.pytesseract.tesseract_cmd = env_cmd
+        return
+
+    if shutil.which("tesseract"):
+        return
+
+    if sys.platform == "darwin":
+        for candidate in (
+            Path("/opt/homebrew/bin/tesseract"),
+            Path("/usr/local/bin/tesseract"),
+        ):
+            if candidate.is_file():
+                pytesseract.pytesseract.tesseract_cmd = str(candidate)
+                return
+
 
 def _check_tesseract() -> None:
+    _configure_tesseract_cmd()
     try:
         pytesseract.get_tesseract_version()
     except pytesseract.TesseractNotFoundError as e:
         raise RuntimeError(
             "Tesseract OCR is not installed or not on PATH. "
-            "macOS: brew install tesseract. "
-            "Ubuntu: apt install tesseract-ocr."
+            "macOS: brew install tesseract (Apple Silicon: /opt/homebrew/bin/tesseract). "
+            "Linux: apt install tesseract-ocr. "
+            "Railway: redeploy with deploy.aptPackages including tesseract-ocr, "
+            "or set RAILPACK_DEPLOY_APT_PACKAGES=tesseract-ocr. "
+            "Override path: TESSERACT_CMD=/path/to/tesseract."
         ) from e
 
 

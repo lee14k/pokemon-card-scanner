@@ -121,11 +121,30 @@ def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int] | None:
     if not refs:
         return None
     h = _average_hash_int(crop)
+    if log.isEnabledFor(logging.DEBUG):
+        cw, ch = crop.size
+        log.debug("set_symbol.ahash crop_px=%sx%s value=%s", cw, ch, h)
     best: tuple[SymbolRef, int] | None = None
+    second_d: int | None = None
     for ref in refs:
         d = _hamming(h, ref.hash_int)
         if best is None or d < best[1]:
+            if best is not None:
+                prev = best[1]
+                if second_d is None or prev < second_d:
+                    second_d = prev
             best = (ref, d)
+        elif second_d is None or d < second_d:
+            second_d = d
+    if log.isEnabledFor(logging.DEBUG) and best is not None:
+        margin = (second_d - best[1]) if second_d is not None else None
+        log.debug(
+            "set_symbol.ahash_rank best_dist=%s second_best_dist=%s margin=%s best_set_id=%s",
+            best[1],
+            second_d,
+            margin,
+            best[0].set_id,
+        )
     return best
 
 
@@ -171,32 +190,77 @@ def match_set_symbol_best_of_crops(
     if max_distance is None:
         max_distance = int(os.environ.get("SET_SYMBOL_MAX_DISTANCE", "28"))
 
+    w, h = processed.size
+    n_refs = len(load_symbol_index())
+    log.info(
+        "set_symbol.multi_crop start image_px=%sx%s boxes=%s threshold=%s index_refs=%s",
+        w,
+        h,
+        len(boxes),
+        max_distance,
+        n_refs,
+    )
+    if not boxes:
+        log.warning("set_symbol.multi_crop abort no_boxes")
+        return None
+    if n_refs == 0:
+        log.warning("set_symbol.multi_crop abort index_empty dir=%s", symbol_index_dir())
+        return None
+
+    per_crop: list[tuple[tuple[int, int, int, int], int, str, str | None]] = []
     overall: tuple[SymbolRef, int, tuple[int, int, int, int]] | None = None
-    for box in boxes:
+    for i, box in enumerate(boxes):
         crop = processed.crop(box)
+        cw, ch = crop.size
         hit = best_set_symbol_match(crop)
         if hit is None:
+            log.info(
+                "set_symbol.crop i=%s box=%s size_px=%sx%s result=no_index",
+                i,
+                box,
+                cw,
+                ch,
+            )
             continue
         ref, dist = hit
+        per_crop.append((box, dist, ref.set_id, ref.set_code))
+        log.info(
+            "set_symbol.crop i=%s box=%s size_px=%sx%s best_set_id=%s best_set_code=%s hamming=%s",
+            i,
+            box,
+            cw,
+            ch,
+            ref.set_id,
+            ref.set_code,
+            dist,
+        )
         if overall is None or dist < overall[1]:
             overall = (ref, dist, box)
 
     if overall is None:
+        log.info("set_symbol.multi_crop end matched=no reason=no_best_per_crop")
         return None
     ref, dist, box = overall
     if dist > max_distance:
+        summary = ", ".join(
+            f"[{i}] hamming={d} set_id={sid} box={bx}"
+            for i, (bx, d, sid, _) in enumerate(per_crop)
+        )
         log.info(
-            "set_symbol.no_match best_distance=%s (threshold %s) box=%s",
+            "set_symbol.multi_crop rejected hamming=%s threshold=%s chosen_box=%s best_set_id=%s | per_crop=%s",
             dist,
             max_distance,
             box,
+            ref.set_id,
+            summary,
         )
         return None
     log.info(
-        "set_symbol.match set_id=%s set_code=%s distance=%s box=%s",
+        "set_symbol.multi_crop accepted set_id=%s set_code=%s hamming=%s box=%s (threshold<=%s)",
         ref.set_id,
         ref.set_code,
         dist,
         box,
+        max_distance,
     )
     return overall

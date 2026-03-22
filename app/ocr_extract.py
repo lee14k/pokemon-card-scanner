@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     pass
 
 log = logging.getLogger("pokemon_scanner.ocr")
+log_symbol = logging.getLogger("pokemon_scanner.set_symbol")
 
 _TESSERACT_CONFIGURED = False
 
@@ -302,6 +303,17 @@ def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSi
     set_code: str | None = None
     sym_dist: int | None = None
     sym_note = f"symbol_boxes={len(sym_boxes)}"
+
+    log_symbol.info(
+        "set_symbol.extract layout processed_px=%sx%s name_band_y=0..%s bottom_strip_y=%s..%s "
+        "symbol_boxes_lu_rl=%s",
+        w,
+        h,
+        top_h,
+        bottom_y0,
+        h,
+        sym_boxes,
+    )
 
     matched = match_set_symbol_best_of_crops(processed, boxes=sym_boxes)
     if matched:

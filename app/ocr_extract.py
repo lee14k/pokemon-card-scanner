@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import sys
+import unicodedata
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,7 +17,7 @@ from PIL import Image, ImageOps
 
 from app.card_signals import CardSignals, pick_collection_number
 from app.logging_config import preview_text
-from app.set_symbol_index import match_set_symbol
+from app.set_symbol_index import match_set_symbol_best_of_crops
 
 if TYPE_CHECKING:
     pass
@@ -94,6 +95,138 @@ def _collect_lines_from_raw(raw: str) -> list[str]:
     return lines
 
 
+def _ascii_lower(s: str) -> str:
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+
+
+_JUNK_NAME_RE = re.compile(
+    r"©|\(c\)|\bcopyright\b|\bpokemon\b|\bnintendo\b|\bcreatures\b|game\s*freak|"
+    r"\billus\.?\b|illustrator|\bweakness\b|\bresistance\b|\bretreat\b|wizards\b|"
+    r"\bflip a coin\b|\bdamage done\b|\bon your bench\b|\bprevent all\b",
+    re.I,
+)
+
+_NAME_TOKEN_STOP = frozenset(
+    {
+        "illus",
+        "illustrator",
+        "basic",
+        "stage",
+        "card",
+        "your",
+        "the",
+        "and",
+        "pokemon",
+        "nintendo",
+        "creatures",
+        "freak",
+        "game",
+    }
+)
+
+
+def _lines_from_raw_top_to_bottom(raw: str) -> list[str]:
+    out: list[str] = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if len(s) < 3:
+            continue
+        letters = sum(1 for c in s if c.isalpha())
+        if letters < 2:
+            continue
+        out.append(s)
+    return out
+
+
+def _is_junk_name_line(s: str) -> bool:
+    if len(s) > 52:
+        return True
+    letters = sum(1 for c in s if c.isalpha())
+    if letters < 3:
+        return True
+    if letters < len(s) * 0.2:
+        return True
+    if _JUNK_NAME_RE.search(s):
+        return True
+    low = _ascii_lower(s)
+    if "pokemon" in low or "nintendo" in low:
+        return True
+    if "game" in low and "freak" in low:
+        return True
+    return False
+
+
+def _extract_title_style_name(line: str) -> str | None:
+    """Whole-line name like 'Charizard' or 'Alolan Raichu' after stripping noise."""
+    t = re.sub(r"[^\w\s\-']", " ", line)
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t or len(t) > 40:
+        return None
+    m = re.fullmatch(
+        r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}(?:\s+[a-z]{1,4})?)",
+        t,
+    )
+    if not m:
+        return None
+    cand = m.group(1).strip()
+    toks = cand.lower().split()
+    if not toks or any(tok in _NAME_TOKEN_STOP for tok in toks):
+        return None
+    if len(cand) < 3:
+        return None
+    return cand
+
+
+def _extract_capitalized_name_token(line: str) -> str | None:
+    """
+    Pull a Pokémon-like token from a noisy OCR line. Prefer 5+ letter words in long
+    lines to avoid 4-letter garbage ('Stes'); allow 3+ on short lines or whole-line names.
+    """
+    stripped = line.strip()
+    if len(stripped) <= 22:
+        m = re.fullmatch(r"([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})\s*", stripped)
+        if m:
+            cand = m.group(1).strip()
+            if len(cand) >= 3 and all(t.lower() not in _NAME_TOKEN_STOP for t in cand.split()):
+                return cand
+    min_len = 4 if len(stripped) > 18 else 2
+    pat = rf"\b([A-Z][a-z]{{{min_len},20}})\b"
+    for m in re.finditer(pat, line):
+        w = m.group(1)
+        if w.lower() in _NAME_TOKEN_STOP:
+            continue
+        return w
+    return None
+
+
+def pick_primary_name_from_top_band(raw_top: str) -> str | None:
+    """
+    Name lives in the top band; never use the longest line (copyright/footer wins).
+    Scan top-to-bottom, skip legal/flavor junk, prefer clean title lines then tokens.
+    """
+    ordered = _lines_from_raw_top_to_bottom(raw_top)
+    for line in ordered:
+        if _is_junk_name_line(line):
+            continue
+        title = _extract_title_style_name(line)
+        if title:
+            return title
+        tok = _extract_capitalized_name_token(line)
+        if tok:
+            return tok
+    return None
+
+
+def _symbol_crop_boxes(w: int, h: int) -> list[tuple[int, int, int, int]]:
+    """Several bottom-left boxes; symbol position varies slightly by era / photo angle."""
+    return [
+        (0, int(h * 0.84), max(int(w * 0.12), 24), h),
+        (0, int(h * 0.80), max(int(w * 0.16), 32), h),
+        (0, int(h * 0.78), max(int(w * 0.20), 40), h),
+        (0, int(h * 0.76), max(int(w * 0.26), 48), h),
+    ]
+
+
 def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSignals:
     """
     OCR name band, full card, bottom strip (collection number), and bottom-left crop
@@ -111,9 +244,7 @@ def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSi
     bottom_y0 = int(h * 0.72)
     bottom_strip = processed.crop((0, bottom_y0, w, h))
 
-    sym_x1 = max(int(w * 0.26), 28)
-    sym_y0 = int(h * 0.76)
-    symbol_crop = processed.crop((0, sym_y0, sym_x1, h))
+    sym_boxes = _symbol_crop_boxes(w, h)
 
     raw_top = _ocr_string(name_band)
     raw_full = _ocr_string(processed)
@@ -133,8 +264,7 @@ def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSi
     log.debug("ocr.raw_combined %s", preview_text(raw, 2000))
 
     lines = _collect_lines_from_raw(raw)
-    top_lines = _collect_lines_from_raw(raw_top)
-    primary_name = top_lines[0] if top_lines else None
+    primary_name = pick_primary_name_from_top_band(raw_top)
 
     words: list[str] = []
     for line in lines[:5]:
@@ -171,14 +301,18 @@ def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSi
     set_id: str | None = None
     set_code: str | None = None
     sym_dist: int | None = None
-    sym_note = f"crop_px={symbol_crop.size[0]}x{symbol_crop.size[1]}"
+    sym_note = f"symbol_boxes={len(sym_boxes)}"
 
-    matched = match_set_symbol(symbol_crop)
+    matched = match_set_symbol_best_of_crops(processed, boxes=sym_boxes)
     if matched:
-        set_id = matched[0].set_id
-        set_code = matched[0].set_code
-        sym_dist = matched[1]
-        sym_note = f"{sym_note} matched_set_id={set_id} dist={sym_dist}"
+        ref, dist, box = matched
+        set_id = ref.set_id
+        set_code = ref.set_code
+        sym_dist = dist
+        sym_note = (
+            f"crop_box={box} px={box[2] - box[0]}x{box[3] - box[1]} "
+            f"matched_set_id={set_id} dist={dist}"
+        )
 
     log.info(
         "ocr.card_number=%r primary_name_guess=%r set_id=%s set_code=%s %s",

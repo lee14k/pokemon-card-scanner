@@ -115,6 +115,20 @@ def reload_symbol_index() -> None:
     load_symbol_index()
 
 
+def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int] | None:
+    """Best reference and Hamming distance for this crop, or None if index empty."""
+    refs = load_symbol_index()
+    if not refs:
+        return None
+    h = _average_hash_int(crop)
+    best: tuple[SymbolRef, int] | None = None
+    for ref in refs:
+        d = _hamming(h, ref.hash_int)
+        if best is None or d < best[1]:
+            best = (ref, d)
+    return best
+
+
 def match_set_symbol(crop: Image.Image, max_distance: int | None = None) -> tuple[SymbolRef, int] | None:
     """
     Return best-matching reference and Hamming distance, or None if index empty
@@ -125,20 +139,12 @@ def match_set_symbol(crop: Image.Image, max_distance: int | None = None) -> tupl
     if max_distance is None:
         max_distance = int(os.environ.get("SET_SYMBOL_MAX_DISTANCE", "28"))
 
-    refs = load_symbol_index()
-    if not refs:
+    best = best_set_symbol_match(crop)
+    if best is None:
         return None
 
-    h = _average_hash_int(crop)
-    best: tuple[SymbolRef, int] | None = None
-    for ref in refs:
-        d = _hamming(h, ref.hash_int)
-        if best is None or d < best[1]:
-            best = (ref, d)
-
-    if best is None or best[1] > max_distance:
-        if best:
-            log.info("set_symbol.no_match best_distance=%s (threshold %s)", best[1], max_distance)
+    if best[1] > max_distance:
+        log.info("set_symbol.no_match best_distance=%s (threshold %s)", best[1], max_distance)
         return None
 
     log.info(
@@ -148,3 +154,49 @@ def match_set_symbol(crop: Image.Image, max_distance: int | None = None) -> tupl
         best[1],
     )
     return best
+
+
+def match_set_symbol_best_of_crops(
+    processed: Image.Image,
+    *,
+    boxes: list[tuple[int, int, int, int]],
+    max_distance: int | None = None,
+) -> tuple[SymbolRef, int, tuple[int, int, int, int]] | None:
+    """
+    Run average-hash match on several crops (e.g. tighter vs looser bottom-left);
+    return the best under max_distance, else None.
+    """
+    import os
+
+    if max_distance is None:
+        max_distance = int(os.environ.get("SET_SYMBOL_MAX_DISTANCE", "28"))
+
+    overall: tuple[SymbolRef, int, tuple[int, int, int, int]] | None = None
+    for box in boxes:
+        crop = processed.crop(box)
+        hit = best_set_symbol_match(crop)
+        if hit is None:
+            continue
+        ref, dist = hit
+        if overall is None or dist < overall[1]:
+            overall = (ref, dist, box)
+
+    if overall is None:
+        return None
+    ref, dist, box = overall
+    if dist > max_distance:
+        log.info(
+            "set_symbol.no_match best_distance=%s (threshold %s) box=%s",
+            dist,
+            max_distance,
+            box,
+        )
+        return None
+    log.info(
+        "set_symbol.match set_id=%s set_code=%s distance=%s box=%s",
+        ref.set_id,
+        ref.set_code,
+        dist,
+        box,
+    )
+    return overall

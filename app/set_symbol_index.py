@@ -155,9 +155,10 @@ def reload_symbol_index() -> None:
     load_symbol_index()
 
 
-def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int] | None:
+def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int, int | None] | None:
     """
-    Best reference and Hamming distance, or None if index empty.
+    Best reference, Hamming distance, and second-best distance (if any), or
+    None if index empty.
     Uses the better of (a) bottom-left square aHash and (b) full-crop aHash so
     tight vs loose framing can both score against the normalized reference PNGs.
     """
@@ -203,7 +204,9 @@ def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int] | None:
             margin,
             best[0].set_id,
         )
-    return best
+    if best is None:
+        return None
+    return (best[0], best[1], second_d)
 
 
 def match_set_symbol(crop: Image.Image, max_distance: int | None = None) -> tuple[SymbolRef, int] | None:
@@ -219,18 +222,30 @@ def match_set_symbol(crop: Image.Image, max_distance: int | None = None) -> tupl
     best = best_set_symbol_match(crop)
     if best is None:
         return None
+    ref, dist, second_d = best
+    margin = (second_d - dist) if second_d is not None else None
+    min_margin = 3
+    if margin is not None and margin < min_margin:
+        log.info(
+            "set_symbol.no_match ambiguous best_distance=%s second_best=%s margin=%s (<%s)",
+            dist,
+            second_d,
+            margin,
+            min_margin,
+        )
+        return None
 
-    if best[1] > max_distance:
-        log.info("set_symbol.no_match best_distance=%s (threshold %s)", best[1], max_distance)
+    if dist > max_distance:
+        log.info("set_symbol.no_match best_distance=%s (threshold %s)", dist, max_distance)
         return None
 
     log.info(
         "set_symbol.match set_id=%s set_code=%s distance=%s",
-        best[0].set_id,
-        best[0].set_code,
-        best[1],
+        ref.set_id,
+        ref.set_code,
+        dist,
     )
-    return best
+    return (ref, dist)
 
 
 def match_set_symbol_best_of_crops(
@@ -265,7 +280,8 @@ def match_set_symbol_best_of_crops(
         log.warning("set_symbol.multi_crop abort index_empty dir=%s", symbol_index_dir())
         return None
 
-    per_crop: list[tuple[tuple[int, int, int, int], int, str, str | None]] = []
+    min_margin = 3
+    per_crop: list[tuple[tuple[int, int, int, int], int, int | None, str, str | None]] = []
     overall: tuple[SymbolRef, int, tuple[int, int, int, int]] | None = None
     for i, box in enumerate(boxes):
         crop = processed.crop(box)
@@ -280,10 +296,11 @@ def match_set_symbol_best_of_crops(
                 ch,
             )
             continue
-        ref, dist = hit
-        per_crop.append((box, dist, ref.set_id, ref.set_code))
+        ref, dist, second_d = hit
+        margin = (second_d - dist) if second_d is not None else None
+        per_crop.append((box, dist, second_d, ref.set_id, ref.set_code))
         log.info(
-            "set_symbol.crop i=%s box=%s size_px=%sx%s best_set_id=%s best_set_code=%s hamming=%s",
+            "set_symbol.crop i=%s box=%s size_px=%sx%s best_set_id=%s best_set_code=%s hamming=%s second=%s margin=%s",
             i,
             box,
             cw,
@@ -291,7 +308,17 @@ def match_set_symbol_best_of_crops(
             ref.set_id,
             ref.set_code,
             dist,
+            second_d,
+            margin,
         )
+        if margin is not None and margin < min_margin:
+            log.info(
+                "set_symbol.crop i=%s rejected_ambiguous margin=%s (<%s)",
+                i,
+                margin,
+                min_margin,
+            )
+            continue
         if overall is None or dist < overall[1]:
             overall = (ref, dist, box)
 
@@ -301,8 +328,8 @@ def match_set_symbol_best_of_crops(
     ref, dist, box = overall
     if dist > max_distance:
         summary = ", ".join(
-            f"[{i}] hamming={d} set_id={sid} box={bx}"
-            for i, (bx, d, sid, _) in enumerate(per_crop)
+            f"[{i}] hamming={d} second={s2} set_id={sid} box={bx}"
+            for i, (bx, d, s2, sid, _) in enumerate(per_crop)
         )
         log.info(
             "set_symbol.multi_crop rejected hamming=%s threshold=%s chosen_box=%s best_set_id=%s | per_crop=%s",

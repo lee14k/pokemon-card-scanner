@@ -73,11 +73,14 @@ def _normalize_live_crop_for_hash(crop: Image.Image) -> Image.Image:
     fills the hash instead of the whole tall/wide crop rectangle.
     """
     g = ImageOps.autocontrast(ImageOps.grayscale(crop))
+    # Pad to square instead of forcing a bottom-left square. The crop boxes we
+    # pass in already isolate the bottom-left area; padding makes y-offsets
+    # actually matter during matching.
     w, h = g.size
-    side = min(w, h)
-    if side < 32:
-        return g
-    return g.crop((0, h - side, side, h))
+    side = max(w, h, 1)
+    sheet = Image.new("L", (side, side), 255)
+    sheet.paste(g, ((side - w) // 2, (side - h) // 2))
+    return sheet
 
 
 def _hamming(a: int, b: int) -> int:

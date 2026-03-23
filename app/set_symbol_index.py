@@ -69,13 +69,13 @@ def _normalize_reference_for_hash(im: Image.Image) -> Image.Image:
 
 def _normalize_live_crop_for_hash(crop: Image.Image) -> Image.Image:
     """
-    Emphasize the bottom-left corner (where the expansion symbol sits) so it
-    fills the hash instead of the whole tall/wide crop rectangle.
+    Normalize a live crop so reference-style hashes work.
+
+    The incoming crop boxes already isolate the bottom-left area; here we
+    just pad to a square on white so the hash isn't skewed by differing crop
+    aspect ratios.
     """
     g = ImageOps.autocontrast(ImageOps.grayscale(crop))
-    # Pad to square instead of forcing a bottom-left square. The crop boxes we
-    # pass in already isolate the bottom-left area; padding makes y-offsets
-    # actually matter during matching.
     w, h = g.size
     side = max(w, h, 1)
     sheet = Image.new("L", (side, side), 255)

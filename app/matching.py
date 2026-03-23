@@ -77,7 +77,11 @@ def build_search_queries(
     max_queries: int = 8,
 ) -> list[str]:
     """
-    Build PokéWallet /search queries: prefer set_id + number, then name + number, then text.
+    Build PokéWallet /search queries from parsed fields only.
+
+    For the "planned searches" UI, we intentionally avoid raw `ocr_fragments`
+    fallbacks because those can be noisy (copyright / illustrator / attack
+    text) and lead to unrelated matches.
     See https://www.pokewallet.io/api-docs (set_id + card number, set codes, names).
     """
     queries: list[str] = []
@@ -93,9 +97,8 @@ def build_search_queries(
         seen.add(key)
         queries.append(q[:120])
 
-    hint = (card_name_hint or "").strip()
     primary = (primary_name_guess or "").strip()
-    name = hint or primary
+    name = primary
 
     num_first: str | None = None
     if card_number and "/" in card_number:
@@ -106,11 +109,11 @@ def build_search_queries(
         add(f"{set_id_from_symbol.strip()} {num_first}")
 
     # 2. Set code + card # (no slash)
-    if set_code_from_symbol and num_first:
+    if not set_id_from_symbol and set_code_from_symbol and num_first:
         add(f"{set_code_from_symbol.strip()} {num_first}")
 
     # 3. Set code + full fraction
-    if set_code_from_symbol and card_number:
+    if not set_id_from_symbol and set_code_from_symbol and card_number:
         add(f"{set_code_from_symbol.strip()} {card_number.strip()}")
 
     # 4. Name + collection number
@@ -124,24 +127,6 @@ def build_search_queries(
     # 6. Collection number alone
     if card_number:
         add(card_number.strip())
-
-    # 7. Explicit user hint as name-only (after structured queries)
-    if hint:
-        add(hint)
-
-    # 8. OCR name line / fragments (deduped by add())
-    usable = [f for f in ocr_fragments if is_usable_search_fragment(f)]
-    usable.sort(key=len, reverse=True)
-    for f in usable:
-        add(f)
-        if len(queries) >= max_queries:
-            break
-
-    if not queries and ocr_fragments:
-        for f in sorted(ocr_fragments, key=len):
-            if len(f.strip()) >= 3:
-                add(f.strip()[:120])
-                break
 
     out = queries[:max_queries]
     log.info(

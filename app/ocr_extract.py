@@ -12,8 +12,10 @@ import unicodedata
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import cv2
+import numpy as np
 import pytesseract
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageOps
 
 from app.card_signals import CardSignals, pick_collection_number
 from app.logging_config import preview_text
@@ -89,21 +91,43 @@ def _scale_for_ocr(gray: Image.Image) -> Image.Image:
     return gray
 
 
+def _pil_gray_to_u8(gray: Image.Image) -> np.ndarray:
+    arr = np.asarray(gray)
+    if arr.ndim != 2:
+        raise ValueError("expected mode L grayscale image")
+    if arr.dtype != np.uint8:
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return np.ascontiguousarray(arr)
+
+
+def _u8_gray_to_pil(arr: np.ndarray) -> Image.Image:
+    return Image.fromarray(arr, mode="L")
+
+
+def _clahe_u8(gray_u8: np.ndarray, *, clip_limit: float, tile: int = 8) -> np.ndarray:
+    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=(tile, tile))
+    return clahe.apply(gray_u8)
+
+
 def _ocr_variants(gray: Image.Image) -> list[Image.Image]:
     """
     Multiple contrast pipelines for glare, shadows, and holo speckle.
     Symbol matching uses variants[0] only so hashes stay aligned with the legacy path.
     """
-    # Baseline: same idea as before (grayscale + autocontrast), after upscale.
+    # Baseline: global contrast only (legacy-friendly).
     standard = ImageOps.autocontrast(gray)
-    # Holo / sparkles: median suppresses salt-and-pepper; unsharp restores edges.
-    denoised = gray.filter(ImageFilter.MedianFilter(size=3))
-    holo = ImageOps.autocontrast(
-        denoised.filter(ImageFilter.UnsharpMask(radius=2, percent=130, threshold=2))
-    )
-    # Heavy local contrast — can recover text in uneven lighting (tradeoff: more noise).
-    lifted = ImageOps.autocontrast(ImageOps.equalize(gray))
-    return [standard, holo, lifted]
+
+    g = _pil_gray_to_u8(gray)
+    # Local adaptive contrast — shadows, uneven lighting, mild glare recovery.
+    clahe_flat = _clahe_u8(g, clip_limit=2.2, tile=8)
+    shadow_glare = ImageOps.autocontrast(_u8_gray_to_pil(clahe_flat))
+
+    # Edge-preserving smoothing reduces holo sparkles; CLAHE then lifts text locally.
+    smoothed = cv2.bilateralFilter(g, d=7, sigmaColor=55, sigmaSpace=55)
+    clahe_holo = _clahe_u8(smoothed, clip_limit=2.0, tile=8)
+    holo = ImageOps.autocontrast(_u8_gray_to_pil(clahe_holo))
+
+    return [standard, shadow_glare, holo]
 
 
 def _preprocess(image: Image.Image) -> Image.Image:

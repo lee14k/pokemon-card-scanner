@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import cv2
+import numpy as np
 from PIL import Image, ImageOps
 
 log = logging.getLogger("pokemon_scanner.set_symbol")
@@ -39,15 +41,107 @@ _index: list[SymbolRef] | None = None
 _INDEX_PATH_ENV = "SET_SYMBOL_INDEX_DIR"
 
 
-def _average_hash_int(img: Image.Image, size: int = 16) -> int:
-    g = ImageOps.grayscale(img).resize((size, size), Image.Resampling.LANCZOS)
-    px = list(g.getdata())
-    mean = sum(px) / len(px)
-    val = 0
-    for i, p in enumerate(px):
-        if p >= mean:
-            val |= 1 << i
-    return val
+# pHash sizes: resize to DCT_SIZE x DCT_SIZE, keep top-left HASH_SIZE x HASH_SIZE.
+# 32 / 8 is the classic Marr/Buchanan pHash configuration; produces a 64-bit hash.
+_PHASH_DCT_SIZE = 32
+_PHASH_LOW_SIZE = 8
+
+
+def _phash_int(img: Image.Image) -> int:
+    """
+    Perceptual hash via DCT (cv2.dct). 64-bit, far more lighting/JPEG robust than aHash.
+    """
+    g = ImageOps.grayscale(img).resize(
+        (_PHASH_DCT_SIZE, _PHASH_DCT_SIZE), Image.Resampling.LANCZOS
+    )
+    arr = np.asarray(g, dtype=np.float32)
+    dct = cv2.dct(arr)
+    low = dct[:_PHASH_LOW_SIZE, :_PHASH_LOW_SIZE].flatten()
+    # Standard pHash: median of low-freq coefficients excluding DC; bit per coeff > median.
+    med = float(np.median(low[1:]))
+    bits = 0
+    for i, v in enumerate(low):
+        if float(v) > med:
+            bits |= 1 << i
+    return bits
+
+
+def _isolate_glyph_crop(crop: Image.Image) -> Image.Image | None:
+    """
+    Find the symbol glyph inside the bottom-left crop using adaptive thresholding +
+    connected components. Returns a tight bbox around the most "symbol-like" blob,
+    padded ~10%, or None if nothing plausible found (caller falls back to full crop).
+
+    Robustness vs glare/holo/shadows: adaptive threshold uses local windows so uneven
+    lighting doesn't sink the whole image; we then accept either polarity (dark glyph
+    on light strip, or light glyph on dark border) and pick the most centered blob
+    of plausible size.
+    """
+    arr = np.asarray(ImageOps.grayscale(crop), dtype=np.uint8)
+    h, w = arr.shape
+    if h < 14 or w < 14:
+        return None
+
+    # Block size must be odd and large enough to span the glyph; tune off the smaller side.
+    block = max(11, (min(h, w) // 5) | 1)
+
+    best_bbox: tuple[int, int, int, int] | None = None
+    best_score = -1.0
+    min_area = max(40, int(0.01 * h * w))
+    max_area = int(0.55 * h * w)
+
+    for thresh_type in (cv2.THRESH_BINARY_INV, cv2.THRESH_BINARY):
+        bw = cv2.adaptiveThreshold(
+            arr, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, thresh_type, block, 5
+        )
+        # Close small holes inside the glyph so it stays one component.
+        bw = cv2.morphologyEx(bw, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8), iterations=1)
+        n, _labels, stats, _ = cv2.connectedComponentsWithStats(bw, connectivity=8)
+        for i in range(1, n):
+            x, y, cw, ch, area = (
+                int(stats[i, 0]),
+                int(stats[i, 1]),
+                int(stats[i, 2]),
+                int(stats[i, 3]),
+                int(stats[i, 4]),
+            )
+            if area < min_area or area > max_area:
+                continue
+            if cw < 6 or ch < 6:
+                continue
+            aspect = cw / max(1, ch)
+            if aspect < 0.25 or aspect > 4.0:
+                continue
+            # Drop blobs that hug a crop edge over most of its length (card border / shadow).
+            edge_hug = (
+                (x == 0 and ch > h * 0.85)
+                or (y == 0 and cw > w * 0.85)
+                or (x + cw == w and ch > h * 0.85)
+                or (y + ch == h and cw > w * 0.85)
+            )
+            if edge_hug:
+                continue
+            score = float(area)
+            cx = x + cw / 2
+            cy = y + ch / 2
+            # Set symbol typically sits in the left portion, vertically centered in the strip.
+            if cx < w * 0.65:
+                score *= 1.20
+            if h * 0.20 < cy < h * 0.85:
+                score *= 1.10
+            if score > best_score:
+                best_score = score
+                best_bbox = (x, y, cw, ch)
+
+    if best_bbox is None:
+        return None
+    x, y, cw, ch = best_bbox
+    pad = max(2, int(round(0.10 * max(cw, ch))))
+    x0 = max(0, x - pad)
+    y0 = max(0, y - pad)
+    x1 = min(w, x + cw + pad)
+    y1 = min(h, y + ch + pad)
+    return crop.crop((x0, y0, x1, y1))
 
 
 def _normalize_reference_for_hash(im: Image.Image) -> Image.Image:
@@ -130,7 +224,7 @@ def load_symbol_index() -> list[SymbolRef]:
             with Image.open(path) as im:
                 im = ImageOps.exif_transpose(im)
                 norm = _normalize_reference_for_hash(im)
-                h = _average_hash_int(norm)
+                h = _phash_int(norm)
         except OSError as e:
             log.warning("set_symbol.skip bad_image set_id=%s err=%s", sid, e)
             continue
@@ -155,38 +249,52 @@ def reload_symbol_index() -> None:
     load_symbol_index()
 
 
+def _candidate_hashes_for_crop(crop: Image.Image) -> list[int]:
+    """
+    Build a small set of hashes per crop so framing/lighting variation has multiple
+    shots at matching: (a) glyph isolated via adaptive threshold, (b) padded full
+    crop, (c) the raw autocontrast'd grayscale crop.
+    """
+    hashes: list[int] = []
+    glyph = _isolate_glyph_crop(crop)
+    if glyph is not None:
+        gw, gh = glyph.size
+        if gw > 0 and gh > 0:
+            side = max(gw, gh, 1)
+            sheet = Image.new("L", (side, side), 255)
+            gray_glyph = ImageOps.autocontrast(ImageOps.grayscale(glyph))
+            sheet.paste(gray_glyph, ((side - gw) // 2, (side - gh) // 2))
+            hashes.append(_phash_int(sheet))
+    hashes.append(_phash_int(_normalize_live_crop_for_hash(crop)))
+    hashes.append(_phash_int(ImageOps.autocontrast(ImageOps.grayscale(crop))))
+    return hashes
+
+
 def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int, int | None] | None:
     """
     Best reference, Hamming distance, and second-best distance (if any), or
     None if index empty.
-    Uses the better of (a) bottom-left square aHash and (b) full-crop aHash so
-    tight vs loose framing can both score against the normalized reference PNGs.
+
+    Tries multiple normalizations of the live crop (glyph-isolated, padded square,
+    raw autocontrast) and picks the lowest distance per reference, so tight vs loose
+    framing and uneven lighting both have a chance to match the reference PNGs.
     """
     refs = load_symbol_index()
     if not refs:
         return None
-    norm = _normalize_live_crop_for_hash(crop)
-    h_sq = _average_hash_int(norm)
-    g_full = ImageOps.autocontrast(ImageOps.grayscale(crop))
-    h_full = _average_hash_int(g_full)
+    cand_hashes = _candidate_hashes_for_crop(crop)
     if log.isEnabledFor(logging.DEBUG):
         cw, ch = crop.size
-        nw, nh = norm.size
         log.debug(
-            "set_symbol.ahash crop_px=%sx%s norm_px=%sx%s h_sq=%s h_full=%s",
+            "set_symbol.phash crop_px=%sx%s candidate_hashes=%s",
             cw,
             ch,
-            nw,
-            nh,
-            h_sq,
-            h_full,
+            len(cand_hashes),
         )
     best: tuple[SymbolRef, int] | None = None
     second_d: int | None = None
     for ref in refs:
-        d_sq = _hamming(h_sq, ref.hash_int)
-        d_full = _hamming(h_full, ref.hash_int)
-        d = d_sq if d_sq <= d_full else d_full
+        d = min(_hamming(h, ref.hash_int) for h in cand_hashes)
         if best is None or d < best[1]:
             if best is not None:
                 prev = best[1]
@@ -198,7 +306,7 @@ def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int, int | None
     if log.isEnabledFor(logging.DEBUG) and best is not None:
         margin = (second_d - best[1]) if second_d is not None else None
         log.debug(
-            "set_symbol.ahash_rank best_dist=%s second_best_dist=%s margin=%s best_set_id=%s",
+            "set_symbol.phash_rank best_dist=%s second_best_dist=%s margin=%s best_set_id=%s",
             best[1],
             second_d,
             margin,
@@ -209,22 +317,38 @@ def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int, int | None
     return (best[0], best[1], second_d)
 
 
+# Distance thresholds are sized for the 64-bit pHash output of `_phash_int`.
+# Override via SET_SYMBOL_MAX_DISTANCE / SET_SYMBOL_MIN_MARGIN env vars.
+_DEFAULT_MAX_DISTANCE = 12
+_DEFAULT_MIN_MARGIN = 2
+
+
+def _env_int(name: str, default: int) -> int:
+    import os
+
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 def match_set_symbol(crop: Image.Image, max_distance: int | None = None) -> tuple[SymbolRef, int] | None:
     """
     Return best-matching reference and Hamming distance, or None if index empty
-    or no match under max_distance (256-bit hash).
+    or no match under max_distance (64-bit pHash).
     """
-    import os
-
     if max_distance is None:
-        max_distance = int(os.environ.get("SET_SYMBOL_MAX_DISTANCE", "34"))
+        max_distance = _env_int("SET_SYMBOL_MAX_DISTANCE", _DEFAULT_MAX_DISTANCE)
 
     best = best_set_symbol_match(crop)
     if best is None:
         return None
     ref, dist, second_d = best
     margin = (second_d - dist) if second_d is not None else None
-    min_margin = 3
+    min_margin = _env_int("SET_SYMBOL_MIN_MARGIN", _DEFAULT_MIN_MARGIN)
     if margin is not None and margin < min_margin:
         log.info(
             "set_symbol.no_match ambiguous best_distance=%s second_best=%s margin=%s (<%s)",
@@ -249,27 +373,37 @@ def match_set_symbol(crop: Image.Image, max_distance: int | None = None) -> tupl
 
 
 def match_set_symbol_best_of_crops(
-    processed: Image.Image,
+    processed_variants: list[Image.Image] | Image.Image,
     *,
     boxes: list[tuple[int, int, int, int]],
     max_distance: int | None = None,
 ) -> tuple[SymbolRef, int, tuple[int, int, int, int]] | None:
     """
-    Run average-hash match on several crops (e.g. tighter vs looser bottom-left);
-    return the best under max_distance, else None.
+    Run pHash match against several crops × preprocessing variants (e.g. CLAHE'd
+    shadow/glare-fixed vs standard autocontrast). Returns the best under max_distance,
+    else None.
+
+    Accepts either a single processed image (legacy) or a list of variants, all of
+    which must share the same dimensions so the bounding boxes apply uniformly.
     """
-    import os
+    if isinstance(processed_variants, Image.Image):
+        processed_variants = [processed_variants]
+    if not processed_variants:
+        log.warning("set_symbol.multi_crop abort no_variants")
+        return None
 
     if max_distance is None:
-        max_distance = int(os.environ.get("SET_SYMBOL_MAX_DISTANCE", "34"))
+        max_distance = _env_int("SET_SYMBOL_MAX_DISTANCE", _DEFAULT_MAX_DISTANCE)
+    min_margin = _env_int("SET_SYMBOL_MIN_MARGIN", _DEFAULT_MIN_MARGIN)
 
-    w, h = processed.size
+    w, h = processed_variants[0].size
     n_refs = len(load_symbol_index())
     log.info(
-        "set_symbol.multi_crop start image_px=%sx%s boxes=%s threshold=%s index_refs=%s",
+        "set_symbol.multi_crop start image_px=%sx%s boxes=%s variants=%s threshold=%s index_refs=%s",
         w,
         h,
         len(boxes),
+        len(processed_variants),
         max_distance,
         n_refs,
     )
@@ -280,47 +414,50 @@ def match_set_symbol_best_of_crops(
         log.warning("set_symbol.multi_crop abort index_empty dir=%s", symbol_index_dir())
         return None
 
-    min_margin = 3
-    per_crop: list[tuple[tuple[int, int, int, int], int, int | None, str, str | None]] = []
+    per_crop: list[tuple[int, tuple[int, int, int, int], int, int | None, str, str | None]] = []
     overall: tuple[SymbolRef, int, tuple[int, int, int, int]] | None = None
     for i, box in enumerate(boxes):
-        crop = processed.crop(box)
-        cw, ch = crop.size
-        hit = best_set_symbol_match(crop)
-        if hit is None:
+        for vi, proc in enumerate(processed_variants):
+            crop = proc.crop(box)
+            cw, ch = crop.size
+            hit = best_set_symbol_match(crop)
+            if hit is None:
+                log.info(
+                    "set_symbol.crop i=%s variant=%s box=%s size_px=%sx%s result=no_index",
+                    i,
+                    vi,
+                    box,
+                    cw,
+                    ch,
+                )
+                continue
+            ref, dist, second_d = hit
+            margin = (second_d - dist) if second_d is not None else None
+            per_crop.append((vi, box, dist, second_d, ref.set_id, ref.set_code))
             log.info(
-                "set_symbol.crop i=%s box=%s size_px=%sx%s result=no_index",
+                "set_symbol.crop i=%s variant=%s box=%s size_px=%sx%s best_set_id=%s best_set_code=%s hamming=%s second=%s margin=%s",
                 i,
+                vi,
                 box,
                 cw,
                 ch,
-            )
-            continue
-        ref, dist, second_d = hit
-        margin = (second_d - dist) if second_d is not None else None
-        per_crop.append((box, dist, second_d, ref.set_id, ref.set_code))
-        log.info(
-            "set_symbol.crop i=%s box=%s size_px=%sx%s best_set_id=%s best_set_code=%s hamming=%s second=%s margin=%s",
-            i,
-            box,
-            cw,
-            ch,
-            ref.set_id,
-            ref.set_code,
-            dist,
-            second_d,
-            margin,
-        )
-        if margin is not None and margin < min_margin:
-            log.info(
-                "set_symbol.crop i=%s rejected_ambiguous margin=%s (<%s)",
-                i,
+                ref.set_id,
+                ref.set_code,
+                dist,
+                second_d,
                 margin,
-                min_margin,
             )
-            continue
-        if overall is None or dist < overall[1]:
-            overall = (ref, dist, box)
+            if margin is not None and margin < min_margin:
+                log.info(
+                    "set_symbol.crop i=%s variant=%s rejected_ambiguous margin=%s (<%s)",
+                    i,
+                    vi,
+                    margin,
+                    min_margin,
+                )
+                continue
+            if overall is None or dist < overall[1]:
+                overall = (ref, dist, box)
 
     if overall is None:
         log.info("set_symbol.multi_crop end matched=no reason=no_best_per_crop")
@@ -328,8 +465,8 @@ def match_set_symbol_best_of_crops(
     ref, dist, box = overall
     if dist > max_distance:
         summary = ", ".join(
-            f"[{i}] hamming={d} second={s2} set_id={sid} box={bx}"
-            for i, (bx, d, s2, sid, _) in enumerate(per_crop)
+            f"[i={i},v={vi}] hamming={d} second={s2} set_id={sid} box={bx}"
+            for i, (vi, bx, d, s2, sid, _) in enumerate(per_crop)
         )
         log.info(
             "set_symbol.multi_crop rejected hamming=%s threshold=%s chosen_box=%s best_set_id=%s | per_crop=%s",

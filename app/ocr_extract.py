@@ -420,7 +420,7 @@ def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSi
         sym_boxes,
     )
 
-    matched = match_set_symbol_best_of_crops(processed, boxes=sym_boxes)
+    matched = match_set_symbol_best_of_crops(variants, boxes=sym_boxes)
     if matched:
         ref, dist, box = matched
         set_id = ref.set_id

@@ -318,8 +318,10 @@ def best_set_symbol_match(crop: Image.Image) -> tuple[SymbolRef, int, int | None
 
 
 # Distance thresholds are sized for the 64-bit pHash output of `_phash_int`.
-# Override via SET_SYMBOL_MAX_DISTANCE / SET_SYMBOL_MIN_MARGIN env vars.
-_DEFAULT_MAX_DISTANCE = 12
+# Default 20 is chosen permissively because real card symbols under varied lighting
+# commonly land at 14-22 even when the correct ref is identified; tighten via env
+# (SET_SYMBOL_MAX_DISTANCE / SET_SYMBOL_MIN_MARGIN) once you see real distances.
+_DEFAULT_MAX_DISTANCE = 20
 _DEFAULT_MIN_MARGIN = 2
 
 
@@ -416,6 +418,8 @@ def match_set_symbol_best_of_crops(
 
     per_crop: list[tuple[int, tuple[int, int, int, int], int, int | None, str, str | None]] = []
     overall: tuple[SymbolRef, int, tuple[int, int, int, int]] | None = None
+    # Track absolute closest ref ignoring margin/threshold — purely for calibration logs.
+    closest_ever: tuple[SymbolRef, int, int | None, tuple[int, int, int, int], int] | None = None
     for i, box in enumerate(boxes):
         for vi, proc in enumerate(processed_variants):
             crop = proc.crop(box)
@@ -434,6 +438,8 @@ def match_set_symbol_best_of_crops(
             ref, dist, second_d = hit
             margin = (second_d - dist) if second_d is not None else None
             per_crop.append((vi, box, dist, second_d, ref.set_id, ref.set_code))
+            if closest_ever is None or dist < closest_ever[1]:
+                closest_ever = (ref, dist, second_d, box, vi)
             log.info(
                 "set_symbol.crop i=%s variant=%s box=%s size_px=%sx%s best_set_id=%s best_set_code=%s hamming=%s second=%s margin=%s",
                 i,
@@ -458,6 +464,19 @@ def match_set_symbol_best_of_crops(
                 continue
             if overall is None or dist < overall[1]:
                 overall = (ref, dist, box)
+
+    if closest_ever is not None:
+        cref, cdist, csecond, cbox, cvariant = closest_ever
+        log.info(
+            "set_symbol.closest_anyway set_id=%s set_code=%s hamming=%s second=%s margin=%s box=%s variant=%s",
+            cref.set_id,
+            cref.set_code,
+            cdist,
+            csecond,
+            (csecond - cdist) if csecond is not None else None,
+            cbox,
+            cvariant,
+        )
 
     if overall is None:
         log.info("set_symbol.multi_crop end matched=no reason=no_best_per_crop")

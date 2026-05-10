@@ -342,6 +342,7 @@ def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSi
 
     sym_boxes = _symbol_crop_boxes(w, h)
 
+    variant_labels = ("standard", "shadow_glare", "holo")
     raw_top_parts: list[str] = []
     raw_full_parts: list[str] = []
     raw_bottom_parts: list[str] = []
@@ -358,15 +359,28 @@ def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSi
     raw = raw_top + "\n" + raw_full + "\n" + raw_bottom
 
     log.info(
-        "ocr.image bytes=%s processed_px=%sx%s name_band_h=%s",
+        "ocr.image bytes=%s processed_px=%sx%s name_band_h=%s variants=%s",
         len(image_bytes),
         w,
         h,
         top_h,
+        len(variants),
     )
-    log.info("ocr.raw_top_band %s", preview_text(raw_top, 900))
-    log.info("ocr.raw_full_card %s", preview_text(raw_full, 900))
-    log.info("ocr.raw_bottom_strip %s", preview_text(raw_bottom, 900))
+    for idx, label in enumerate(variant_labels[: len(variants)]):
+        log.info(
+            "ocr.raw_bottom_strip[%s=%s] %s",
+            idx,
+            label,
+            preview_text(raw_bottom_parts[idx], 600),
+        )
+        log.debug(
+            "ocr.raw_top_band[%s=%s] %s",
+            idx,
+            label,
+            preview_text(raw_top_parts[idx], 600),
+        )
+    log.info("ocr.raw_top_band_combined %s", preview_text(raw_top, 900))
+    log.info("ocr.raw_full_card_combined %s", preview_text(raw_full, 900))
     log.debug("ocr.raw_combined %s", preview_text(raw, 2000))
 
     lines = _collect_lines_from_raw(raw)

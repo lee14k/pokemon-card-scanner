@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytesseract
-from PIL import Image, ImageOps
+from PIL import Image, ImageFilter, ImageOps
 
 from app.card_signals import CardSignals, pick_collection_number
 from app.logging_config import preview_text
@@ -68,10 +68,48 @@ def _check_tesseract() -> None:
         ) from e
 
 
+# Tesseract accuracy improves with sufficient pixels; cap size for latency/RAM.
+_OCR_TARGET_LONG_SIDE = 1400
+_OCR_MAX_LONG_SIDE = 2200
+
+
+def _scale_for_ocr(gray: Image.Image) -> Image.Image:
+    w, h = gray.size
+    if w < 1 or h < 1:
+        return gray
+    long_side = max(w, h)
+    if long_side < _OCR_TARGET_LONG_SIDE:
+        scale = _OCR_TARGET_LONG_SIDE / long_side
+        nw, nh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+        return gray.resize((nw, nh), Image.Resampling.LANCZOS)
+    if long_side > _OCR_MAX_LONG_SIDE:
+        scale = _OCR_MAX_LONG_SIDE / long_side
+        nw, nh = max(1, int(round(w * scale))), max(1, int(round(h * scale)))
+        return gray.resize((nw, nh), Image.Resampling.LANCZOS)
+    return gray
+
+
+def _ocr_variants(gray: Image.Image) -> list[Image.Image]:
+    """
+    Multiple contrast pipelines for glare, shadows, and holo speckle.
+    Symbol matching uses variants[0] only so hashes stay aligned with the legacy path.
+    """
+    # Baseline: same idea as before (grayscale + autocontrast), after upscale.
+    standard = ImageOps.autocontrast(gray)
+    # Holo / sparkles: median suppresses salt-and-pepper; unsharp restores edges.
+    denoised = gray.filter(ImageFilter.MedianFilter(size=3))
+    holo = ImageOps.autocontrast(
+        denoised.filter(ImageFilter.UnsharpMask(radius=2, percent=130, threshold=2))
+    )
+    # Heavy local contrast — can recover text in uneven lighting (tradeoff: more noise).
+    lifted = ImageOps.autocontrast(ImageOps.equalize(gray))
+    return [standard, holo, lifted]
+
+
 def _preprocess(image: Image.Image) -> Image.Image:
-    gray = ImageOps.grayscale(image)
-    # Improve contrast for glossy cards / phone photos
-    return ImageOps.autocontrast(gray)
+    """Single pipeline for callers that need one image (tests, diagnostics)."""
+    gray = _scale_for_ocr(ImageOps.grayscale(image))
+    return _ocr_variants(gray)[0]
 
 
 # Uniform block of text; works better than default for game cards.
@@ -270,20 +308,29 @@ def extract_card_signals(image_bytes: bytes, max_candidates: int = 12) -> CardSi
     _check_tesseract()
     img = Image.open(io.BytesIO(image_bytes))
     img = ImageOps.exif_transpose(img)
-    processed = _preprocess(img)
+    gray = _scale_for_ocr(ImageOps.grayscale(img))
+    variants = _ocr_variants(gray)
+    processed = variants[0]
 
     w, h = processed.size
     top_h = max(int(h * 0.28), 48)
-    name_band = processed.crop((0, 0, w, top_h))
-
     bottom_y0 = int(h * 0.72)
-    bottom_strip = processed.crop((0, bottom_y0, w, h))
 
     sym_boxes = _symbol_crop_boxes(w, h)
 
-    raw_top = _ocr_string(name_band)
-    raw_full = _ocr_string(processed)
-    raw_bottom = _ocr_string(bottom_strip)
+    raw_top_parts: list[str] = []
+    raw_full_parts: list[str] = []
+    raw_bottom_parts: list[str] = []
+    for proc in variants:
+        name_band = proc.crop((0, 0, w, top_h))
+        bottom_strip = proc.crop((0, bottom_y0, w, h))
+        raw_top_parts.append(_ocr_string(name_band))
+        raw_full_parts.append(_ocr_string(proc))
+        raw_bottom_parts.append(_ocr_string(bottom_strip))
+
+    raw_top = "\n".join(raw_top_parts)
+    raw_full = "\n".join(raw_full_parts)
+    raw_bottom = "\n".join(raw_bottom_parts)
     raw = raw_top + "\n" + raw_full + "\n" + raw_bottom
 
     log.info(

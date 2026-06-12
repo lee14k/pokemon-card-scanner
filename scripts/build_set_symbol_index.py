@@ -11,7 +11,7 @@ Prerequisites:
 
 Writes app/data/set_symbols/index.json for use by app/set_symbol_index.py.
 
-Dependencies: httpx (see scripts/requirements-scrape.txt), rapidfuzz (requirements.txt).
+Dependencies: httpx, rapidfuzz (see scripts/requirements-scrape.txt).
 """
 
 from __future__ import annotations

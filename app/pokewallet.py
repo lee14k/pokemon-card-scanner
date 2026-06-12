@@ -12,6 +12,10 @@ import httpx
 
 BASE_URL = "https://api.pokewallet.io"
 
+
+def _base_url() -> str:
+    return os.environ.get("POKEWALLET_BASE_URL", "").strip() or BASE_URL
+
 log = logging.getLogger("pokemon_scanner.pokewallet")
 
 
@@ -50,7 +54,7 @@ async def search_cards(
 
     own_client = client is None
     if own_client:
-        client = httpx.AsyncClient(base_url=BASE_URL, timeout=30.0)
+        client = httpx.AsyncClient(base_url=_base_url(), timeout=30.0)
 
     try:
         resp = await client.get("/search", params=params, headers=headers)
@@ -76,7 +80,7 @@ async def search_cards_multi(
 
     own_client = client is None
     if own_client:
-        client = httpx.AsyncClient(base_url=BASE_URL, timeout=30.0)
+        client = httpx.AsyncClient(base_url=_base_url(), timeout=30.0)
 
     try:
         for frag in fragments:
@@ -121,4 +125,36 @@ async def search_cards_for_lookup(
 
 def pokewallet_image_url(card_id: str, size: str = "high") -> str:
     safe = quote(card_id, safe="")
-    return f"{BASE_URL}/images/{safe}?size={size}"
+    return f"{_base_url()}/images/{safe}?size={size}"
+
+
+async def lookup_card_exact(
+    set_id: str,
+    numerator: str,
+    *,
+    set_name: str | None = None,
+    api_key: str,
+    client: httpx.AsyncClient | None = None,
+) -> dict[str, Any] | None:
+    """
+    Keyed lookup: query "<set_id> <number>" (PokéWallet supports this form) and
+    exact-filter results on card number numerator (and set name when provided).
+    Returns the raw card dict or None.
+    """
+    num = numerator.lstrip("0") or "0"
+    data = await search_cards(f"{set_id} {num}", limit=25, api_key=api_key, client=client)
+    for c in data.get("results") or []:
+        info = c.get("card_info") or {}
+        raw = str(info.get("card_number") or "").strip()
+        raw_num = raw.split("/")[0].strip().lstrip("0") or "0"
+        if raw_num.upper() != num.upper():
+            continue
+        if (
+            set_name
+            and info.get("set_name")
+            and str(info["set_name"]).strip().lower() != set_name.strip().lower()
+        ):
+            continue
+        return c
+    log.info("pokewallet.lookup_exact miss set_id=%s num=%s", set_id, num)
+    return None

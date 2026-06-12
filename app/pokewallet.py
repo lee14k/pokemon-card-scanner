@@ -149,11 +149,7 @@ async def lookup_card_exact(
         raw_num = raw.split("/")[0].strip().lstrip("0") or "0"
         if raw_num.upper() != num.upper():
             continue
-        if (
-            set_name
-            and info.get("set_name")
-            and str(info["set_name"]).strip().lower() != set_name.strip().lower()
-        ):
+        if set_name and str(info.get("set_name") or "").strip().lower() != set_name.strip().lower():
             continue
         return c
     log.info("pokewallet.lookup_exact miss set_id=%s num=%s", set_id, num)

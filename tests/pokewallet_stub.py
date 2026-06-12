@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -11,7 +12,7 @@ from fastapi.responses import Response
 FIXTURE = Path(__file__).parent / "fixtures" / "pokewallet_cards.json"
 
 app = FastAPI()
-_cards: list[dict] = json.loads(FIXTURE.read_text()) if FIXTURE.is_file() else []
+_cards: list[dict] = json.loads(FIXTURE.read_text()) if FIXTURE.is_file() else []  # Populated by scripts/make_test_fixtures.py (Task 4); placeholder [] until then.
 
 # 1x1 white PNG
 _PNG = bytes.fromhex(
@@ -22,7 +23,7 @@ _PNG = bytes.fromhex(
 
 @app.get("/search")
 def search(q: str, limit: int = 20, page: int = 1) -> dict:
-    terms = [t.lstrip("0") or "0" for t in q.lower().split()]
+    terms = [t.lstrip("0") or "0" for t in re.findall(r"[a-z0-9]+", q.lower())]
     hits = []
     for c in _cards:
         info = c.get("card_info") or {}
@@ -30,8 +31,8 @@ def search(q: str, limit: int = 20, page: int = 1) -> dict:
         blob = {
             str(c.get("set_id", "")).lower(),
             num.lower(),
-            *str(info.get("name", "")).lower().split(),
-            *str(info.get("set_name", "")).lower().split(),
+            *re.findall(r"[a-z0-9]+", str(info.get("name", "")).lower()),
+            *re.findall(r"[a-z0-9]+", str(info.get("set_name", "")).lower()),
         }
         if all(t in blob for t in terms):
             hits.append(c)

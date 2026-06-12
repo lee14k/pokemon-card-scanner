@@ -31,10 +31,20 @@ def pokewallet_stub() -> str:
             raise RuntimeError("pokewallet stub failed to start")
         time.sleep(0.05)
     base = f"http://127.0.0.1:{port}"
+    _prev_base = os.environ.get("POKEWALLET_BASE_URL")
+    _prev_key = os.environ.get("POKEWALLET_API_KEY")
     os.environ["POKEWALLET_BASE_URL"] = base
     os.environ["POKEWALLET_API_KEY"] = "test-key"
     yield base
     server.should_exit = True
+    if _prev_base is None:
+        os.environ.pop("POKEWALLET_BASE_URL", None)
+    else:
+        os.environ["POKEWALLET_BASE_URL"] = _prev_base
+    if _prev_key is None:
+        os.environ.pop("POKEWALLET_API_KEY", None)
+    else:
+        os.environ["POKEWALLET_API_KEY"] = _prev_key
 
 
 @pytest.fixture()

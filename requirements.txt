@@ -6,4 +6,3 @@ numpy>=1.24.0
 opencv-python-headless>=4.8.0
 pytesseract>=0.3.10
 httpx>=0.27.0
-rapidfuzz>=3.6.0

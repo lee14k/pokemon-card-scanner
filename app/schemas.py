@@ -1,40 +1,46 @@
-"""API response models."""
+"""API response models for the pack scanner."""
 
 from __future__ import annotations
 
-from typing import Any
-
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
-class CardMatch(BaseModel):
-    id: str
-    name: str
+class PackCard(BaseModel):
+    row_index: int = -1  # -1 for /cards/lookup results (not tied to a photo row)
+    card_number: str | None = None   # as printed: "123/198", "TG12/TG30", "SWSH123"
+    set_id: str | None = None        # PokéWallet numeric set id (string)
+    set_code: str | None = None      # e.g. "SVI"
     set_name: str | None = None
-    number: str | None = None
+    name: str | None = None
     rarity: str | None = None
-    images: dict[str, str | None] | None = None
-    tcgplayer: dict[str, Any] | None = None
-    cardmarket: dict[str, Any] | None = None
-    match_score: float = Field(..., description="0–100 fuzzy match vs OCR text")
+    image_url: str | None = None
+    match_id: str | None = None      # PokéWallet card id
+    confidence: float = 0.0
+    low_confidence_reason: str | None = None
+    # one of: unreadable_strip | number_ambiguous | set_ambiguous | no_db_match
 
 
-class PriceLookupResponse(BaseModel):
-    ocr_text_sample: str | None = None
-    query_fragments: list[str] = Field(default_factory=list)
-    matches: list[CardMatch]
+class CodeCardResult(BaseModel):
+    code: str | None = None
+    confidence: float = 0.0
+    format_ok: bool = False
 
 
-class CardAnalyzeResponse(BaseModel):
-    """OCR / symbol parse only — no PokéWallet call."""
+class PackScanResponse(BaseModel):
+    cards: list[PackCard]
+    code_card: CodeCardResult
+    pack_confidence: float
+    segmentation_warning: str | None = None
 
-    pokemon_name: str | None = None
-    set_id: str | None = None
+
+class SetInfo(BaseModel):
+    set_id: str
     set_code: str | None = None
-    symbol_match_distance: int | None = None
-    collection_number: str | None = Field(
-        None, description="Parsed NNN/NNN from the card"
-    )
-    ocr_text_sample: str | None = None
-    suggested_search_queries: list[str] = Field(default_factory=list)
-    ocr_fragments: list[str] = Field(default_factory=list)
+    set_name: str
+    denominators: list[str]
+    era: str  # "swsh" | "sv"
+
+
+class CardLookupResponse(BaseModel):
+    found: bool
+    card: PackCard | None = None

@@ -1,0 +1,315 @@
+{
+  "_provisional": "hand-seeded 2026-06-11; regenerate with scripts/build_denominator_table.py once POKEWALLET_API_KEY is available",
+  "sets": [
+    {
+      "set_id": "23876",
+      "set_code": "SSH",
+      "set_name": "Sword And Shield",
+      "era": "swsh",
+      "denominators": [
+        "202"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2626",
+      "set_code": "RCL",
+      "set_name": "Rebel Clash",
+      "era": "swsh",
+      "denominators": [
+        "192"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2675",
+      "set_code": "DAA",
+      "set_name": "Darkness Ablaze",
+      "era": "swsh",
+      "denominators": [
+        "189"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2685",
+      "set_code": "CPA",
+      "set_name": "Champions Path",
+      "era": "swsh",
+      "denominators": [
+        "73"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2701",
+      "set_code": "VIV",
+      "set_name": "Vivid Voltage",
+      "era": "swsh",
+      "denominators": [
+        "185"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2754",
+      "set_code": "SHF",
+      "set_name": "Shining Fates",
+      "era": "swsh",
+      "denominators": [
+        "72"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2765",
+      "set_code": "BST",
+      "set_name": "Battle Styles",
+      "era": "swsh",
+      "denominators": [
+        "163"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2807",
+      "set_code": "CRE",
+      "set_name": "Chilling Reign",
+      "era": "swsh",
+      "denominators": [
+        "198"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2848",
+      "set_code": "EVS",
+      "set_name": "Evolving Skies",
+      "era": "swsh",
+      "denominators": [
+        "203"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2867",
+      "set_code": "CEL",
+      "set_name": "Celebrations",
+      "era": "swsh",
+      "denominators": [
+        "25"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2906",
+      "set_code": "FST",
+      "set_name": "Fusion Strike",
+      "era": "swsh",
+      "denominators": [
+        "264"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2948",
+      "set_code": "BRS",
+      "set_name": "Brilliant Stars",
+      "era": "swsh",
+      "denominators": [
+        "172"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "3040",
+      "set_code": "ASR",
+      "set_name": "Astral Radiance",
+      "era": "swsh",
+      "denominators": [
+        "189"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "3064",
+      "set_code": "PGO",
+      "set_name": "Pok\u00e9mon GO",
+      "era": "swsh",
+      "denominators": [
+        "78"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "3118",
+      "set_code": "LOR",
+      "set_name": "Lost Origin",
+      "era": "swsh",
+      "denominators": [
+        "196"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "3170",
+      "set_code": "SIT",
+      "set_name": "Silver Tempest",
+      "era": "swsh",
+      "denominators": [
+        "195"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "17688",
+      "set_code": "CRZ",
+      "set_name": "Crown Zenith",
+      "era": "swsh",
+      "denominators": [
+        "159"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23237",
+      "set_code": "SVI",
+      "set_name": "Scarlet & Violet",
+      "era": "sv",
+      "denominators": [
+        "198"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23120",
+      "set_code": "PAL",
+      "set_name": "Paldea Evolved",
+      "era": "sv",
+      "denominators": [
+        "193"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23228",
+      "set_code": "OBF",
+      "set_name": "Obsidian Flames",
+      "era": "sv",
+      "denominators": [
+        "197"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23237",
+      "set_code": "MEW",
+      "set_name": "Pok\u00e9mon 151",
+      "era": "sv",
+      "denominators": [
+        "165"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23286",
+      "set_code": "PAR",
+      "set_name": "Paradox Rift",
+      "era": "sv",
+      "denominators": [
+        "182"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23353",
+      "set_code": "PAF",
+      "set_name": "Paldean Fates",
+      "era": "sv",
+      "denominators": [
+        "91"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23381",
+      "set_code": "TEF",
+      "set_name": "Temporal Forces",
+      "era": "sv",
+      "denominators": [
+        "162"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23473",
+      "set_code": "TWM",
+      "set_name": "Twilight Masquerade",
+      "era": "sv",
+      "denominators": [
+        "167"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23529",
+      "set_code": "SFA",
+      "set_name": "Shrouded Fable",
+      "era": "sv",
+      "denominators": [
+        "64"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23537",
+      "set_code": "SCR",
+      "set_name": "Stellar Crown",
+      "era": "sv",
+      "denominators": [
+        "142"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23651",
+      "set_code": "SSP",
+      "set_name": "Surging Sparks",
+      "era": "sv",
+      "denominators": [
+        "191"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "23821",
+      "set_code": "PRE",
+      "set_name": "Prismatic Evolutions",
+      "era": "sv",
+      "denominators": [
+        "131"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "24073",
+      "set_code": "JTG",
+      "set_name": "Journey Together",
+      "era": "sv",
+      "denominators": [
+        "159"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "24269",
+      "set_code": "DRI",
+      "set_name": "Destined Rivals",
+      "era": "sv",
+      "denominators": [
+        "182"
+      ],
+      "promo_prefix": null
+    }
+  ]
+}

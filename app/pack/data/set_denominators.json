@@ -1,5 +1,5 @@
 {
-  "_provisional": "hand-seeded 2026-06-11; regenerate with scripts/build_denominator_table.py once POKEWALLET_API_KEY is available",
+  "_provisional": "hand-seeded 2026-06-11; MEW/151 omitted (unknown PokéWallet set_id); regenerate with scripts/build_denominator_table.py once POKEWALLET_API_KEY is available",
   "sets": [
     {
       "set_id": "23876",
@@ -198,16 +198,6 @@
       "era": "sv",
       "denominators": [
         "197"
-      ],
-      "promo_prefix": null
-    },
-    {
-      "set_id": "23237",
-      "set_code": "MEW",
-      "set_name": "Pok\u00e9mon 151",
-      "era": "sv",
-      "denominators": [
-        "165"
       ],
       "promo_prefix": null
     },

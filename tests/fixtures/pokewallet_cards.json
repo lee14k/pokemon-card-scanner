@@ -1,1 +1,38 @@
-[]
+[
+  {
+    "id": "test-ssh-0",
+    "set_id": "23876",
+    "card_info": {
+      "name": "Test Mon A",
+      "set_name": "Sword And Shield",
+      "card_number": "012/202",
+      "rarity": "Common"
+    },
+    "tcgplayer": null,
+    "cardmarket": null
+  },
+  {
+    "id": "test-viv-1",
+    "set_id": "2701",
+    "card_info": {
+      "name": "Test Mon B",
+      "set_name": "Vivid Voltage",
+      "card_number": "045/185",
+      "rarity": "Common"
+    },
+    "tcgplayer": null,
+    "cardmarket": null
+  },
+  {
+    "id": "test-svi-2",
+    "set_id": "23237",
+    "card_info": {
+      "name": "Test Mon C",
+      "set_name": "Scarlet & Violet",
+      "card_number": "101/198",
+      "rarity": "Common"
+    },
+    "tcgplayer": null,
+    "cardmarket": null
+  }
+]

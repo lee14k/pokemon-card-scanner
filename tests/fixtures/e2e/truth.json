@@ -1,0 +1,32 @@
+{
+  "capture_meta": {
+    "guide_positions": [
+      1130,
+      1250,
+      1370
+    ],
+    "image_dims": [
+      910,
+      1450
+    ],
+    "declared_count": 3
+  },
+  "cards": [
+    {
+      "row_index": 0,
+      "number": "012/202",
+      "set_id": "23876"
+    },
+    {
+      "row_index": 1,
+      "number": "045/185",
+      "set_id": "2701"
+    },
+    {
+      "row_index": 2,
+      "number": "101/198",
+      "set_id": "23237"
+    }
+  ],
+  "code": "TEST1-CODE2-CARD3"
+}

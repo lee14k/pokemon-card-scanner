@@ -62,8 +62,12 @@ SLUG_TO_SET: dict[str, tuple[str, str]] = {
     "destined-rivals": ("DRI", "sv"),
     "black-bolt": ("BLK", "sv"),
     "white-flare": ("WHT", "sv"),
+    # Black-star promo sets. Currently carry placeholder set_id=-172 in the symbol
+    # index (skipped by the non-positive guard). Listed so that once a real id is
+    # scraped, the build picks them up automatically instead of silently omitting them.
+    "swsh-black-star-promos": ("SWSHP", "swsh"),
+    "scarlet-and-violet-black-star-promos": ("SVP", "sv"),
 }
-PROMO_PREFIXES = {"SWSH": "swsh", "SVP": "sv"}  # prefix -> era; set ids resolved below
 
 
 async def main() -> None:

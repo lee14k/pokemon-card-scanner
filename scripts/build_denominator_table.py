@@ -17,8 +17,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.pokewallet import get_api_key, search_cards  # noqa: E402
 
-SYMBOL_INDEX = Path("app/data/set_symbols/index.json")
-OUT = Path("app/pack/data/set_denominators.json")
+_ROOT = Path(__file__).resolve().parent.parent
+SYMBOL_INDEX = _ROOT / "app" / "data" / "set_symbols" / "index.json"
+OUT = _ROOT / "app" / "pack" / "data" / "set_denominators.json"
 
 # Canonical code + era per pokesymbols file slug. The index's own set_code values
 # are scraped and non-canonical (e.g. "S-P" for SWSH base) — never join on them.
@@ -89,6 +90,8 @@ async def main() -> None:
             print(f"{code:5} SKIPPED: placeholder set_id={set_id} in symbol index "
                   f"(fix via scripts/scrape_pokesymbols.py / build_set_symbol_index.py)")
             continue
+        # limit=100 is enough: the printed denominator appears on every base card, so
+        # >=3 hits are virtually guaranteed even in large sets (FST 264, SSH 202, EVS 203).
         data = await search_cards(set_id, limit=100, api_key=api_key)
         results = data.get("results") or []
         denoms: Counter[str] = Counter()
@@ -102,6 +105,9 @@ async def main() -> None:
         # Keep denominators seen on >= 3 cards (filters misparses); secret rares
         # share the printed denominator so the modal value is the right one.
         keep = sorted([d for d, n in denoms.items() if n >= 3])
+        if not keep:
+            print(f"{code:5} WARNING: NO denominators found "
+                  f"(API returned {len(results)} results — fill this row by hand)")
         rows.append(
             {
                 "set_id": set_id,

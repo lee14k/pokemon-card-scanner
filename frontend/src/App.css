@@ -344,3 +344,26 @@
   flex: 1 1 10rem;
   min-width: min(100%, 12rem);
 }
+
+/* --- pack scanner flow --- */
+.app { max-width: 480px; margin: 0 auto; padding: 12px; }
+.camera-stage { position: relative; }
+.camera-stage video { width: 100%; border-radius: 8px; }
+.camera-overlay { position: absolute; inset: 0; pointer-events: none; }
+.camera-actions { display: flex; gap: 12px; align-items: center; margin-top: 8px; }
+.camera-error { color: #c0392b; }
+.upload-fallback { text-decoration: underline; cursor: pointer; }
+.count-stepper { display: flex; gap: 12px; align-items: center; margin: 8px 0; }
+.card-rows { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.card-row { display: flex; gap: 10px; padding: 8px; border: 1px solid #ddd; border-radius: 8px; }
+.card-row.flagged { border-color: #c0392b; background: #fdf0ee; }
+.card-thumb { width: 56px; height: 78px; object-fit: cover; border-radius: 4px; }
+.card-thumb.placeholder { display: flex; align-items: center; justify-content: center; background: #eee; }
+.card-row-body { display: flex; flex-direction: column; gap: 2px; }
+.card-row-flag { display: flex; gap: 8px; align-items: center; }
+.warn-banner { background: #fff3cd; border: 1px solid #ffe08a; padding: 8px; border-radius: 6px; margin-bottom: 8px; }
+.fix-form { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin: 12px 0; display: flex; flex-direction: column; gap: 8px; }
+.fix-preview img { width: 120px; border-radius: 6px; }
+button.primary { background: #2c6fbb; color: white; border: none; padding: 10px 16px; border-radius: 8px; }
+button.primary:disabled { background: #9bb8d4; }
+.status { text-align: center; padding: 24px 0; }

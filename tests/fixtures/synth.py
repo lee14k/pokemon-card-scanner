@@ -24,8 +24,15 @@ def make_card(number_text: str, set_code: str = "") -> Image.Image:
     im = Image.new("RGB", (CARD_W, CARD_H), (250, 245, 230))
     d = ImageDraw.Draw(im)
     d.rectangle([0, 0, CARD_W - 1, CARD_H - 1], outline=(40, 40, 40), width=6)
-    label = f"{set_code} {number_text}".strip()
-    d.text((40, CARD_H - 70), label, fill=(20, 20, 20), font=_font(38))
+    font = _font(44)
+    if set_code:
+        # Render set code and card number as separate draws with an explicit gap
+        # wide enough that Tesseract treats them as distinct words (≥80px gap).
+        d.text((40, CARD_H - 70), set_code, fill=(20, 20, 20), font=font)
+        x_num = 40 + int(font.getlength(set_code)) + 80
+        d.text((x_num, CARD_H - 70), number_text, fill=(20, 20, 20), font=font)
+    else:
+        d.text((40, CARD_H - 70), number_text, fill=(20, 20, 20), font=font)
     return im
 
 

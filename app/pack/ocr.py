@@ -57,8 +57,28 @@ def _ocr_tokens(img: np.ndarray, config: str) -> list[tuple[str, float]]:
     return out
 
 
+def _matched_token_confidence(
+    tokens: list[tuple[str, float]], matched_span: str
+) -> float:
+    """Mean confidence of the tokens that literally compose a regex match.
+
+    matched_span is m.group(0); its whitespace-split pieces are exactly the OCR
+    tokens that formed the match. Using whole-token membership (not substring
+    containment) avoids crediting unrelated tokens that merely share digits
+    (e.g. a stray "4012" when the number is "012/202", or a "SV1" set code when
+    the number is "1/10"). Handles both single-token reads ("012/202") and
+    split reads ("012", "/", "202"). Falls back to 0.3 if attribution is empty.
+    """
+    span_tokens = set(matched_span.split())
+    hit = [c for t, c in tokens if t in span_tokens]
+    return float(np.mean(hit)) / 100.0 if hit else 0.3
+
+
 def read_card_number(strip_bgr: np.ndarray) -> NumberReading:
     """Best card-number reading across preprocessing variants and PSM modes."""
+    if strip_bgr.ndim != 3 or strip_bgr.shape[2] != 3 or strip_bgr.size == 0:
+        log.warning("ocr.number invalid_input shape=%s", getattr(strip_bgr, "shape", None))
+        return NumberReading(blank=True)
     best = NumberReading()
     any_text = False
     for variant in _prep_variants(strip_bgr):
@@ -67,12 +87,10 @@ def read_card_number(strip_bgr: np.ndarray) -> NumberReading:
             if tokens:
                 any_text = True
             joined = " ".join(t for t, _ in tokens)
-            confs = {t: c for t, c in tokens}
 
             m = NUMBER_RE.search(joined)
             if m:
-                hit_confs = [c for t, c in tokens if any(g in t for g in m.groups())]
-                conf = float(np.mean(hit_confs)) / 100.0 if hit_confs else 0.3
+                conf = _matched_token_confidence(tokens, m.group(0))
                 if conf > best.confidence or not best.pattern_ok:
                     best = NumberReading(
                         raw=joined, numerator=m.group(1), denominator=m.group(2),
@@ -83,7 +101,7 @@ def read_card_number(strip_bgr: np.ndarray) -> NumberReading:
 
             p = PROMO_RE.search(joined)
             if p and not best.pattern_ok:
-                conf = float(confs.get(p.group(1), 50.0)) / 100.0
+                conf = _matched_token_confidence(tokens, p.group(0))
                 best = NumberReading(
                     raw=joined, numerator=p.group(2), denominator=None,
                     prefix=p.group(1), confidence=conf, pattern_ok=True,
@@ -112,8 +130,34 @@ class CodeReading:
     format_ok: bool = False
 
 
+_CODE_SEGMENT_RE = re.compile(r"[A-Z0-9]{3,6}")
+
+
+def _recover_split_code(tokens: list[tuple[str, float]]) -> CodeReading | None:
+    """Recover a code whose hyphens OCR dropped AND split it into separate tokens
+    (e.g. ["TEST1","CODE2","CARD3"] — each too short for CODE_TOKEN_RE alone).
+
+    Conservative: only fires when 2-5 segment-shaped tokens (3-6 alnum chars) are
+    present and their concatenation is 9-30 chars, so a framed code card with a
+    little stray text still recovers but a page of text does not. The reconstructed
+    code has no hyphens, so format_ok is False (advisory only); downstream dedup
+    must compare codes hyphen-insensitively.
+    """
+    segs = [(t, c) for t, c in tokens if _CODE_SEGMENT_RE.fullmatch(t)]
+    if not (2 <= len(segs) <= 5):
+        return None
+    joined = "".join(t for t, _ in segs)
+    if not (9 <= len(joined) <= 30) or not CODE_TOKEN_RE.fullmatch(joined):
+        return None
+    conf = float(np.mean([c for _, c in segs])) / 100.0
+    return CodeReading(code=joined, confidence=conf, format_ok=False)
+
+
 def read_code_card(image_bgr: np.ndarray) -> CodeReading:
     """OCR the TCG Live code from a framed close-up. Format check is advisory."""
+    if image_bgr.ndim != 3 or image_bgr.shape[2] != 3 or image_bgr.size == 0:
+        log.warning("ocr.code invalid_input shape=%s", getattr(image_bgr, "shape", None))
+        return CodeReading()
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
     if max(h, w) < 900:
@@ -122,11 +166,12 @@ def read_code_card(image_bgr: np.ndarray) -> CodeReading:
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     best: CodeReading = CodeReading()
+    saw_tokens = False
     for img in (bw, cv2.bitwise_not(bw)):
         tokens = _ocr_tokens(img, _CODE_CONFIG)
+        saw_tokens = saw_tokens or bool(tokens)
         for t, c in tokens:
-            m = CODE_TOKEN_RE.fullmatch(t)
-            if not m:
+            if not CODE_TOKEN_RE.fullmatch(t):
                 continue
             conf = c / 100.0
             if conf > best.confidence:
@@ -134,5 +179,13 @@ def read_code_card(image_bgr: np.ndarray) -> CodeReading:
                     code=t, confidence=conf,
                     format_ok=bool(CODE_FORMAT_RE.fullmatch(t)),
                 )
+        # Hyphen-loss recovery only when no whole-token code has been found yet.
+        if best.code is None:
+            recovered = _recover_split_code(tokens)
+            if recovered is not None and recovered.confidence > best.confidence:
+                log.info("ocr.code recovered_from_segments code=%s", recovered.code)
+                best = recovered
+    if best.code is None and saw_tokens:
+        log.info("ocr.code tokens_present_but_no_code_matched")
     log.info("ocr.code code=%s conf=%.2f format_ok=%s", best.code, best.confidence, best.format_ok)
     return best

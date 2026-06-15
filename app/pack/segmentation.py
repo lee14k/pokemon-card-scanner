@@ -65,10 +65,47 @@ def _cluster_rows(cands: list[tuple[float, float]], min_gap: float) -> list[tupl
     ]
 
 
+def _parse_capture_meta(
+    capture_meta: dict, img_h: int
+) -> tuple[list[float], float, int] | None:
+    """Validate + scale guided-capture metadata. capture_meta is untrusted client
+    JSON (no schema upstream), so every field is parsed defensively. Returns
+    (sorted scaled guide y-positions, median gap, declared_count) or None when the
+    metadata is missing, malformed, or degenerate (caller emits bad_capture_meta).
+    """
+    try:
+        guides_raw = [float(g) for g in capture_meta.get("guide_positions", [])]
+    except (TypeError, ValueError):
+        return None
+    if len(guides_raw) < 2:
+        return None
+    # Guides are y-pixel positions; scale by img_h / capture_height. Vertical-only
+    # resize is safe (assumes no vertical crop between capture and upload).
+    dims = capture_meta.get("image_dims")
+    if isinstance(dims, (list, tuple)) and len(dims) >= 2:
+        try:
+            meta_h = float(dims[1]) or float(img_h)
+        except (TypeError, ValueError):
+            meta_h = float(img_h)
+    else:
+        meta_h = float(img_h)
+    guides = sorted(g * (img_h / meta_h) for g in guides_raw)
+    median_gap = float(np.median(np.diff(guides)))
+    if median_gap < 1.0:  # duplicate/degenerate guides — would yield identical strips
+        return None
+    try:
+        declared = int(capture_meta.get("declared_count") or len(guides))
+    except (TypeError, ValueError):
+        declared = len(guides)
+    return guides, median_gap, declared
+
+
 def _extract_strip(img: np.ndarray, y_edge: float, band: int, angle: float, idx: int) -> Strip:
     h, w = img.shape[:2]
     y1 = int(min(h, round(y_edge)))
     y0 = int(max(0, y1 - band))
+    if y1 - y0 < 1:
+        log.debug("segmentation.zero_height_strip idx=%s y_edge=%.1f band=%s", idx, y_edge, band)
     crop = img[y0:y1, :].copy()
     if abs(angle) > 0.3 and crop.shape[0] > 8:
         ch, cw = crop.shape[:2]
@@ -91,26 +128,21 @@ def find_strips(img: np.ndarray, capture_meta: dict | None) -> SegmentationResul
     cands = _candidate_bottom_edges(gray)
 
     if capture_meta:
-        guides_raw = [float(g) for g in capture_meta.get("guide_positions", [])]
-        meta_h = float((capture_meta.get("image_dims") or [w, h])[1]) or h
-        scale = h / meta_h
-        guides = [g * scale for g in guides_raw]
-        if len(guides) < 2:
+        parsed = _parse_capture_meta(capture_meta, h)
+        if parsed is None:
             return SegmentationResult(strips=[], warning="bad_capture_meta")
-        gaps = np.diff(sorted(guides))
-        median_gap = float(np.median(gaps))
+        guides, median_gap, declared = parsed
         clusters = _cluster_rows(cands, min_gap=median_gap * 0.5)
         tol = median_gap * cfg.guide_snap_tolerance
         band = max(20, int(median_gap * cfg.strip_band_frac))
         strips = []
-        for i, gy in enumerate(sorted(guides)):
+        for i, gy in enumerate(guides):  # already sorted by _parse_capture_meta
             near = [(abs(cy - gy), cy, a) for cy, a in clusters if abs(cy - gy) <= tol]
             if near:
                 _, cy, a = min(near)
                 strips.append(_extract_strip(img, cy, band, a, i))
             else:
                 strips.append(_extract_strip(img, gy, band, 0.0, i))
-        declared = int(capture_meta.get("declared_count") or len(guides))
         warning = None if declared == len(strips) else (
             f"detected {len(strips)} rows, declared {declared}"
         )

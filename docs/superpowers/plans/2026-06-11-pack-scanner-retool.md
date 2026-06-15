@@ -1245,7 +1245,7 @@ def match_symbol_among(
         d = min(_hamming(h, ref.hash_int) for h in cand_hashes)
         if ref.set_id not in per_set or d < per_set[ref.set_id][0]:
             per_set[ref.set_id] = (d, ref)
-    ranked = sorted(per_set.values())
+    ranked = sorted(per_set.values(), key=lambda dr: dr[0])
     best_d, best_ref = ranked[0]
     second_d = ranked[1][0] if len(ranked) > 1 else None
     log.info(

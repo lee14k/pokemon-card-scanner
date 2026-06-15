@@ -98,3 +98,41 @@ def read_card_number(strip_bgr: np.ndarray) -> NumberReading:
         best.confidence, best.pattern_ok,
     )
     return best
+
+
+CODE_TOKEN_RE = re.compile(r"[A-Z0-9][A-Z0-9-]{8,}")
+CODE_FORMAT_RE = re.compile(r"[A-Z0-9]{3,6}(-[A-Z0-9]{3,6}){2,4}")
+_CODE_CONFIG = "--psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ- "
+
+
+@dataclass
+class CodeReading:
+    code: str | None = None
+    confidence: float = 0.0
+    format_ok: bool = False
+
+
+def read_code_card(image_bgr: np.ndarray) -> CodeReading:
+    """OCR the TCG Live code from a framed close-up. Format check is advisory."""
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    if max(h, w) < 900:
+        scale = 900 / max(h, w)
+        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    best: CodeReading = CodeReading()
+    for img in (bw, cv2.bitwise_not(bw)):
+        tokens = _ocr_tokens(img, _CODE_CONFIG)
+        for t, c in tokens:
+            m = CODE_TOKEN_RE.fullmatch(t)
+            if not m:
+                continue
+            conf = c / 100.0
+            if conf > best.confidence:
+                best = CodeReading(
+                    code=t, confidence=conf,
+                    format_ok=bool(CODE_FORMAT_RE.fullmatch(t)),
+                )
+    log.info("ocr.code code=%s conf=%.2f format_ok=%s", best.code, best.confidence, best.format_ok)
+    return best

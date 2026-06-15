@@ -2723,8 +2723,11 @@ export default defineConfig({
 ```typescript
 import { test, expect } from "@playwright/test";
 import * as path from "path";
+import { fileURLToPath } from "url";
 
-const FIXTURES = path.resolve(__dirname, "../../tests/fixtures/e2e");
+// The project is ESM ("type": "module"), so __dirname is undefined here — derive it.
+const _dir = path.dirname(fileURLToPath(import.meta.url));
+const FIXTURES = path.resolve(_dir, "../../tests/fixtures/e2e");
 
 test("upload → review → confirm flow", async ({ page }) => {
   await page.goto("/");

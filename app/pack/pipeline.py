@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import cv2
@@ -23,11 +24,15 @@ def _decode(data: bytes) -> np.ndarray | None:
         return None
     arr = np.frombuffer(data, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        log.warning("pipeline.decode_failed bytes=%s (non-empty but undecodable)", len(data))
     return img
 
 
 def _display_number(numerator: str | None, denominator: str | None,
                     prefix: str | None) -> str | None:
+    # Invariant from read_card_number: a numerator is only ever set alongside a
+    # denominator (NUMBER_RE) or a prefix (PROMO_RE), so no real reading is dropped here.
     if prefix and numerator:
         return f"{prefix}{numerator}"
     if numerator and denominator:
@@ -45,8 +50,17 @@ async def scan_pack(
         raise ValueError("staircase image could not be decoded")
 
     seg = find_strips(stair, capture_meta)
-    readings = [read_card_number(s.image) for s in seg.strips]
-    resolutions = [resolve_set(r, s.image) for r, s in zip(readings, seg.strips)]
+    # OCR + symbol matching are blocking CPU/subprocess work (~8 tesseract calls per
+    # strip); offload to threads so this async path (a FastAPI endpoint) doesn't pin
+    # the event loop for the whole pack.
+    readings = list(
+        await asyncio.gather(*(asyncio.to_thread(read_card_number, s.image) for s in seg.strips))
+    )
+    resolutions = list(
+        await asyncio.gather(
+            *(asyncio.to_thread(resolve_set, r, s.image) for r, s in zip(readings, seg.strips))
+        )
+    )
 
     matches = await lookup_resolved_cards(
         [(r.numerator, res) for r, res in zip(readings, resolutions)],

@@ -16,6 +16,11 @@ BASE_URL = "https://api.pokewallet.io"
 def _base_url() -> str:
     return os.environ.get("POKEWALLET_BASE_URL", "").strip() or BASE_URL
 
+
+def make_async_client(timeout: float = 30.0) -> httpx.AsyncClient:
+    """Shared-client factory bound to the (env-overridable) base URL."""
+    return httpx.AsyncClient(base_url=_base_url(), timeout=timeout)
+
 log = logging.getLogger("pokemon_scanner.pokewallet")
 
 

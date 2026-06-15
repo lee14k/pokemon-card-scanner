@@ -5,6 +5,6 @@ __pycache__/
 .Python
 frontend/node_modules/
 frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
 scripts/output/
-
-.env.example

@@ -80,3 +80,77 @@ def _build_denominator_table(path: Path | None) -> DenominatorTable:
     )
     log.info("denominator_table.loaded sets=%s denominators=%s", len(sets), len(by_denom))
     return table
+
+
+from dataclasses import dataclass as _dataclass  # noqa: E402  (kept distinct from frozen ones above)
+
+import cv2  # noqa: E402
+from PIL import Image  # noqa: E402
+
+from app.pack.ocr import NumberReading  # noqa: E402
+from app.set_symbol_index import match_symbol_among  # noqa: E402
+
+
+@_dataclass
+class SetResolution:
+    set_id: str | None = None
+    set_code: str | None = None
+    set_name: str | None = None
+    method: str = "unresolved"
+    # one of: promo_prefix | code_text | denominator_unique | symbol_tiebreak | unresolved
+    candidates: tuple[str, ...] = ()   # candidate set_ids considered
+    margin: int | None = None          # symbol hash margin when method=symbol_tiebreak
+
+
+def _entry_to_resolution(entry: SetEntry, method: str, candidates: tuple[str, ...],
+                         margin: int | None = None) -> SetResolution:
+    return SetResolution(
+        set_id=entry.set_id, set_code=entry.set_code, set_name=entry.set_name,
+        method=method, candidates=candidates, margin=margin,
+    )
+
+
+def resolve_set(reading: NumberReading, strip_bgr) -> SetResolution:
+    """
+    Resolution order (cheap, reliable signals first):
+      1. promo prefix (SWSH###/SVP###)
+      2. set-code text in the OCR tokens (SV-era cards print it, e.g. "SVI")
+      3. unique denominator
+      4. symbol perceptual-hash tiebreak among denominator candidates
+    """
+    table = load_denominator_table()
+
+    if reading.prefix:
+        entry = table.by_promo_prefix.get(reading.prefix.upper())
+        if entry:
+            return _entry_to_resolution(entry, "promo_prefix", (entry.set_id,))
+        return SetResolution(method="unresolved")
+
+    for token in reading.tokens:
+        entry = table.by_code.get(token.upper())
+        if entry:
+            return _entry_to_resolution(entry, "code_text", (entry.set_id,))
+
+    if not reading.denominator:
+        return SetResolution(method="unresolved")
+
+    candidates = table.by_denominator.get(reading.denominator.upper(), ())
+    if len(candidates) == 1:
+        return _entry_to_resolution(candidates[0], "denominator_unique",
+                                    (candidates[0].set_id,))
+    if not candidates:
+        return SetResolution(method="unresolved")
+
+    # Tiebreak: symbol hash over the strip's left region, candidates only.
+    h, w = strip_bgr.shape[:2]
+    left = strip_bgr[:, : max(1, int(w * 0.40))]
+    crop = Image.fromarray(cv2.cvtColor(left, cv2.COLOR_BGR2RGB))
+    cand_ids = tuple(c.set_id for c in candidates)
+    hit = match_symbol_among(crop, set(cand_ids))
+    if hit is None:
+        return SetResolution(method="unresolved", candidates=cand_ids)
+    ref, dist, second = hit
+    margin = (second - dist) if second is not None else None
+    winner = next(c for c in candidates if c.set_id == ref.set_id)
+    log.info("set_resolution.tiebreak winner=%s dist=%s margin=%s", ref.set_id, dist, margin)
+    return _entry_to_resolution(winner, "symbol_tiebreak", cand_ids, margin)

@@ -374,6 +374,33 @@ def match_set_symbol(crop: Image.Image, max_distance: int | None = None) -> tupl
     return (ref, dist)
 
 
+def match_symbol_among(
+    crop: Image.Image, allowed_set_ids: set[str]
+) -> tuple[SymbolRef, int, int | None] | None:
+    """
+    Best symbol match restricted to allowed_set_ids: (ref, distance, second_best
+    distance among the OTHER allowed sets). Small-pool discrimination for
+    denominator tiebreaks — no global threshold applied here; caller judges margin.
+    """
+    refs = [r for r in load_symbol_index() if r.set_id in allowed_set_ids]
+    if not refs:
+        return None
+    cand_hashes = _candidate_hashes_for_crop(crop)
+    per_set: dict[str, tuple[int, SymbolRef]] = {}
+    for ref in refs:
+        d = min(_hamming(h, ref.hash_int) for h in cand_hashes)
+        if ref.set_id not in per_set or d < per_set[ref.set_id][0]:
+            per_set[ref.set_id] = (d, ref)
+    ranked = sorted(per_set.values())
+    best_d, best_ref = ranked[0]
+    second_d = ranked[1][0] if len(ranked) > 1 else None
+    log.info(
+        "set_symbol.among pool=%s best=%s d=%s second=%s",
+        sorted(allowed_set_ids), best_ref.set_id, best_d, second_d,
+    )
+    return best_ref, best_d, second_d
+
+
 def match_set_symbol_best_of_crops(
     processed_variants: list[Image.Image] | Image.Image,
     *,

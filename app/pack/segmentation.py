@@ -1,0 +1,141 @@
+"""Locate per-card bottom strips in a staircase photo."""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+
+import cv2
+import numpy as np
+
+from app.pack.config import settings
+
+log = logging.getLogger("pokemon_scanner.pack.segmentation")
+
+
+@dataclass
+class Strip:
+    row_index: int
+    image: np.ndarray  # BGR, deskewed
+    bbox: tuple[int, int, int, int]  # x, y, w, h in source image
+    angle: float
+
+
+@dataclass
+class SegmentationResult:
+    strips: list[Strip]
+    warning: str | None
+
+
+def _candidate_bottom_edges(gray: np.ndarray) -> list[tuple[float, float]]:
+    """(y_at_image_center, angle_deg) for long near-horizontal lines."""
+    h, w = gray.shape
+    edges = cv2.Canny(gray, 50, 150)
+    lines = cv2.HoughLinesP(
+        edges, 1, np.pi / 180, threshold=120,
+        minLineLength=int(w * 0.45), maxLineGap=int(w * 0.05),
+    )
+    out: list[tuple[float, float]] = []
+    if lines is None:
+        return out
+    for x1, y1, x2, y2 in lines[:, 0]:
+        dx, dy = float(x2 - x1), float(y2 - y1)
+        if dx == 0:
+            continue
+        angle = float(np.degrees(np.arctan2(dy, dx)))
+        if abs(angle) > 10:
+            continue
+        yc = y1 + dy * ((w / 2 - x1) / dx)
+        out.append((float(yc), angle))
+    return out
+
+
+def _cluster_rows(cands: list[tuple[float, float]], min_gap: float) -> list[tuple[float, float]]:
+    """Merge candidates closer than min_gap; return (median_y, median_angle) per cluster."""
+    cands = sorted(cands)
+    clusters: list[list[tuple[float, float]]] = []
+    for y, a in cands:
+        if clusters and y - clusters[-1][-1][0] < min_gap:
+            clusters[-1].append((y, a))
+        else:
+            clusters.append([(y, a)])
+    return [
+        (float(np.median([y for y, _ in c])), float(np.median([a for _, a in c])))
+        for c in clusters
+    ]
+
+
+def _extract_strip(img: np.ndarray, y_edge: float, band: int, angle: float, idx: int) -> Strip:
+    h, w = img.shape[:2]
+    y1 = int(min(h, round(y_edge)))
+    y0 = int(max(0, y1 - band))
+    crop = img[y0:y1, :].copy()
+    if abs(angle) > 0.3 and crop.shape[0] > 8:
+        ch, cw = crop.shape[:2]
+        m = cv2.getRotationMatrix2D((cw / 2, ch / 2), angle, 1.0)
+        crop = cv2.warpAffine(crop, m, (cw, ch), flags=cv2.INTER_LINEAR,
+                              borderMode=cv2.BORDER_REPLICATE)
+    return Strip(row_index=idx, image=crop, bbox=(0, y0, w, y1 - y0), angle=angle)
+
+
+def find_strips(img: np.ndarray, capture_meta: dict | None) -> SegmentationResult:
+    """
+    Guided path (capture_meta given): one strip per guide position, snapped to a
+    detected edge when one lies within tolerance — rows are NEVER dropped.
+    Ungrided path: best self-consistent cluster set within [min_rows, max_rows].
+    """
+    cfg = settings()
+    h, w = img.shape[:2]
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.fastNlMeansDenoising(gray, h=7)
+    cands = _candidate_bottom_edges(gray)
+
+    if capture_meta:
+        guides_raw = [float(g) for g in capture_meta.get("guide_positions", [])]
+        meta_h = float((capture_meta.get("image_dims") or [w, h])[1]) or h
+        scale = h / meta_h
+        guides = [g * scale for g in guides_raw]
+        if len(guides) < 2:
+            return SegmentationResult(strips=[], warning="bad_capture_meta")
+        gaps = np.diff(sorted(guides))
+        median_gap = float(np.median(gaps))
+        clusters = _cluster_rows(cands, min_gap=median_gap * 0.5)
+        tol = median_gap * cfg.guide_snap_tolerance
+        band = max(20, int(median_gap * cfg.strip_band_frac))
+        strips = []
+        for i, gy in enumerate(sorted(guides)):
+            near = [(abs(cy - gy), cy, a) for cy, a in clusters if abs(cy - gy) <= tol]
+            if near:
+                _, cy, a = min(near)
+                strips.append(_extract_strip(img, cy, band, a, i))
+            else:
+                strips.append(_extract_strip(img, gy, band, 0.0, i))
+        declared = int(capture_meta.get("declared_count") or len(guides))
+        warning = None if declared == len(strips) else (
+            f"detected {len(strips)} rows, declared {declared}"
+        )
+        log.info("segmentation.guided rows=%s snap_tol=%.1f", len(strips), tol)
+        return SegmentationResult(strips=strips, warning=warning)
+
+    # Ungrided: derive rows purely from detected edges.
+    if not cands:
+        return SegmentationResult(strips=[], warning="no rows detected")
+    rough = _cluster_rows(cands, min_gap=h * 0.02)
+    if len(rough) >= 2:
+        gaps = np.diff([y for y, _ in rough])
+        median_gap = float(np.median(gaps))
+        # Drop clusters that break uniform staircase spacing (shadows, table edges):
+        rows = [rough[0]]
+        for y, a in rough[1:]:
+            if y - rows[-1][0] >= median_gap * 0.5:
+                rows.append((y, a))
+    else:
+        rows = rough
+        median_gap = h * 0.1
+    band = max(20, int(median_gap * cfg.strip_band_frac))
+    strips = [_extract_strip(img, y, band, a, i) for i, (y, a) in enumerate(rows)]
+    warning = None
+    if not (cfg.min_rows <= len(strips) <= cfg.max_rows):
+        warning = f"detected {len(strips)} rows (expected {cfg.min_rows}-{cfg.max_rows})"
+    log.info("segmentation.ungrided rows=%s median_gap=%.1f", len(strips), median_gap)
+    return SegmentationResult(strips=strips, warning=warning)

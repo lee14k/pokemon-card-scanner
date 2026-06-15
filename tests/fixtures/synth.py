@@ -16,10 +16,14 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
 
 
 def make_card(number_text: str, set_code: str = "") -> Image.Image:
+    # No decorative inner frame: real card faces are busy art, not clean geometric
+    # lines. A high-contrast inner rectangle would create spurious full-width
+    # horizontal Hough edges on the fully-visible top card, over-segmenting the
+    # ungrided path with phantoms real photos don't have. Only the card's bottom
+    # border (the edge segmentation keys on) and the number label are drawn.
     im = Image.new("RGB", (CARD_W, CARD_H), (250, 245, 230))
     d = ImageDraw.Draw(im)
     d.rectangle([0, 0, CARD_W - 1, CARD_H - 1], outline=(40, 40, 40), width=6)
-    d.rectangle([30, 80, CARD_W - 30, CARD_H - 220], outline=(120, 120, 200), width=4)
     label = f"{set_code} {number_text}".strip()
     d.text((40, CARD_H - 70), label, fill=(20, 20, 20), font=_font(38))
     return im

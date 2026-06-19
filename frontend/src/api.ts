@@ -11,7 +11,7 @@ export interface PackCard {
   name: string | null;
   rarity: string | null;
   image_url: string | null;
-  match_id: string | null;
+  match_id: string | null; // PokéWallet card id — reserved for sub-project B persistence
   confidence: number;
   low_confidence_reason: string | null;
 }

@@ -73,63 +73,8 @@ async def search_cards(
             await client.aclose()
 
 
-async def search_cards_multi(
-    fragments: list[str],
-    *,
-    per_fragment_limit: int = 15,
-    api_key: str,
-    client: httpx.AsyncClient | None = None,
-) -> list[dict[str, Any]]:
-    seen: set[str] = set()
-    merged: list[dict[str, Any]] = []
-
-    own_client = client is None
-    if own_client:
-        client = httpx.AsyncClient(base_url=_base_url(), timeout=30.0)
-
-    try:
-        for frag in fragments:
-            data = await search_cards(
-                frag,
-                limit=per_fragment_limit,
-                api_key=api_key,
-                client=client,
-            )
-            for c in data.get("results") or []:
-                cid = c.get("id")
-                if cid and cid not in seen:
-                    seen.add(cid)
-                    merged.append(c)
-    finally:
-        if own_client and client is not None:
-            await client.aclose()
-
-    log.info(
-        "pokewallet.search_multi merged_unique=%s from_queries=%s",
-        len(merged),
-        fragments,
-    )
-    return merged
-
-
-async def search_cards_for_lookup(
-    search_queries: list[str],
-    *,
-    limit_per_query: int = 40,
-    api_key: str,
-) -> list[dict[str, Any]]:
-    """Run a small set of search queries and merge unique cards (breadth, not 12× noisy queries)."""
-    if not search_queries:
-        return []
-    return await search_cards_multi(
-        search_queries,
-        per_fragment_limit=limit_per_query,
-        api_key=api_key,
-    )
-
-
 def pokewallet_image_url(card_id: str, size: str = "high") -> str:
-    safe = quote(card_id, safe="")
+    safe = quote(str(card_id), safe="")
     return f"{_base_url()}/images/{safe}?size={size}"
 
 

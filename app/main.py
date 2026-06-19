@@ -8,8 +8,10 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+import httpx
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.logging_config import configure_logging
@@ -23,6 +25,10 @@ from app.set_symbol_index import load_symbol_index
 log = logging.getLogger("pokemon_scanner.api")
 
 _MAX_UPLOAD = 15 * 1024 * 1024
+# Whole multipart body ceiling (two images + fields + overhead) — rejected early via
+# Content-Length before buffering, so an oversized upload can't be read into memory.
+_MAX_BODY = 2 * _MAX_UPLOAD + 1024 * 1024
+_MAX_CAPTURE_META = 4096
 
 
 @asynccontextmanager
@@ -44,10 +50,23 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    allow_credentials=True,
+    # No cookie/session auth on this API, so credentialed CORS is unnecessary — and
+    # enabling it alongside a "*" origin would let any site make credentialed calls.
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _limit_body_size(request: Request, call_next):
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > _MAX_BODY:
+                return JSONResponse({"detail": "request body too large"}, status_code=413)
+        except ValueError:
+            return JSONResponse({"detail": "invalid Content-Length"}, status_code=400)
+    return await call_next(request)
 
 
 async def _read_image(upload: UploadFile, field: str) -> bytes:
@@ -77,9 +96,11 @@ async def scan_pack_endpoint(
 
     meta: dict | None = None
     if capture_meta:
+        if len(capture_meta) > _MAX_CAPTURE_META:
+            raise HTTPException(400, "capture_meta: payload too large")
         try:
             meta = json.loads(capture_meta)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             raise HTTPException(400, "capture_meta: invalid JSON")
 
     try:
@@ -109,8 +130,13 @@ async def cards_lookup(set_id: str, number: str) -> CardLookupResponse:
     if entry is None:
         raise HTTPException(404, f"unknown set_id {set_id}")
     numerator = number.split("/")[0].strip()
-    match = await lookup_card_exact(set_id, numerator, set_name=entry.set_name,
-                                    api_key=api_key)
+    try:
+        match = await lookup_card_exact(set_id, numerator, set_name=entry.set_name,
+                                        api_key=api_key)
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"PokéWallet returned {e.response.status_code}") from e
+    except httpx.HTTPError as e:
+        raise HTTPException(503, f"PokéWallet unreachable: {e}") from e
     if match is None:
         return CardLookupResponse(found=False, card=None)
     fields = card_fields_from_match(match)

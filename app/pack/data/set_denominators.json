@@ -1,5 +1,5 @@
 {
-  "_provisional": "hand-seeded 2026-06-11; MEW/151 omitted (unknown PokéWallet set_id); regenerate with scripts/build_denominator_table.py once POKEWALLET_API_KEY is available",
+  "_provisional": "hand-seeded 2026-06-11 (+TG/GG/shiny-vault subsets 2026-06-15); promo sets + MEW/151 omitted (set_id unknown); regenerate with scripts/build_denominator_table.py once POKEWALLET_API_KEY is available",
   "sets": [
     {
       "set_id": "23876",
@@ -298,6 +298,66 @@
       "era": "sv",
       "denominators": [
         "182"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "3020",
+      "set_code": "BRS-TG",
+      "set_name": "Brilliant Stars Trainer Gallery",
+      "era": "swsh",
+      "denominators": [
+        "TG30"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "3068",
+      "set_code": "ASR-TG",
+      "set_name": "Astral Radiance Trainer Gallery",
+      "era": "swsh",
+      "denominators": [
+        "TG30"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "3172",
+      "set_code": "LOR-TG",
+      "set_name": "Lost Origin Trainer Gallery",
+      "era": "swsh",
+      "denominators": [
+        "TG30"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "17674",
+      "set_code": "SIT-TG",
+      "set_name": "Silver Tempest Trainer Gallery",
+      "era": "swsh",
+      "denominators": [
+        "TG30"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "17689",
+      "set_code": "CRZ-GG",
+      "set_name": "Crown Zenith Galarian Gallery",
+      "era": "swsh",
+      "denominators": [
+        "GG70"
+      ],
+      "promo_prefix": null
+    },
+    {
+      "set_id": "2781",
+      "set_code": "SHF-SV",
+      "set_name": "Shining Fates Shiny Vault",
+      "era": "swsh",
+      "denominators": [
+        "SV122"
       ],
       "promo_prefix": null
     }

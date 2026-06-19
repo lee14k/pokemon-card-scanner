@@ -9,6 +9,19 @@ interface Props {
   onRetake: () => void;
 }
 
+// Turn the backend's machine-readable segmentation_warning into a friendly sentence.
+function friendlyWarning(warning: string): string {
+  const guided = warning.match(/detected (\d+) rows, declared (\d+)/);
+  if (guided) {
+    return `We found ${guided[1]} cards but you said ${guided[2]} — retake or continue?`;
+  }
+  const ungrided = warning.match(/detected (\d+) rows/);
+  if (ungrided) {
+    return `We found ${ungrided[1]} cards — double-check the list, then retake or continue.`;
+  }
+  return "We couldn't read the capture cleanly — retake or continue.";
+}
+
 export default function ReviewScreen({ scan, onConfirm, onRetake }: Props) {
   const [cards, setCards] = useState<PackCard[]>(scan.cards);
   const [resolvedRows, setResolvedRows] = useState<Set<number>>(new Set());
@@ -26,7 +39,7 @@ export default function ReviewScreen({ scan, onConfirm, onRetake }: Props) {
       <h2>Step 3 — Review your pulls</h2>
       {scan.segmentation_warning && (
         <div className="warn-banner">
-          {scan.segmentation_warning}.{" "}
+          {friendlyWarning(scan.segmentation_warning)}{" "}
           <button type="button" onClick={onRetake}>Retake photo</button>
         </div>
       )}

@@ -82,8 +82,6 @@ def _build_denominator_table(path: Path | None) -> DenominatorTable:
     return table
 
 
-from dataclasses import dataclass as _dataclass  # noqa: E402  (kept distinct from frozen ones above)
-
 import cv2  # noqa: E402
 from PIL import Image  # noqa: E402
 
@@ -91,7 +89,7 @@ from app.pack.ocr import NumberReading  # noqa: E402
 from app.set_symbol_index import match_symbol_among  # noqa: E402
 
 
-@_dataclass
+@dataclass
 class SetResolution:
     set_id: str | None = None
     set_code: str | None = None

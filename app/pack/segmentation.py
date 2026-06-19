@@ -79,6 +79,8 @@ def _parse_capture_meta(
         return None
     if len(guides_raw) < 2:
         return None
+    if len(guides_raw) > 20:  # real packs have <=13 cards; cap fan-out (DoS guard)
+        return None
     # Guides are y-pixel positions; scale by img_h / capture_height. Vertical-only
     # resize is safe (assumes no vertical crop between capture and upload).
     dims = capture_meta.get("image_dims")

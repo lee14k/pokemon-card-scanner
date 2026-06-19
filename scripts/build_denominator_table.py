@@ -70,6 +70,14 @@ SLUG_TO_SET: dict[str, tuple[str, str]] = {
     "scarlet-and-violet-black-star-promos": ("SVP", "sv"),
 }
 
+# Promo set slug -> the printed number prefix (no denominator on promos, e.g. "SWSH123").
+# resolve_set uses promo_prefix to identify promos; populate it so a future API run
+# (once these sets have real positive set_ids) makes promo resolution reachable.
+SLUG_TO_PROMO_PREFIX: dict[str, str] = {
+    "swsh-black-star-promos": "SWSH",
+    "scarlet-and-violet-black-star-promos": "SVP",
+}
+
 
 async def main() -> None:
     api_key = get_api_key()
@@ -115,7 +123,7 @@ async def main() -> None:
                 "set_name": set_name or code,
                 "era": era,
                 "denominators": keep,
-                "promo_prefix": None,
+                "promo_prefix": SLUG_TO_PROMO_PREFIX.get(slug),
             }
         )
         print(f"{code:5} {set_id:>7} {set_name!s:38} denominators={keep} (sampled {len(results)})")

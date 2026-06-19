@@ -29,6 +29,14 @@ def _decode(data: bytes) -> np.ndarray | None:
     return img
 
 
+def _lookup_numerator(reading) -> str | None:
+    """Numerator for the keyed PokéWallet lookup. Promo cards (SWSH/SVP) are stored
+    prefixed ("SWSH123") with no denominator; normal cards by bare numerator ("012")."""
+    if reading.prefix and reading.numerator:
+        return f"{reading.prefix}{reading.numerator}"
+    return reading.numerator
+
+
 def _display_number(numerator: str | None, denominator: str | None,
                     prefix: str | None) -> str | None:
     # Invariant from read_card_number: a numerator is only ever set alongside a
@@ -49,10 +57,10 @@ async def scan_pack(
     if stair is None:
         raise ValueError("staircase image could not be decoded")
 
-    seg = find_strips(stair, capture_meta)
-    # OCR + symbol matching are blocking CPU/subprocess work (~8 tesseract calls per
-    # strip); offload to threads so this async path (a FastAPI endpoint) doesn't pin
-    # the event loop for the whole pack.
+    # Segmentation (fastNlMeansDenoising + Hough), OCR, and symbol matching are all
+    # blocking CPU/subprocess work; offload to threads so this async path (a FastAPI
+    # endpoint) doesn't pin the event loop for the whole pack.
+    seg = await asyncio.to_thread(find_strips, stair, capture_meta)
     readings = list(
         await asyncio.gather(*(asyncio.to_thread(read_card_number, s.image) for s in seg.strips))
     )
@@ -63,7 +71,10 @@ async def scan_pack(
     )
 
     matches = await lookup_resolved_cards(
-        [(r.numerator, res) for r, res in zip(readings, resolutions)],
+        # The keyed lookup wants the card's numerator as the DB stores it. For promo
+        # cards (SWSH/SVP) that's the prefixed form "SWSH123" (the DB has no separate
+        # denominator); for normal cards it's the bare numerator "012" (NOT "012/202").
+        [(_lookup_numerator(r), res) for r, res in zip(readings, resolutions)],
         api_key=get_api_key(),
     )
 

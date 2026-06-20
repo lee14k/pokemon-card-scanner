@@ -39,7 +39,18 @@ class UserCreate(schemas.BaseUserCreate):
 
 
 class UserUpdate(schemas.BaseUserUpdate):
+    # handle is set once at registration and is NOT editable in v1 (profile editing
+    # is out of scope per the spec). Dropping it from the update dict avoids both an
+    # unguarded duplicate-handle 500 on PATCH /users/me and a case-normalization gap.
     handle: Optional[str] = None
+
+    def create_update_dict(self) -> dict:
+        d = super().create_update_dict()
+        d.pop("handle", None)
+        return d
+
+
+_settings = db_settings()
 
 
 # ── DB adapter ───────────────────────────────────────────────────────────────
@@ -49,8 +60,8 @@ async def get_user_db(session: AsyncSession = Depends(get_async_session)):
 
 # ── Manager ──────────────────────────────────────────────────────────────────
 class UserManager(UUIDIDMixin, BaseUserManager[Trainer, uuid.UUID]):
-    reset_password_token_secret = db_settings().auth_secret
-    verification_token_secret = db_settings().auth_secret
+    reset_password_token_secret = _settings.auth_secret
+    verification_token_secret = _settings.auth_secret
 
     async def create(self, user_create, safe: bool = False, request: Optional[Request] = None):
         # Email uniqueness is handled by the base (UserAlreadyExists -> 400).
@@ -69,8 +80,6 @@ async def get_user_manager(user_db=Depends(get_user_db)):
 
 
 # ── Auth backend (cookie + JWT) ──────────────────────────────────────────────
-_settings = db_settings()
-
 cookie_transport = CookieTransport(
     cookie_name="pcs_auth",
     cookie_max_age=_settings.session_lifetime_seconds,

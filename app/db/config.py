@@ -13,6 +13,18 @@ def _require(name: str) -> str:
     return v
 
 
+def _require_secret(name: str, min_bytes: int = 32) -> str:
+    # HS256 (RFC 7518 §3.2) needs a key >= 32 bytes; fail fast so a weak/placeholder
+    # secret can never reach production rather than silently signing with a warning.
+    v = _require(name)
+    if len(v.encode()) < min_bytes:
+        raise RuntimeError(
+            f"{name} is {len(v.encode())} bytes; needs >= {min_bytes}. "
+            'Generate with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
+        )
+    return v
+
+
 def _asyncpg_url(raw: str) -> str:
     # Railway (and most hosts) provide postgresql:// or postgres://; asyncpg needs
     # the +asyncpg driver segment. Replace only the scheme prefix, once.
@@ -28,7 +40,7 @@ def _asyncpg_url(raw: str) -> str:
 @dataclass(frozen=True)
 class DbSettings:
     database_url: str = field(default_factory=lambda: _asyncpg_url(_require("DATABASE_URL")))
-    auth_secret: str = field(default_factory=lambda: _require("AUTH_SECRET"))
+    auth_secret: str = field(default_factory=lambda: _require_secret("AUTH_SECRET"))
     photo_storage_dir: str = field(
         default_factory=lambda: os.environ.get("PHOTO_STORAGE_DIR", "").strip() or "./var/pulls"
     )

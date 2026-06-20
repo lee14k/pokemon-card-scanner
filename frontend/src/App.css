@@ -367,3 +367,9 @@
 button.primary { background: #2c6fbb; color: white; border: none; padding: 10px 16px; border-radius: 8px; }
 button.primary:disabled { background: #9bb8d4; }
 .status { text-align: center; padding: 24px 0; }
+
+.app-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app-header nav { display: flex; gap: 8px; }
+.auth-modal { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin: 12px 0; }
+.auth-form { display: flex; flex-direction: column; gap: 8px; max-width: 320px; }
+.auth-form label { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }

@@ -105,8 +105,14 @@ async def save_pull(
     try:
         card_list = json.loads(cards)
         assert isinstance(card_list, list)
-    except (json.JSONDecodeError, AssertionError):
-        raise HTTPException(400, "cards: must be a JSON array")
+        # Coerce/validate numeric fields up front so a malformed entry is a clean 400,
+        # not a 500 deep in the insert loop (after photos are already on disk).
+        for i, c in enumerate(card_list):
+            assert isinstance(c, dict)
+            c["row_index"] = int(c.get("row_index", i))
+            c["confidence"] = float(c.get("confidence", 0.0))
+    except (json.JSONDecodeError, AssertionError, ValueError, TypeError):
+        raise HTTPException(400, "cards: must be a JSON array of card objects")
 
     pull_id = uuid.uuid4()
     staircase_path, code_path = save_pull_photos(trainer.id, pull_id, stair_bytes, code_bytes)
@@ -161,8 +167,15 @@ async def _insert_pull(session: AsyncSession, *, trainer_id, pull_id, capture_pa
             await session.commit()
             await session.refresh(pull, attribute_names=["cards"])
             return pull
-        except IntegrityError:
+        except IntegrityError as exc:
             await session.rollback()
+            # Only the verified-code dedup conflict is retryable (fall to verified=False).
+            # Any other constraint failure (FK, NOT NULL, …) is a real error — surface it.
+            if "uq_pull_verified_code" not in str(exc.orig):
+                raise HTTPException(500, "database error saving pull") from exc
+            # Clear the identity map so the retry's fresh Pull(id=pull_id) can't collide
+            # with the rolled-back instance still tracked under the same primary key.
+            session.expunge_all()
             continue
     raise HTTPException(500, "could not persist pull")
 

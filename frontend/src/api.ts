@@ -84,3 +84,76 @@ export async function lookupCard(
 export async function getSets(): Promise<SetInfo[]> {
   return parse(await fetch(`${base}/sets`));
 }
+
+export interface Trainer {
+  id: string;
+  email: string;
+  handle: string;
+  is_active: boolean;
+}
+
+export async function register(email: string, password: string, handle: string): Promise<Trainer> {
+  return parse(
+    await fetch(`${base}/auth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email, password, handle }),
+    })
+  );
+}
+
+export async function login(email: string, password: string): Promise<void> {
+  const form = new URLSearchParams({ username: email, password });
+  const res = await fetch(`${base}/auth/cookie/login`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    credentials: "include",
+    body: form,
+  });
+  if (!res.ok) throw new Error((await res.text()) || `login failed (${res.status})`);
+}
+
+export async function logout(): Promise<void> {
+  await fetch(`${base}/auth/cookie/logout`, { method: "POST", credentials: "include" });
+}
+
+export async function me(): Promise<Trainer | null> {
+  const res = await fetch(`${base}/users/me`, { credentials: "include" });
+  if (res.status === 401) return null;
+  return parse(res);
+}
+
+export interface SavedPull {
+  id: string;
+  created_at: string;
+  capture_path: string;
+  pack_confidence: number;
+  segmentation_warning: string | null;
+  code: string | null;
+  code_format_ok: boolean;
+  verified: boolean;
+  cards: PackCard[];
+}
+
+export async function savePull(
+  staircase: Blob,
+  codeCard: Blob,
+  cards: PackCard[],
+  meta: { capture_path: string; pack_confidence: number; segmentation_warning: string | null }
+): Promise<SavedPull> {
+  const form = new FormData();
+  form.append("staircase", staircase, "staircase.jpg");
+  form.append("code_card", codeCard, "code.jpg");
+  form.append("cards", JSON.stringify(cards));
+  form.append("capture_path", meta.capture_path);
+  form.append("pack_confidence", String(meta.pack_confidence));
+  if (meta.segmentation_warning) form.append("segmentation_warning", meta.segmentation_warning);
+  return parse(
+    await fetch(`${base}/pulls`, { method: "POST", credentials: "include", body: form })
+  );
+}
+
+export async function listPulls(): Promise<SavedPull[]> {
+  return parse(await fetch(`${base}/pulls`, { credentials: "include" }));
+}

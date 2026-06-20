@@ -28,6 +28,8 @@ from app.db.users import (
     auth_backend,
     fastapi_users,
 )
+from app.pulls import router as pulls_router
+from app.storage import ensure_photo_dir
 
 log = logging.getLogger("pokemon_scanner.api")
 
@@ -44,6 +46,7 @@ async def _lifespan(app: FastAPI):
     log.info("startup log_level=%s", os.environ.get("LOG_LEVEL", "INFO"))
     load_symbol_index()
     load_denominator_table()
+    ensure_photo_dir()
     yield
 
 
@@ -168,6 +171,7 @@ app.include_router(
 app.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate), prefix="/users", tags=["users"]
 )
+app.include_router(pulls_router)
 
 # Production (Railway): Railpack builds frontend/dist; same origin as API.
 # Mount last so /health, /docs, /scan/* stay on FastAPI routes.

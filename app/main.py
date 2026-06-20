@@ -21,6 +21,13 @@ from app.pack.set_resolution import load_denominator_table
 from app.pokewallet import get_api_key, lookup_card_exact
 from app.schemas import CardLookupResponse, PackCard, PackScanResponse, SetInfo
 from app.set_symbol_index import load_symbol_index
+from app.db.users import (
+    UserCreate,
+    UserRead,
+    UserUpdate,
+    auth_backend,
+    fastapi_users,
+)
 
 log = logging.getLogger("pokemon_scanner.api")
 
@@ -50,8 +57,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
-    # No cookie/session auth on this API, so credentialed CORS is unnecessary — and
-    # enabling it alongside a "*" origin would let any site make credentialed calls.
+    # The SPA is same-origin (served by this app), so cookie auth needs no credentialed
+    # CORS. allow_credentials stays off; a "*" origin with credentials would be unsafe.
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -150,6 +157,17 @@ async def cards_lookup(set_id: str, number: str) -> CardLookupResponse:
         ),
     )
 
+
+# --- Auth & user routes (FastAPI-Users) ---
+app.include_router(
+    fastapi_users.get_auth_router(auth_backend), prefix="/auth/cookie", tags=["auth"]
+)
+app.include_router(
+    fastapi_users.get_register_router(UserRead, UserCreate), prefix="/auth", tags=["auth"]
+)
+app.include_router(
+    fastapi_users.get_users_router(UserRead, UserUpdate), prefix="/users", tags=["users"]
+)
 
 # Production (Railway): Railpack builds frontend/dist; same origin as API.
 # Mount last so /health, /docs, /scan/* stay on FastAPI routes.

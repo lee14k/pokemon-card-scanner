@@ -42,4 +42,6 @@ def open_photo(rel_path: str) -> bytes:
     full = (_root() / rel_path).resolve()
     if _root().resolve() not in full.parents and full != _root().resolve():
         raise FileNotFoundError(rel_path)
+    if not full.is_file():  # also turns a dir/missing path into a clean 404
+        raise FileNotFoundError(rel_path)
     return full.read_bytes()

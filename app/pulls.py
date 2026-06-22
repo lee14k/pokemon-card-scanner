@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.models import Pull, PullCard
 from app.db.session import async_session_maker
@@ -185,14 +186,13 @@ async def list_pulls(trainer: CurrentTrainer) -> list[PullOut]:
     async with async_session_maker() as session:
         rows = (
             await session.execute(
-                select(Pull).where(Pull.trainer_id == trainer.id).order_by(Pull.created_at.desc())
+                select(Pull)
+                .where(Pull.trainer_id == trainer.id)
+                .options(selectinload(Pull.cards))  # eager-load cards: 2 queries, not N+1
+                .order_by(Pull.created_at.desc())
             )
         ).scalars().all()
-        out = []
-        for p in rows:
-            await session.refresh(p, attribute_names=["cards"])
-            out.append(_pull_to_out(p))
-        return out
+        return [_pull_to_out(p) for p in rows]
 
 
 @router.get("/{pull_id}", response_model=PullOut)

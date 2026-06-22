@@ -93,3 +93,4 @@ def downgrade() -> None:
     op.drop_table("pull")
     op.drop_index("ix_trainer_email", table_name="trainer")
     op.drop_table("trainer")
+    op.execute("DROP EXTENSION IF EXISTS citext")

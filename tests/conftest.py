@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 import os
+
+# The scanner tests import app.main, which now imports the DB/auth layer; that layer
+# validates DATABASE_URL + AUTH_SECRET at import time. These placeholders let the
+# scanner suite import the app without a live DB (no scanner test touches /pulls or
+# the DB). Set before any app import. AUTH_SECRET must be >= 32 bytes (HS256 guard).
+os.environ.setdefault("DATABASE_URL", "postgresql://unused:unused@localhost/unused")
+os.environ.setdefault("AUTH_SECRET", "test-placeholder-secret-not-used-0123456789")
+
 import socket
 import threading
 import time

@@ -53,3 +53,9 @@ class DbSettings:
 def db_settings() -> DbSettings:
     """Fresh read each call so env changes (dev) take effect without reload."""
     return DbSettings()
+
+
+def database_url() -> str:
+    """Just the asyncpg DATABASE_URL — no AUTH_SECRET required. Used by the engine and
+    Alembic so migrations/DB access don't depend on the auth secret being set."""
+    return _asyncpg_url(_require("DATABASE_URL"))

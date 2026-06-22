@@ -8,7 +8,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app.db.config import db_settings
+from app.db.config import database_url
 from app.db.session import Base
 import app.db.models  # noqa: F401  register tables on Base.metadata
 
@@ -17,7 +17,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Runtime override: always use the app's (asyncpg-converted) DATABASE_URL.
-config.set_main_option("sqlalchemy.url", db_settings().database_url)
+config.set_main_option("sqlalchemy.url", database_url())
 
 target_metadata = Base.metadata
 
@@ -41,7 +41,7 @@ async def run_async_migrations() -> None:
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=db_settings().database_url,
+        url=database_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

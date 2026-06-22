@@ -14,11 +14,11 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
-from app.db.config import db_settings
+from app.db.config import database_url
 
-_settings = db_settings()
-
-engine = create_async_engine(_settings.database_url, pool_pre_ping=True)
+# Only DATABASE_URL is needed here; the auth secret is validated where auth is wired
+# (app.db.users), so importing the DB layer / running migrations doesn't require it.
+engine = create_async_engine(database_url(), pool_pre_ping=True)
 async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
 
 

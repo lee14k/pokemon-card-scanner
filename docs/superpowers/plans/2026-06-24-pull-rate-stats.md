@@ -404,7 +404,7 @@ PGPASSWORD=pcs psql -h localhost -U pcs -d pcs -c "TRUNCATE trainer CASCADE;" >/
 pkill -f "uvicorn app.main" 2>/dev/null; sleep 1
 .venv/bin/uvicorn app.main:app --port 8020 >/tmp/app.log 2>&1 & sleep 4
 BASE=http://127.0.0.1:8020
-curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"a@x.com","password":"longpassword1","handle":"aa"}' -o /dev/null
+curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"a@x.com","password":"longpassword1","handle":"aaa"}' -o /dev/null
 curl -s -c /tmp/c -X POST $BASE/auth/cookie/login -H 'content-type: application/x-www-form-urlencoded' --data 'username=a@x.com&password=longpassword1' -o /dev/null
 echo -n "me role: "; curl -s -b /tmp/c $BASE/users/me | python3 -c "import sys,json;print(json.load(sys.stdin)['role'])"
 pkill -f "uvicorn app.main" 2>/dev/null
@@ -635,7 +635,7 @@ PGPASSWORD=pcs psql -h localhost -U pcs -d pcs -c "TRUNCATE trainer CASCADE;" >/
 pkill -f "uvicorn app.main" 2>/dev/null; sleep 1
 .venv/bin/uvicorn app.main:app --port 8022 >/tmp/app.log 2>&1 & sleep 4
 BASE=http://127.0.0.1:8022
-curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"m@x.com","password":"longpassword1","handle":"mm"}' -o /dev/null
+curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"m@x.com","password":"longpassword1","handle":"mmm"}' -o /dev/null
 curl -s -c /tmp/cm -X POST $BASE/auth/cookie/login -H 'content-type: application/x-www-form-urlencoded' --data 'username=m@x.com&password=longpassword1' -o /dev/null
 META='{"guide_positions":[1130,1250,1370],"image_dims":[910,1450],"declared_count":3}'
 curl -s -b /tmp/cm -X POST $BASE/pulls -F staircase=@tests/fixtures/e2e/staircase.jpg -F code_card=@tests/fixtures/e2e/code.jpg -F 'cards=[{"row_index":0,"card_number":"012/202","name":"A","confidence":0.9}]' -F capture_path=guided -F "capture_meta=$META" -o /dev/null -w 'save=%{http_code}\n'
@@ -776,7 +776,7 @@ pkill -f "uvicorn app.main" -f "pokewallet_stub" 2>/dev/null; sleep 1
 export POKEWALLET_BASE_URL=http://127.0.0.1:8901 POKEWALLET_API_KEY=test-key
 .venv/bin/uvicorn app.main:app --port 8023 >/tmp/app.log 2>&1 & sleep 4
 BASE=http://127.0.0.1:8023
-curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"r@x.com","password":"longpassword1","handle":"rr"}' -o /dev/null
+curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"r@x.com","password":"longpassword1","handle":"rrr"}' -o /dev/null
 curl -s -c /tmp/cr -X POST $BASE/auth/cookie/login -H 'content-type: application/x-www-form-urlencoded' --data 'username=r@x.com&password=longpassword1' -o /dev/null
 META='{"guide_positions":[1130,1250,1370],"image_dims":[910,1450],"declared_count":3}'
 # client claims a single bogus card; re-derivation will find the real 3
@@ -1004,7 +1004,7 @@ pkill -f "uvicorn app.main" -f "pokewallet_stub" 2>/dev/null; sleep 1
 export POKEWALLET_BASE_URL=http://127.0.0.1:8901 POKEWALLET_API_KEY=test-key
 .venv/bin/uvicorn app.main:app --port 8024 >/tmp/app.log 2>&1 & sleep 4
 BASE=http://127.0.0.1:8024
-curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"g@x.com","password":"longpassword1","handle":"gg"}' -o /dev/null
+curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"g@x.com","password":"longpassword1","handle":"ggg"}' -o /dev/null
 curl -s -c /tmp/cg -X POST $BASE/auth/cookie/login -H 'content-type: application/x-www-form-urlencoded' --data 'username=g@x.com&password=longpassword1' -o /dev/null
 META='{"guide_positions":[1130,1250,1370],"image_dims":[910,1450],"declared_count":3}'
 curl -s -b /tmp/cg -X POST $BASE/pulls -F staircase=@tests/fixtures/e2e/staircase.jpg -F code_card=@tests/fixtures/e2e/code.jpg -F 'cards=[]' -F capture_path=guided -F "capture_meta=$META" -o /dev/null
@@ -1290,7 +1290,7 @@ export POKEWALLET_BASE_URL=http://127.0.0.1:8901 POKEWALLET_API_KEY=test-key STA
 .venv/bin/uvicorn app.main:app --port 8025 >/tmp/app.log 2>&1 & sleep 4
 BASE=http://127.0.0.1:8025
 # seed a verified pull
-curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"b@x.com","password":"longpassword1","handle":"bb"}' -o /dev/null
+curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"b@x.com","password":"longpassword1","handle":"bbb"}' -o /dev/null
 curl -s -c /tmp/cb -X POST $BASE/auth/cookie/login -H 'content-type: application/x-www-form-urlencoded' --data 'username=b@x.com&password=longpassword1' -o /dev/null
 curl -s -b /tmp/cb -X POST $BASE/pulls -F staircase=@tests/fixtures/e2e/staircase.jpg -F code_card=@tests/fixtures/e2e/code.jpg -F 'cards=[]' -F capture_path=guided -F 'capture_meta={"guide_positions":[1130,1250,1370],"image_dims":[910,1450],"declared_count":3}' -o /dev/null
 echo -n "cron token recompute: "; curl -s -X POST $BASE/admin/stats/recompute -H "authorization: Bearer dev-cron-token-123" -o /dev/null -w '%{http_code}\n'
@@ -1451,7 +1451,7 @@ export POKEWALLET_BASE_URL=http://127.0.0.1:8901 POKEWALLET_API_KEY=test-key STA
 PGPASSWORD=pcs psql -h localhost -U pcs -d pcs -c "TRUNCATE trainer CASCADE; TRUNCATE stats_snapshot CASCADE;" >/dev/null 2>&1
 .venv/bin/uvicorn app.main:app --port 8026 >/tmp/app.log 2>&1 & sleep 4
 BASE=http://127.0.0.1:8026
-curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"an@x.com","password":"longpassword1","handle":"an"}' -o /dev/null
+curl -s -X POST $BASE/auth/register -H 'content-type: application/json' -d '{"email":"an@x.com","password":"longpassword1","handle":"ann"}' -o /dev/null
 curl -s -c /tmp/cn -X POST $BASE/auth/cookie/login -H 'content-type: application/x-www-form-urlencoded' --data 'username=an@x.com&password=longpassword1' -o /dev/null
 # seed a pull + recompute via token
 curl -s -b /tmp/cn -X POST $BASE/pulls -F staircase=@tests/fixtures/e2e/staircase.jpg -F code_card=@tests/fixtures/e2e/code.jpg -F 'cards=[]' -F capture_path=guided -F 'capture_meta={"guide_positions":[1130,1250,1370],"image_dims":[910,1450],"declared_count":3}' -o /dev/null

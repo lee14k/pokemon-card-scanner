@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.config import db_settings
-from app.db.models import Trainer
+from app.db.models import Role, Trainer
 from app.db.session import get_async_session
 
 _HANDLE_RE = re.compile(r"^[a-z0-9_]{3,20}$")
@@ -24,6 +24,7 @@ _HANDLE_RE = re.compile(r"^[a-z0-9_]{3,20}$")
 # ── Schemas ──────────────────────────────────────────────────────────────────
 class UserRead(schemas.BaseUser[uuid.UUID]):
     handle: str
+    role: str
 
 
 class UserCreate(schemas.BaseUserCreate):
@@ -101,3 +102,19 @@ fastapi_users = FastAPIUsers[Trainer, uuid.UUID](get_user_manager, [auth_backend
 
 current_active_user = fastapi_users.current_user(active=True)
 CurrentTrainer = Annotated[Trainer, Depends(current_active_user)]
+
+
+def require_analyst(trainer: CurrentTrainer) -> Trainer:
+    if trainer.role not in (Role.analyst, Role.admin):
+        raise HTTPException(status_code=403, detail="analyst role required")
+    return trainer
+
+
+def require_admin(trainer: CurrentTrainer) -> Trainer:
+    if trainer.role != Role.admin:
+        raise HTTPException(status_code=403, detail="admin role required")
+    return trainer
+
+
+CurrentAnalyst = Annotated[Trainer, Depends(require_analyst)]
+CurrentAdmin = Annotated[Trainer, Depends(require_admin)]

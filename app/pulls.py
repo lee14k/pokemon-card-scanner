@@ -100,6 +100,7 @@ async def save_pull(
     capture_path: str = Form("upload"),
     pack_confidence: float = Form(0.0),
     segmentation_warning: str | None = Form(None),
+    capture_meta: str | None = Form(None, description="Guided-capture metadata JSON"),
 ) -> PullOut:
     stair_bytes = await _read_image(staircase, "staircase")
     code_bytes = await _read_image(code_card, "code_card")
@@ -114,6 +115,14 @@ async def save_pull(
             c["confidence"] = float(c.get("confidence", 0.0))
     except (json.JSONDecodeError, AssertionError, ValueError, TypeError):
         raise HTTPException(400, "cards: must be a JSON array of card objects")
+
+    meta_obj: dict | None = None
+    if capture_meta:
+        try:
+            meta_obj = json.loads(capture_meta)
+            assert isinstance(meta_obj, dict)
+        except (json.JSONDecodeError, AssertionError):
+            raise HTTPException(400, "capture_meta: must be a JSON object")
 
     pull_id = uuid.uuid4()
     staircase_path, code_path = save_pull_photos(trainer.id, pull_id, stair_bytes, code_bytes)
@@ -134,14 +143,15 @@ async def save_pull(
             pack_confidence=pack_confidence, segmentation_warning=segmentation_warning,
             code=code, code_norm=code_norm, code_conf=code_conf, code_ok=code_ok,
             want_verified=want_verified, staircase_path=staircase_path, code_path=code_path,
-            card_list=card_list,
+            card_list=card_list, capture_meta=meta_obj,
         )
         return _pull_to_out(saved)
 
 
 async def _insert_pull(session: AsyncSession, *, trainer_id, pull_id, capture_path,
                        pack_confidence, segmentation_warning, code, code_norm, code_conf,
-                       code_ok, want_verified, staircase_path, code_path, card_list) -> Pull:
+                       code_ok, want_verified, staircase_path, code_path, card_list,
+                       capture_meta) -> Pull:
     """Insert pull (+cards). Tries verified=want_verified; on the partial-unique-index
     conflict (code already verified by someone), retries verified=False."""
     for verified in ([True, False] if want_verified else [False]):
@@ -152,6 +162,7 @@ async def _insert_pull(session: AsyncSession, *, trainer_id, pull_id, capture_pa
                 code=code, code_normalized=code_norm, code_confidence=code_conf,
                 code_format_ok=code_ok, verified=verified,
                 staircase_photo_path=staircase_path, code_photo_path=code_path,
+                capture_meta=capture_meta,
             )
             session.add(pull)
             await session.flush()  # surfaces the unique-index violation here

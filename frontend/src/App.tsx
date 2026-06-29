@@ -50,6 +50,7 @@ export default function App() {
         capture_path: s.meta ? "guided" : "upload",
         pack_confidence: s.scan.pack_confidence,
         segmentation_warning: s.scan.segmentation_warning,
+        capture_meta: s.meta ?? null,
       });
       setStep({ name: "summary", verified: saved.verified, count: saved.cards.length });
     } catch (e) {

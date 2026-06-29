@@ -140,7 +140,12 @@ export async function savePull(
   staircase: Blob,
   codeCard: Blob,
   cards: PackCard[],
-  meta: { capture_path: string; pack_confidence: number; segmentation_warning: string | null }
+  meta: {
+    capture_path: string;
+    pack_confidence: number;
+    segmentation_warning: string | null;
+    capture_meta?: CaptureMeta | null;
+  }
 ): Promise<SavedPull> {
   const form = new FormData();
   form.append("staircase", staircase, "staircase.jpg");
@@ -149,6 +154,7 @@ export async function savePull(
   form.append("capture_path", meta.capture_path);
   form.append("pack_confidence", String(meta.pack_confidence));
   if (meta.segmentation_warning) form.append("segmentation_warning", meta.segmentation_warning);
+  if (meta.capture_meta) form.append("capture_meta", JSON.stringify(meta.capture_meta));
   return parse(
     await fetch(`${base}/pulls`, { method: "POST", credentials: "include", body: form })
   );

@@ -1,0 +1,16 @@
+{
+  "default_strength": 20,
+  "default_card_rate": 0.05,
+  "rarity": {
+    "Common": 0.99,
+    "Uncommon": 0.95,
+    "Rare": 0.5,
+    "Double Rare": 0.33,
+    "Ultra Rare": 0.16,
+    "Illustration Rare": 0.2,
+    "Special Illustration Rare": 0.05,
+    "Hyper Rare": 0.04,
+    "Shiny Rare": 0.08,
+    "Promo": 0.0
+  }
+}

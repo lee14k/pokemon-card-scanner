@@ -30,6 +30,7 @@ from app.db.users import (
 )
 from app.admin import router as admin_router
 from app.pulls import router as pulls_router
+from app.stats_api import router as stats_router
 from app.storage import ensure_photo_dir
 
 log = logging.getLogger("pokemon_scanner.api")
@@ -174,6 +175,7 @@ app.include_router(
 )
 app.include_router(pulls_router)
 app.include_router(admin_router)
+app.include_router(stats_router)
 
 # Production (Railway): Railpack builds frontend/dist; same origin as API.
 # Mount last so /health, /docs, /scan/* stay on FastAPI routes.

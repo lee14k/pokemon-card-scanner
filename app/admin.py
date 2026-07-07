@@ -5,13 +5,16 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.db.models import Role, Trainer
 from app.db.session import async_session_maker
 from app.db.users import CurrentAdmin
+from app.db.users import fastapi_users
+from app.stats.config import stats_settings
+from app.stats.run_batch import run_batch
 
 log = logging.getLogger("pokemon_scanner.admin")
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -52,3 +55,25 @@ async def set_role(admin: CurrentAdmin, trainer_id: uuid.UUID, body: RoleUpdate)
         await session.commit()
         log.info("admin.role_change by=%s target=%s %s->%s", admin.id, t.id, old.value, body.role.value)
         return TrainerOut(id=t.id, email=t.email, handle=t.handle, role=t.role.value)
+
+
+# optional user: None when unauthenticated, so the cron-token path isn't blocked by a 401
+_optional_user = fastapi_users.current_user(active=True, optional=True)
+
+
+@router.post("/stats/recompute", status_code=202)
+async def recompute_stats(
+    background: BackgroundTasks,
+    authorization: str | None = Header(default=None),
+    user: Trainer | None = Depends(_optional_user),
+) -> dict:
+    """Trigger a stats batch. Authorized by an admin session OR the cron bearer token."""
+    token = stats_settings().cron_token
+    bearer = authorization.removeprefix("Bearer ").strip() if authorization else ""
+    if token and bearer == token:
+        background.add_task(run_batch, "cron")
+        return {"status": "accepted", "trigger": "cron"}
+    if user is not None and user.role == Role.admin:
+        background.add_task(run_batch, "manual")
+        return {"status": "accepted", "trigger": "manual"}
+    raise HTTPException(403, "admin role or cron token required")

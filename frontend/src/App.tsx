@@ -13,6 +13,7 @@ import ReviewScreen from "./review/ReviewScreen";
 import { useAuth } from "./auth/AuthContext";
 import AuthForms from "./auth/AuthForms";
 import MyPulls from "./pulls/MyPulls";
+import Dashboard from "./dashboard/Dashboard";
 
 type Step =
   | { name: "staircase" }
@@ -26,8 +27,9 @@ type Step =
 export default function App() {
   const { trainer, loading, logout } = useAuth();
   const [step, setStep] = useState<Step>({ name: "staircase" });
-  const [view, setView] = useState<"scan" | "pulls">("scan");
+  const [view, setView] = useState<"scan" | "pulls" | "dashboard">("scan");
   const [authOpen, setAuthOpen] = useState(false);
+  const canViewStats = trainer?.role === "analyst" || trainer?.role === "admin";
 
   const submit = async (staircase: Blob, code: Blob, meta?: CaptureMeta) => {
     setStep({ name: "submitting" });
@@ -65,6 +67,9 @@ export default function App() {
         <nav>
           <button type="button" onClick={() => setView("scan")}>Scan</button>
           <button type="button" onClick={() => setView("pulls")} disabled={!trainer}>My Pulls</button>
+          {canViewStats && (
+            <button type="button" onClick={() => setView("dashboard")}>Dashboard</button>
+          )}
           {!loading && (trainer
             ? <button type="button" onClick={logout}>@{trainer.handle} · log out</button>
             : <button type="button" onClick={() => setAuthOpen(true)}>Log in</button>)}
@@ -79,6 +84,8 @@ export default function App() {
       )}
 
       {view === "pulls" && trainer && <MyPulls />}
+
+      {view === "dashboard" && canViewStats && <Dashboard />}
 
       {view === "scan" && (
         <>

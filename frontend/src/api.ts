@@ -89,6 +89,7 @@ export interface Trainer {
   id: string;
   email: string;
   handle: string;
+  role: string;
   is_active: boolean;
 }
 
@@ -162,4 +163,46 @@ export async function savePull(
 
 export async function listPulls(): Promise<SavedPull[]> {
   return parse(await fetch(`${base}/pulls`, { credentials: "include" }));
+}
+
+export interface SetSummary { set_id: string; verified_pack_count: number; }
+export interface SetDetail {
+  set_id: string;
+  verified_pack_count: number;
+  cards: { match_id: string; card_number: string | null; name: string | null; hits: number; packs: number; raw_rate: number; blended_rate: number; }[];
+  rarities: { rarity: string; packs_with_rarity: number; raw_rate: number; blended_rate: number; }[];
+}
+export interface AnomalyRow {
+  id: string; detector: string; target_type: string; set_id: string;
+  card_match_id: string | null; severity: number; detail: Record<string, unknown>; status: string;
+}
+export interface AdminTrainer { id: string; email: string; handle: string; role: string; }
+
+export async function statsSets(): Promise<SetSummary[]> {
+  return parse(await fetch(`${base}/stats/sets`, { credentials: "include" }));
+}
+export async function statsSetDetail(setId: string): Promise<SetDetail> {
+  return parse(await fetch(`${base}/stats/sets/${encodeURIComponent(setId)}`, { credentials: "include" }));
+}
+export async function statsAnomalies(status = "open"): Promise<AnomalyRow[]> {
+  return parse(await fetch(`${base}/stats/anomalies?status=${status}`, { credentials: "include" }));
+}
+export async function updateAnomaly(id: string, status: string): Promise<AnomalyRow> {
+  return parse(await fetch(`${base}/stats/anomalies/${id}`, {
+    method: "PATCH", credentials: "include",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ status }),
+  }));
+}
+export async function recomputeStats(): Promise<void> {
+  const res = await fetch(`${base}/admin/stats/recompute`, { method: "POST", credentials: "include" });
+  if (!res.ok) throw new Error(`recompute failed (${res.status})`);
+}
+export async function adminTrainers(query = ""): Promise<AdminTrainer[]> {
+  return parse(await fetch(`${base}/admin/trainers?query=${encodeURIComponent(query)}`, { credentials: "include" }));
+}
+export async function setTrainerRole(id: string, role: string): Promise<AdminTrainer> {
+  return parse(await fetch(`${base}/admin/trainers/${id}/role`, {
+    method: "PATCH", credentials: "include",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ role }),
+  }));
 }

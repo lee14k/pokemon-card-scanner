@@ -135,6 +135,7 @@ export interface SavedPull {
   code_format_ok: boolean;
   verified: boolean;
   cards: PackCard[];
+  encounters: Encounter[];
 }
 
 export async function savePull(
@@ -205,4 +206,12 @@ export async function setTrainerRole(id: string, role: string): Promise<AdminTra
     method: "PATCH", credentials: "include",
     headers: { "content-type": "application/json" }, body: JSON.stringify({ role }),
   }));
+}
+
+export interface Encounter { species: string; count: number; new: boolean; }
+export interface DexEntry { species: string; count: number; first_seen: string; image_url: string | null; }
+export interface DexOut { seen_count: number; entries: DexEntry[]; }
+
+export async function getDex(): Promise<DexOut> {
+  return parse(await fetch(`${base}/dex`, { credentials: "include" }));
 }

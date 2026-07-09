@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Pull, PullCard
+from app.db.models import CardPrice, PriceSnapshot, Pull, PullCard
 from app.db.session import async_session_maker
 from app.db.users import CurrentTrainer
 from app.dex.species import species_of
@@ -48,6 +48,8 @@ class CardOut(BaseModel):
     match_id: str | None
     image_url: str | None
     confidence: float
+    price_usd_low: float | None = None
+    price_usd_high: float | None = None
 
 
 class EncounterOut(BaseModel):
@@ -67,6 +69,8 @@ class PullOut(BaseModel):
     verified: bool
     cards: list[CardOut]
     encounters: list[EncounterOut] = []
+    estimated_value: float | None = None
+    priced_as_of: str | None = None
 
 
 def _pull_to_out(pull: Pull) -> PullOut:
@@ -89,6 +93,44 @@ def _pull_to_out(pull: Pull) -> PullOut:
             for c in pull.cards
         ],
     )
+
+
+async def _latest_price_map(session) -> tuple[dict[str, tuple[float | None, float | None]], str | None]:
+    """(match_id -> (usd_low, usd_high), snapshot iso date) from the newest done snapshot."""
+    snap = (
+        await session.execute(
+            select(PriceSnapshot).where(PriceSnapshot.status == "done")
+            .order_by(PriceSnapshot.created_at.desc()).limit(1)
+        )
+    ).scalar_one_or_none()
+    if snap is None:
+        return {}, None
+    rows = (
+        await session.execute(
+            select(CardPrice.match_id, CardPrice.usd_market_low, CardPrice.usd_market_high)
+            .where(CardPrice.snapshot_id == snap.id)
+        )
+    ).all()
+    return {m: (lo, hi) for m, lo, hi in rows}, snap.created_at.isoformat()
+
+
+def _enrich_prices(out: PullOut, prices: dict[str, tuple[float | None, float | None]],
+                   priced_as_of: str | None) -> PullOut:
+    if not prices:
+        return out
+    total = 0.0
+    any_priced = False
+    for card in out.cards:
+        if card.match_id and card.match_id in prices:
+            lo, hi = prices[card.match_id]
+            card.price_usd_low, card.price_usd_high = lo, hi
+            if lo is not None and hi is not None:
+                total += (lo + hi) / 2
+                any_priced = True
+    if any_priced:
+        out.estimated_value = round(total, 2)
+        out.priced_as_of = priced_as_of
+    return out
 
 
 async def _read_image(upload: UploadFile, field: str) -> bytes:
@@ -159,7 +201,8 @@ async def save_pull(
             out.encounters = await _compute_encounters(session, trainer.id, saved)
         except Exception:  # the dex moment must never break persistence
             out.encounters = []
-        return out
+        prices, as_of = await _latest_price_map(session)
+        return _enrich_prices(out, prices, as_of)
 
 
 async def _insert_pull(session: AsyncSession, *, trainer_id, pull_id, capture_path,
@@ -242,7 +285,8 @@ async def list_pulls(trainer: CurrentTrainer) -> list[PullOut]:
                 .order_by(Pull.created_at.desc())
             )
         ).scalars().all()
-        return [_pull_to_out(p) for p in rows]
+        prices, as_of = await _latest_price_map(session)
+        return [_enrich_prices(_pull_to_out(p), prices, as_of) for p in rows]
 
 
 @router.get("/{pull_id}", response_model=PullOut)
@@ -252,7 +296,8 @@ async def get_pull(trainer: CurrentTrainer, pull_id: uuid.UUID) -> PullOut:
         if pull is None or pull.trainer_id != trainer.id:
             raise HTTPException(404, "pull not found")
         await session.refresh(pull, attribute_names=["cards"])
-        return _pull_to_out(pull)
+        prices, as_of = await _latest_price_map(session)
+        return _enrich_prices(_pull_to_out(pull), prices, as_of)
 
 
 @router.get("/{pull_id}/photo/{kind}")

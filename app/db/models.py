@@ -197,3 +197,28 @@ class Anomaly(Base):
     detail: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")  # open|reviewed|dismissed
     created_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class PriceSnapshot(Base):
+    __tablename__ = "price_snapshot"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")  # running|done|failed
+
+
+class CardPrice(Base):
+    __tablename__ = "card_price"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    snapshot_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("price_snapshot.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    match_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    set_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_number: Mapped[str | None] = mapped_column(Text, nullable=True)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    usd_market_low: Mapped[float | None] = mapped_column(Float, nullable=True)
+    usd_market_high: Mapped[float | None] = mapped_column(Float, nullable=True)
+    eur_trend: Mapped[float | None] = mapped_column(Float, nullable=True)
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)

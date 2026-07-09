@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 from app.db.models import Pull, PullCard
 from app.db.session import async_session_maker
 from app.db.users import CurrentTrainer
+from app.dex.species import species_of
 from app.pack.ocr import read_code_card
 from app.storage import open_photo, save_pull_photos
 
@@ -175,6 +176,7 @@ async def _insert_pull(session: AsyncSession, *, trainer_id, pull_id, capture_pa
                     low_confidence_reason=c.get("low_confidence_reason"),
                     match_id=c.get("match_id"), image_url=c.get("image_url"),
                     confidence=float(c.get("confidence", 0.0)),
+                    species=species_of(c.get("name")),
                 ))
             await session.commit()
             await session.refresh(pull, attribute_names=["cards"])

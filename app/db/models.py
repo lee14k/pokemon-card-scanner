@@ -105,6 +105,7 @@ class PullCard(Base):
     match_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    species: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
 
     pull: Mapped["Pull"] = relationship(back_populates="cards")
 

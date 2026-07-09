@@ -17,13 +17,13 @@ from tests.fixtures.synth import make_code_card, make_staircase  # noqa: E402
 E2E = Path("tests/fixtures/e2e")
 CODE_TEXT = "TEST1-CODE2-CARD3"
 
-# (numerator/denominator, set_code printed on card, set_code for truth, fake name)
+# (numerator/denominator, set_code printed on card, set_code for truth, fake name, usd market)
 # SSH and VIV rows print no code text -> exercises denominator-unique resolution.
 # SVI row prints "SVI" -> exercises code-text resolution.
 ENTRIES = [
-    ("012/202", "", "SSH", "Test Mon A"),
-    ("045/185", "", "VIV", "Test Mon B"),
-    ("101/198", "SVI", "SVI", "Test Mon C"),
+    ("012/202", "", "SSH", "Test Mon A", 1.25),
+    ("045/185", "", "VIV", "Test Mon B", 3.50),
+    ("101/198", "SVI", "SVI", "Test Mon C", 10.00),
 ]
 
 
@@ -31,7 +31,7 @@ def main() -> None:
     table = load_denominator_table()
     cards = []
     truth_rows = []
-    for i, (number, printed_code, code, name) in enumerate(ENTRIES):
+    for i, (number, printed_code, code, name, market) in enumerate(ENTRIES):
         entry = table.by_code[code]
         cards.append(
             {
@@ -43,14 +43,14 @@ def main() -> None:
                     "card_number": number,
                     "rarity": "Common",
                 },
-                "tcgplayer": None,
-                "cardmarket": None,
+                "tcgplayer": {"prices": [{"sub_type_name": "Normal", "market_price": market}]},
+                "cardmarket": {"prices": [{"variant_type": "Normal", "trend": round(market * 0.9, 2)}]},
             }
         )
         truth_rows.append({"row_index": i, "number": number, "set_id": entry.set_id})
 
     Path("tests/fixtures/pokewallet_cards.json").write_text(json.dumps(cards, indent=2) + "\n")
-    meta = make_staircase([(n, pc) for n, pc, _, _ in ENTRIES], E2E / "staircase.jpg")
+    meta = make_staircase([(n, pc) for n, pc, _, _, _ in ENTRIES], E2E / "staircase.jpg")
     make_code_card(CODE_TEXT, E2E / "code.jpg")
     (E2E / "truth.json").write_text(
         json.dumps({"capture_meta": meta, "cards": truth_rows, "code": CODE_TEXT}, indent=2) + "\n"

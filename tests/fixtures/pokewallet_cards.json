@@ -8,8 +8,22 @@
       "card_number": "012/202",
       "rarity": "Common"
     },
-    "tcgplayer": null,
-    "cardmarket": null
+    "tcgplayer": {
+      "prices": [
+        {
+          "sub_type_name": "Normal",
+          "market_price": 1.25
+        }
+      ]
+    },
+    "cardmarket": {
+      "prices": [
+        {
+          "variant_type": "Normal",
+          "trend": 1.12
+        }
+      ]
+    }
   },
   {
     "id": "test-viv-1",
@@ -20,8 +34,22 @@
       "card_number": "045/185",
       "rarity": "Common"
     },
-    "tcgplayer": null,
-    "cardmarket": null
+    "tcgplayer": {
+      "prices": [
+        {
+          "sub_type_name": "Normal",
+          "market_price": 3.5
+        }
+      ]
+    },
+    "cardmarket": {
+      "prices": [
+        {
+          "variant_type": "Normal",
+          "trend": 3.15
+        }
+      ]
+    }
   },
   {
     "id": "test-svi-2",
@@ -32,7 +60,21 @@
       "card_number": "101/198",
       "rarity": "Common"
     },
-    "tcgplayer": null,
-    "cardmarket": null
+    "tcgplayer": {
+      "prices": [
+        {
+          "sub_type_name": "Normal",
+          "market_price": 10.0
+        }
+      ]
+    },
+    "cardmarket": {
+      "prices": [
+        {
+          "variant_type": "Normal",
+          "trend": 9.0
+        }
+      ]
+    }
   }
 ]

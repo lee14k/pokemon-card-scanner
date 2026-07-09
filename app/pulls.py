@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from collections import Counter
 
 import cv2
 import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -49,6 +50,12 @@ class CardOut(BaseModel):
     confidence: float
 
 
+class EncounterOut(BaseModel):
+    species: str
+    count: int      # total cards of this species the trainer has ever saved (incl. this pull)
+    new: bool       # True when this pull contains their first-ever card(s) of the species
+
+
 class PullOut(BaseModel):
     id: uuid.UUID
     created_at: str
@@ -59,6 +66,7 @@ class PullOut(BaseModel):
     code_format_ok: bool
     verified: bool
     cards: list[CardOut]
+    encounters: list[EncounterOut] = []
 
 
 def _pull_to_out(pull: Pull) -> PullOut:
@@ -146,7 +154,12 @@ async def save_pull(
             want_verified=want_verified, staircase_path=staircase_path, code_path=code_path,
             card_list=card_list, capture_meta=meta_obj,
         )
-        return _pull_to_out(saved)
+        out = _pull_to_out(saved)
+        try:
+            out.encounters = await _compute_encounters(session, trainer.id, saved)
+        except Exception:  # the dex moment must never break persistence
+            out.encounters = []
+        return out
 
 
 async def _insert_pull(session: AsyncSession, *, trainer_id, pull_id, capture_path,
@@ -192,6 +205,30 @@ async def _insert_pull(session: AsyncSession, *, trainer_id, pull_id, capture_pa
             session.expunge_all()
             continue
     raise HTTPException(500, "could not persist pull")
+
+
+async def _compute_encounters(session: AsyncSession, trainer_id, pull: Pull) -> list[EncounterOut]:
+    """Wild-encounter callouts for a just-saved pull. count = total cards of that
+    species ever saved by this trainer; new = nothing existed before this pull."""
+    in_pull = Counter(c.species for c in pull.cards if c.species)
+    if not in_pull:
+        return []
+    totals = dict(
+        (
+            await session.execute(
+                select(PullCard.species, func.count())
+                .join(Pull, PullCard.pull_id == Pull.id)
+                .where(Pull.trainer_id == trainer_id, PullCard.species.in_(in_pull.keys()))
+                .group_by(PullCard.species)
+            )
+        ).all()
+    )
+    out = [
+        EncounterOut(species=sp, count=totals.get(sp, n), new=totals.get(sp, n) == n)
+        for sp, n in in_pull.items()
+    ]
+    out.sort(key=lambda e: (not e.new, e.species))
+    return out
 
 
 @router.get("", response_model=list[PullOut])

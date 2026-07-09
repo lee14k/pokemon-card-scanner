@@ -16,6 +16,7 @@ from app.db.models import StatsSnapshot
 from app.db.session import async_session_maker
 from app.stats.aggregate import aggregate_snapshot
 from app.stats.anomaly import detect
+from app.stats.pricing import refresh_prices_if_stale
 from app.stats.prior import default_prior_source
 from app.stats.rederive import rederive_pending
 
@@ -43,6 +44,12 @@ async def run_batch(trigger: str = "manual") -> str | None:
                 snap.status = "done"
                 await session.commit()
                 log.info("run_batch.done snapshot=%s trigger=%s", snap.id, trigger)
+                # Pricing stage: staleness-gated, own session, still inside the lock.
+                # Belt-and-suspenders guard — pricing must never fail the stats batch.
+                try:
+                    await refresh_prices_if_stale(snap.id)
+                except Exception:
+                    log.exception("run_batch.pricing_stage_failed (stats batch unaffected)")
                 return str(snap.id)
             except Exception:
                 snap.status = "failed"

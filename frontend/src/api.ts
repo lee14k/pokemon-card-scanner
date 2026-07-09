@@ -14,6 +14,8 @@ export interface PackCard {
   match_id: string | null; // PokéWallet card id — reserved for sub-project B persistence
   confidence: number;
   low_confidence_reason: string | null;
+  price_usd_low?: number | null;
+  price_usd_high?: number | null;
 }
 
 export interface CodeCardResult {
@@ -136,6 +138,8 @@ export interface SavedPull {
   verified: boolean;
   cards: PackCard[];
   encounters: Encounter[];
+  estimated_value?: number | null;
+  priced_as_of?: string | null;
 }
 
 export async function savePull(

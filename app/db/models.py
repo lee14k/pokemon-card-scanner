@@ -222,3 +222,29 @@ class CardPrice(Base):
     usd_market_high: Mapped[float | None] = mapped_column(Float, nullable=True)
     eur_trend: Mapped[float | None] = mapped_column(Float, nullable=True)
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class Battle(Base):
+    __tablename__ = "battle"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    mode: Mapped[str] = mapped_column(String(8), nullable=False)      # random|friend|bot
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="resolved")  # pending|resolved|declined
+    challenger_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("trainer.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    challenger_pull_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("pull.id", ondelete="CASCADE"), nullable=False
+    )
+    opponent_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("trainer.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    opponent_pull_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("pull.id", ondelete="CASCADE"), nullable=True
+    )
+    bot_pack: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    challenger_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    opponent_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    winner: Mapped[str | None] = mapped_column(String(12), nullable=True)  # challenger|opponent|tie
+    created_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+    resolved_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)

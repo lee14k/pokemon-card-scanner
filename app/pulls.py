@@ -16,10 +16,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import CardPrice, PriceSnapshot, Pull, PullCard
+from app.db.models import Pull, PullCard
 from app.db.session import async_session_maker
 from app.db.users import CurrentTrainer
 from app.dex.species import species_of
+from app.prices import latest_price_map
 from app.pack.ocr import read_code_card
 from app.storage import open_photo, save_pull_photos
 
@@ -93,25 +94,6 @@ def _pull_to_out(pull: Pull) -> PullOut:
             for c in pull.cards
         ],
     )
-
-
-async def _latest_price_map(session) -> tuple[dict[str, tuple[float | None, float | None]], str | None]:
-    """(match_id -> (usd_low, usd_high), snapshot iso date) from the newest done snapshot."""
-    snap = (
-        await session.execute(
-            select(PriceSnapshot).where(PriceSnapshot.status == "done")
-            .order_by(PriceSnapshot.created_at.desc()).limit(1)
-        )
-    ).scalar_one_or_none()
-    if snap is None:
-        return {}, None
-    rows = (
-        await session.execute(
-            select(CardPrice.match_id, CardPrice.usd_market_low, CardPrice.usd_market_high)
-            .where(CardPrice.snapshot_id == snap.id)
-        )
-    ).all()
-    return {m: (lo, hi) for m, lo, hi in rows}, snap.created_at.isoformat()
 
 
 def _enrich_prices(out: PullOut, prices: dict[str, tuple[float | None, float | None]],
@@ -201,7 +183,7 @@ async def save_pull(
             out.encounters = await _compute_encounters(session, trainer.id, saved)
         except Exception:  # the dex moment must never break persistence
             out.encounters = []
-        prices, as_of = await _latest_price_map(session)
+        prices, as_of = await latest_price_map(session)
         return _enrich_prices(out, prices, as_of)
 
 
@@ -285,7 +267,7 @@ async def list_pulls(trainer: CurrentTrainer) -> list[PullOut]:
                 .order_by(Pull.created_at.desc())
             )
         ).scalars().all()
-        prices, as_of = await _latest_price_map(session)
+        prices, as_of = await latest_price_map(session)
         return [_enrich_prices(_pull_to_out(p), prices, as_of) for p in rows]
 
 
@@ -296,7 +278,7 @@ async def get_pull(trainer: CurrentTrainer, pull_id: uuid.UUID) -> PullOut:
         if pull is None or pull.trainer_id != trainer.id:
             raise HTTPException(404, "pull not found")
         await session.refresh(pull, attribute_names=["cards"])
-        prices, as_of = await _latest_price_map(session)
+        prices, as_of = await latest_price_map(session)
         return _enrich_prices(_pull_to_out(pull), prices, as_of)
 
 

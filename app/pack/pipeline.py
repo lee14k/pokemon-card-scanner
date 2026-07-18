@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 
 import cv2
 import numpy as np
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+try:  # HEIC/HEIF support for direct-from-iPhone uploads.
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+except ImportError:  # pragma: no cover - dependency ships in requirements
+    pass
 
 from app.pack.confidence import pack_confidence, score_card
 from app.pack.matching import card_fields_from_match, lookup_resolved_cards
@@ -22,6 +31,15 @@ log = logging.getLogger("pokemon_scanner.pack.pipeline")
 def _decode(data: bytes) -> np.ndarray | None:
     if not data:
         return None
+    # Pillow first: the upload path sends raw camera files, so orientation lives
+    # in EXIF (which cv2.imdecode ignores — a sideways image breaks segmentation
+    # and OCR) and iPhone uploads may be HEIC (which cv2 can't parse at all).
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            im = ImageOps.exif_transpose(im)
+            return cv2.cvtColor(np.asarray(im.convert("RGB")), cv2.COLOR_RGB2BGR)
+    except (UnidentifiedImageError, OSError, ValueError):
+        pass
     arr = np.frombuffer(data, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:

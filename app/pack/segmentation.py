@@ -38,7 +38,9 @@ def _candidate_bottom_edges(gray: np.ndarray) -> list[tuple[float, float]]:
     out: list[tuple[float, float]] = []
     if lines is None:
         return out
-    for x1, y1, x2, y2 in lines[:, 0]:
+    # HoughLinesP output shape differs across OpenCV majors: (N, 1, 4) on 4.x,
+    # (N, 4) on 5.x. reshape(-1, 4) iterates segments correctly under both.
+    for x1, y1, x2, y2 in lines.reshape(-1, 4):
         dx, dy = float(x2 - x1), float(y2 - y1)
         if dx == 0:
             continue

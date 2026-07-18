@@ -8,7 +8,6 @@ from typing import Any
 
 import httpx
 
-from app.cards import cached_lookup_card
 from app.pack.set_resolution import SetResolution
 from app.pokewallet import make_async_client, pokewallet_image_url
 
@@ -24,13 +23,30 @@ async def lookup_resolved_cards(
     Without an api_key the local cache is still consulted (API misses stay None).
     Unresolvable rows and upstream failures yield None (graceful degradation):
     no single row's lookup may abort the whole pack scan."""
+    # Deferred: app.cards pulls in the DB layer, which requires DATABASE_URL at
+    # import time. Keeping it out of module scope lets the scan pipeline import
+    # in DB-less environments (standalone tools like scripts/debug_scan.py),
+    # which fall back to direct API lookups.
+    try:
+        from app.cards import cached_lookup_card as _lookup
+    except Exception as e:
+        log.warning("matching.cache_unavailable err=%r (direct API lookups)", e)
+        if not api_key:
+            return [None] * len(items)
+
+        async def _lookup(set_id, numerator, *, set_name, api_key, client):
+            from app.pokewallet import lookup_card_exact
+
+            return await lookup_card_exact(set_id, numerator, set_name=set_name,
+                                           api_key=api_key, client=client)
+
     async with make_async_client() as client:
 
         async def one(numerator: str | None, res: SetResolution) -> dict[str, Any] | None:
             if not numerator or not res.set_id:
                 return None
             try:
-                return await cached_lookup_card(
+                return await _lookup(
                     res.set_id, numerator,
                     set_name=res.set_name, api_key=api_key, client=client,
                 )

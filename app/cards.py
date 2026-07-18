@@ -119,3 +119,28 @@ async def get_cached_by_match_ids(match_ids: list[str]) -> dict[str, dict]:
     except Exception as e:
         log.warning("cards.by_match_ids_failed err=%r", e)
         return {}
+
+
+async def enumerated_cards_for_index(set_id: str) -> list[dict]:
+    """[{'id','image_url'}] for a set — enumerating from PokéWallet if the
+    card table doesn't already hold the set. Used by matcher index builds."""
+    from app.pokewallet import get_api_key
+
+    async def _rows() -> list[dict]:
+        async with async_session_maker() as session:
+            rows = (await session.execute(
+                select(Card.match_id, Card.image_url).where(Card.set_id == str(set_id))
+            )).all()
+        return [{"id": m, "image_url": u} for m, u in rows if u]
+
+    try:
+        rows = await _rows()
+        # A handful of cache rows isn't a set: enumerate when clearly partial.
+        if len(rows) < 40 and get_api_key():
+            from app.enumeration import enumerate_set
+            await enumerate_set(str(set_id))
+            rows = await _rows()
+        return rows
+    except Exception as e:
+        log.warning("cards.enumerated_for_index_failed set=%s err=%r", set_id, e)
+        return []

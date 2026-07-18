@@ -153,11 +153,92 @@ def _recover_split_code(tokens: list[tuple[str, float]]) -> CodeReading | None:
     return CodeReading(code=joined, confidence=conf, format_ok=False)
 
 
+def _code_from_tokens(tokens: list[tuple[str, float]]) -> CodeReading | None:
+    """Best full-format code among tokens, joining adjacent OCR-split fragments
+    whose hyphens survived (e.g. "2CM-2ZY7-WK" + "D-DTM")."""
+    best: CodeReading | None = None
+    for t, c in tokens:
+        if CODE_FORMAT_RE.fullmatch(t):
+            r = CodeReading(code=t, confidence=c / 100.0, format_ok=True)
+            if best is None or r.confidence > best.confidence:
+                best = r
+    if best is not None:
+        return best
+    frags = [(t, c) for t, c in tokens if re.fullmatch(r"[A-Z0-9-]{2,}", t)]
+    for i in range(len(frags)):
+        joined, confs = "", []
+        for j in range(i, min(i + 4, len(frags))):
+            joined += frags[j][0]
+            confs.append(frags[j][1])
+            if j > i and CODE_FORMAT_RE.fullmatch(joined):
+                r = CodeReading(code=joined, confidence=float(np.mean(confs)) / 100.0,
+                                format_ok=True)
+                if best is None or r.confidence > best.confidence:
+                    best = r
+    return best
+
+
+def _read_code_via_qr(image_bgr: np.ndarray) -> CodeReading | None:
+    """QR-anchored read for real code-card photos. The QR locates reliably even
+    in cluttered scenes; when its payload decodes we take the code from it, and
+    otherwise its corners give the card's rotation and scale, letting us deskew
+    and OCR just the code-text band printed to the QR's right."""
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    det = cv2.QRCodeDetector()
+    try:
+        data, pts, _ = det.detectAndDecode(gray)
+    except cv2.error:
+        return None
+    if pts is None:
+        return None
+    if data:
+        m = CODE_FORMAT_RE.search(data.upper())
+        if m:
+            log.info("ocr.code qr_payload code=%s", m.group(0))
+            return CodeReading(code=m.group(0), confidence=0.99, format_ok=True)
+    corners = pts.reshape(-1, 2)
+    tl, tr = corners[0], corners[1]
+    qw = float(np.linalg.norm(tr - tl))
+    if qw < 40:  # too small to anchor a readable text band
+        return None
+    angle = float(np.degrees(np.arctan2(tr[1] - tl[1], tr[0] - tl[0])))
+    ctr = corners.mean(axis=0)
+    rot = cv2.warpAffine(
+        gray, cv2.getRotationMatrix2D((float(ctr[0]), float(ctr[1])), angle, 1.0),
+        (gray.shape[1], gray.shape[0]),
+        flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE,
+    )
+    h, w = rot.shape
+    # Band extents (in QR widths) map to the code card's printed layout: the
+    # code line starts just right of the QR and spans ~3 QR widths. Wider crops
+    # admit background clutter that corrupts the read.
+    x0, x1 = int(ctr[0] + qw * 0.55), int(ctr[0] + qw * 3.4)
+    y0, y1 = int(ctr[1] - qw * 0.9), int(ctr[1] + qw * 0.9)
+    roi = rot[max(0, y0):min(h, y1), max(0, x0):min(w, x1)]
+    if roi.size == 0:
+        return None
+    roi = cv2.resize(roi, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    best: CodeReading | None = None
+    for img in (roi, cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]):
+        tokens = _ocr_tokens(img, _CODE_CONFIG)
+        r = _code_from_tokens(tokens) or _recover_split_code(tokens)
+        if r is not None and (
+            best is None or (r.format_ok, r.confidence) > (best.format_ok, best.confidence)
+        ):
+            best = r
+    if best is not None:
+        log.info("ocr.code qr_anchored code=%s conf=%.2f", best.code, best.confidence)
+    return best
+
+
 def read_code_card(image_bgr: np.ndarray) -> CodeReading:
     """OCR the TCG Live code from a framed close-up. Format check is advisory."""
     if image_bgr.ndim != 3 or image_bgr.shape[2] != 3 or image_bgr.size == 0:
         log.warning("ocr.code invalid_input shape=%s", getattr(image_bgr, "shape", None))
         return CodeReading()
+    qr = _read_code_via_qr(image_bgr)
+    if qr is not None and qr.format_ok:
+        return qr
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
     if max(h, w) < 900:
@@ -185,6 +266,8 @@ def read_code_card(image_bgr: np.ndarray) -> CodeReading:
             if recovered is not None and recovered.confidence > best.confidence:
                 log.info("ocr.code recovered_from_segments code=%s", recovered.code)
                 best = recovered
+    if best.code is None and qr is not None:
+        best = qr  # partial QR-anchored read beats nothing
     if best.code is None and saw_tokens:
         log.info("ocr.code tokens_present_but_no_code_matched")
     log.info("ocr.code code=%s conf=%.2f format_ok=%s", best.code, best.confidence, best.format_ok)

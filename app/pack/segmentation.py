@@ -27,13 +27,22 @@ class SegmentationResult:
     warning: str | None
 
 
-def _candidate_bottom_edges(gray: np.ndarray) -> list[tuple[float, float]]:
+# Hough min-line-length ladder, as fractions of image width. The strict floor is
+# right for protocol photos (stack fills the frame); handheld fans at an angle
+# yield shorter edge runs, so the ungrided path relaxes stepwise only when the
+# strict pass finds too few rows.
+_MIN_LINE_FRACS = (0.45, 0.30, 0.20)
+
+
+def _candidate_bottom_edges(
+    gray: np.ndarray, min_frac: float = _MIN_LINE_FRACS[0]
+) -> list[tuple[float, float]]:
     """(y_at_image_center, angle_deg) for long near-horizontal lines."""
     h, w = gray.shape
     edges = cv2.Canny(gray, 50, 150)
     lines = cv2.HoughLinesP(
         edges, 1, np.pi / 180, threshold=120,
-        minLineLength=int(w * 0.45), maxLineGap=int(w * 0.05),
+        minLineLength=int(w * min_frac), maxLineGap=int(w * 0.05),
     )
     out: list[tuple[float, float]] = []
     if lines is None:
@@ -65,6 +74,24 @@ def _cluster_rows(cands: list[tuple[float, float]], min_gap: float) -> list[tupl
         (float(np.median([y for y, _ in c])), float(np.median([a for _, a in c])))
         for c in clusters
     ]
+
+
+def _rows_from_cands(
+    cands: list[tuple[float, float]], img_h: int
+) -> tuple[list[tuple[float, float]], float]:
+    """Cluster candidates into rows and prune non-uniform spacing (shadows,
+    table edges). Returns (rows, median_gap)."""
+    if not cands:
+        return [], img_h * 0.1
+    rough = _cluster_rows(cands, min_gap=img_h * 0.02)
+    if len(rough) < 2:
+        return rough, img_h * 0.1
+    median_gap = float(np.median(np.diff([y for y, _ in rough])))
+    rows = [rough[0]]
+    for y, a in rough[1:]:
+        if y - rows[-1][0] >= median_gap * 0.5:
+            rows.append((y, a))
+    return rows, median_gap
 
 
 def _parse_capture_meta(
@@ -153,21 +180,16 @@ def find_strips(img: np.ndarray, capture_meta: dict | None) -> SegmentationResul
         log.info("segmentation.guided rows=%s snap_tol=%.1f", len(strips), tol)
         return SegmentationResult(strips=strips, warning=warning)
 
-    # Ungrided: derive rows purely from detected edges.
-    if not cands:
+    # Ungrided: derive rows purely from detected edges. Relax the line-length
+    # floor stepwise when the strict pass yields too few rows (handheld fans).
+    rows, median_gap = _rows_from_cands(cands, h)
+    for frac in _MIN_LINE_FRACS[1:]:
+        if len(rows) >= cfg.min_rows:
+            break
+        log.info("segmentation.relax_min_line frac=%.2f rows=%s", frac, len(rows))
+        rows, median_gap = _rows_from_cands(_candidate_bottom_edges(gray, frac), h)
+    if not rows:
         return SegmentationResult(strips=[], warning="no rows detected")
-    rough = _cluster_rows(cands, min_gap=h * 0.02)
-    if len(rough) >= 2:
-        gaps = np.diff([y for y, _ in rough])
-        median_gap = float(np.median(gaps))
-        # Drop clusters that break uniform staircase spacing (shadows, table edges):
-        rows = [rough[0]]
-        for y, a in rough[1:]:
-            if y - rows[-1][0] >= median_gap * 0.5:
-                rows.append((y, a))
-    else:
-        rows = rough
-        median_gap = h * 0.1
     band = max(20, int(median_gap * cfg.strip_band_frac))
     strips = [_extract_strip(img, y, band, a, i) for i, (y, a) in enumerate(rows)]
     warning = None

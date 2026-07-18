@@ -250,6 +250,59 @@ class Card(Base):
     __table_args__ = (Index("ix_card_set_id_numerator", "set_id", "numerator"),)
 
 
+class TcgdexSet(Base):
+    """TCGdex set summary (swsh + sv series), ingested by scripts/ingest_tcgdex.py.
+    `raw` is the set-detail payload minus its cards[] array (cards live in TcgdexCard)."""
+
+    __tablename__ = "tcgdex_set"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # e.g. "sv06"
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    series: Mapped[str] = mapped_column(Text, nullable=False)  # "swsh" | "sv"
+    card_count_official: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    card_count_total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    fetched_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class TcgdexCard(Base):
+    """TCGdex card summary from the set detail's cards[] (no per-card fetches)."""
+
+    __tablename__ = "tcgdex_card"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)  # e.g. "sv06-101"
+    set_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    local_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_base: Mapped[str | None] = mapped_column(Text, nullable=True)  # summary image url base
+    raw: Mapped[dict] = mapped_column(JSONB, nullable=False)
+
+    __table_args__ = (Index("ix_tcgdex_card_set_id_local_id", "set_id", "local_id"),)
+
+
+class SetIdMap(Base):
+    """PokéWallet numeric set_id -> TCGdex set id, built by scripts/build_id_maps.py."""
+
+    __tablename__ = "set_id_map"
+
+    pokewallet_set_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    tcgdex_set_id: Mapped[str] = mapped_column(Text, nullable=False)
+    method: Mapped[str] = mapped_column(Text, nullable=False)  # name | name+count
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    built_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
+class CardIdMap(Base):
+    """PokéWallet match_id -> TCGdex card id, built by scripts/build_id_maps.py."""
+
+    __tablename__ = "card_id_map"
+
+    pokewallet_match_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    tcgdex_card_id: Mapped[str] = mapped_column(Text, nullable=False)
+    method: Mapped[str] = mapped_column(Text, nullable=False)  # set+number
+    built_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
 class Battle(Base):
     __tablename__ = "battle"
 

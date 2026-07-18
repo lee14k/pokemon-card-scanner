@@ -103,3 +103,19 @@ async def cached_lookup_card(
     except Exception as e:
         log.warning("cards.cache_write_failed set=%s num=%s err=%r", set_id, num, e)
     return match
+
+
+async def get_cached_by_match_ids(match_ids: list[str]) -> dict[str, dict]:
+    """match_id → payload for known cards; missing ids simply absent.
+    DB failure degrades to {} (matching philosophy: never break a scan)."""
+    if not match_ids:
+        return {}
+    try:
+        async with async_session_maker() as session:
+            rows = (await session.execute(
+                select(Card.match_id, Card.payload).where(Card.match_id.in_(match_ids))
+            )).all()
+        return {m: p for m, p in rows}
+    except Exception as e:
+        log.warning("cards.by_match_ids_failed err=%r", e)
+        return {}

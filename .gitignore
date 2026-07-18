@@ -9,3 +9,4 @@ frontend/test-results/
 frontend/playwright-report/
 scripts/output/
 var/
+matcher/model/

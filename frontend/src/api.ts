@@ -219,3 +219,31 @@ export interface DexOut { seen_count: number; entries: DexEntry[]; }
 export async function getDex(): Promise<DexOut> {
   return parse(await fetch(`${base}/dex`, { credentials: "include" }));
 }
+
+export interface BattleCard { name: string | null; price: number | null; }
+export interface BattleSide { label: string; score: number | null; cards: BattleCard[]; }
+export interface Battle {
+  id: string; mode: string; status: string; created_at: string; resolved_at: string | null;
+  outcome: string; me: BattleSide; opponent: BattleSide;
+}
+export interface BattleList { wins: number; losses: number; ties: number; battles: Battle[]; }
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  return parse(await fetch(`${base}${path}`, {
+    method: "POST", credentials: "include",
+    headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  }));
+}
+export const randomBattle = (pullId: string) => postJson<Battle>("/battles/random", { pull_id: pullId });
+export const botBattle = (pullId: string) => postJson<Battle>("/battles/bot", { pull_id: pullId });
+export const friendBattle = (pullId: string, handle: string) =>
+  postJson<Battle>("/battles/friend", { pull_id: pullId, opponent_handle: handle });
+export const acceptBattle = (id: string, pullId: string) =>
+  postJson<Battle>(`/battles/${id}/accept`, { pull_id: pullId });
+export const declineBattle = (id: string) => postJson<Battle>(`/battles/${id}/decline`, {});
+export async function listBattles(): Promise<BattleList> {
+  return parse(await fetch(`${base}/battles`, { credentials: "include" }));
+}
+export async function battleInbox(): Promise<Battle[]> {
+  return parse(await fetch(`${base}/battles/inbox`, { credentials: "include" }));
+}

@@ -16,6 +16,7 @@ import AuthForms from "./auth/AuthForms";
 import MyPulls from "./pulls/MyPulls";
 import Dashboard from "./dashboard/Dashboard";
 import Dex from "./dex/Dex";
+import Battles from "./battles/Battles";
 
 type Step =
   | { name: "staircase" }
@@ -23,13 +24,14 @@ type Step =
   | { name: "submitting" }
   | { name: "review"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta }
   | { name: "saving"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta; cards: PackCard[] }
-  | { name: "summary"; verified: boolean; count: number; encounters: Encounter[] }
+  | { name: "summary"; verified: boolean; count: number; encounters: Encounter[]; pullId: string }
   | { name: "error"; message: string };
 
 export default function App() {
   const { trainer, loading, logout } = useAuth();
   const [step, setStep] = useState<Step>({ name: "staircase" });
-  const [view, setView] = useState<"scan" | "pulls" | "dashboard" | "dex">("scan");
+  const [view, setView] = useState<"scan" | "pulls" | "dashboard" | "dex" | "battles">("scan");
+  const [battlePull, setBattlePull] = useState<string | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const canViewStats = trainer?.role === "analyst" || trainer?.role === "admin";
 
@@ -56,7 +58,7 @@ export default function App() {
         segmentation_warning: s.scan.segmentation_warning,
         capture_meta: s.meta ?? null,
       });
-      setStep({ name: "summary", verified: saved.verified, count: saved.cards.length, encounters: saved.encounters ?? [] });
+      setStep({ name: "summary", verified: saved.verified, count: saved.cards.length, encounters: saved.encounters ?? [], pullId: saved.id });
     } catch (e) {
       setStep({ name: "error", message: e instanceof Error ? e.message : String(e) });
     }
@@ -70,6 +72,7 @@ export default function App() {
           <button type="button" onClick={() => setView("scan")}>Scan</button>
           <button type="button" onClick={() => setView("pulls")} disabled={!trainer}>My Pulls</button>
           <button type="button" onClick={() => setView("dex")} disabled={!trainer}>Pokédex</button>
+          <button type="button" onClick={() => setView("battles")} disabled={!trainer}>Battles</button>
           {canViewStats && (
             <button type="button" onClick={() => setView("dashboard")}>Dashboard</button>
           )}
@@ -91,6 +94,8 @@ export default function App() {
       {view === "dashboard" && canViewStats && <Dashboard />}
 
       {view === "dex" && trainer && <Dex />}
+
+      {view === "battles" && trainer && <Battles preselectPullId={battlePull} />}
 
       {view === "scan" && (
         <>
@@ -129,6 +134,11 @@ export default function App() {
               <button type="button" className="primary" onClick={() => setStep({ name: "staircase" })}>
                 Scan another pack
               </button>
+              {step.verified && (
+                <button type="button" onClick={() => { setBattlePull(step.pullId); setView("battles"); }}>
+                  ⚔️ Battle this pack
+                </button>
+              )}
             </section>
           )}
           {step.name === "error" && (

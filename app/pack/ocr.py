@@ -225,15 +225,18 @@ def _read_code_via_qr(image_bgr: np.ndarray) -> CodeReading | None:
     roi = rot[max(0, y0):min(h, y1), max(0, x0):min(w, x1)]
     if roi.size == 0:
         return None
-    roi = cv2.resize(roi, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     best: CodeReading | None = None
-    for img in (roi, cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]):
-        tokens = _ocr_tokens(img, _CODE_CONFIG)
-        r = _code_from_tokens(tokens) or _recover_split_code(tokens)
-        if r is not None and (
-            best is None or (r.format_ok, r.confidence) > (best.format_ok, best.confidence)
-        ):
-            best = r
+    # Multiple upscales: low-resolution uploads misread single glyphs at one
+    # scale ("C" -> "0"); the best-confidence read across scales wins.
+    for fx in (2, 3):
+        up = cv2.resize(roi, None, fx=fx, fy=fx, interpolation=cv2.INTER_CUBIC)
+        for img in (up, cv2.threshold(up, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]):
+            tokens = _ocr_tokens(img, _CODE_CONFIG)
+            r = _code_from_tokens(tokens) or _recover_split_code(tokens)
+            if r is not None and (
+                best is None or (r.format_ok, r.confidence) > (best.format_ok, best.confidence)
+            ):
+                best = r
     if best is not None:
         log.info("ocr.code qr_anchored code=%s conf=%.2f", best.code, best.confidence)
     return best

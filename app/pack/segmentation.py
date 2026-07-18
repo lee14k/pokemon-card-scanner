@@ -82,6 +82,16 @@ def _cluster_rows(cands: list[tuple[float, float]], min_gap: float) -> list[tupl
     ]
 
 
+def _gap_cv(rows: list[tuple[float, float]]) -> float:
+    """Coefficient of variation of row gaps — low means uniform staircase
+    spacing (real card edges); junk row sets score high."""
+    if len(rows) < 3:
+        return float("inf")
+    gaps = np.diff([y for y, _ in rows])
+    mean = float(np.mean(gaps))
+    return float(np.std(gaps) / mean) if mean > 0 else float("inf")
+
+
 def _rows_from_cands(
     cands: list[tuple[float, float]], img_h: int
 ) -> tuple[list[tuple[float, float]], float]:
@@ -196,15 +206,22 @@ def find_strips(img: np.ndarray, capture_meta: dict | None) -> SegmentationResul
         log.info("segmentation.guided rows=%s snap_tol=%.1f", len(strips), tol)
         return SegmentationResult(strips=strips, warning=warning)
 
-    # Ungrided: derive rows purely from detected edges. Relax the line-length
-    # floor stepwise when the strict pass yields too few rows (handheld fans).
-    rows, median_gap = _rows_from_cands(cands, h)
+    # Ungrided: derive rows purely from detected edges. Uploads arrive at many
+    # resolutions (browsers downscale phone photos), which shifts where true
+    # rows appear along the relaxation ladder — and junky sets can clear a
+    # naive minimum-count bar first. Run the whole ladder, then keep the row
+    # set with the most uniform staircase spacing among in-range counts.
+    trials = [(_MIN_LINE_FRACS[0], *_rows_from_cands(cands, h))]
     for frac in _MIN_LINE_FRACS[1:]:
-        if len(rows) >= cfg.min_rows:
-            break
-        log.info("segmentation.relax_min_line frac=%.2f rows=%s", frac, len(rows))
         relaxed = [(y / scale, a) for y, a in _candidate_bottom_edges(gray, frac)]
-        rows, median_gap = _rows_from_cands(relaxed, h)
+        trials.append((frac, *_rows_from_cands(relaxed, h)))
+    in_range = [t for t in trials if cfg.min_rows <= len(t[1]) <= cfg.max_rows]
+    if in_range:
+        frac_used, rows, median_gap = min(in_range, key=lambda t: _gap_cv(t[1]))
+    else:  # no plausible count anywhere: keep the biggest set (strictest first)
+        frac_used, rows, median_gap = max(trials, key=lambda t: len(t[1]))
+    log.info("segmentation.ladder frac=%.2f rows=%s gap_cv=%.2f",
+             frac_used, len(rows), _gap_cv(rows))
     if not rows:
         return SegmentationResult(strips=[], warning="no rows detected")
     band = max(20, int(median_gap * cfg.strip_band_frac))

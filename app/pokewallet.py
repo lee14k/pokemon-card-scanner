@@ -93,14 +93,34 @@ async def lookup_card_exact(
     """
     num = numerator.lstrip("0") or "0"
     data = await search_cards(f"{set_id} {num}", limit=25, api_key=api_key, client=client)
-    for c in data.get("results") or []:
+    results = data.get("results") or []
+    for c in results:
         info = c.get("card_info") or {}
         raw = str(info.get("card_number") or "").strip()
         raw_num = raw.split("/")[0].strip().lstrip("0") or "0"
         if raw_num.upper() != num.upper():
             continue
-        if set_name and str(info.get("set_name") or "").strip().lower() != set_name.strip().lower():
+        if not _set_name_matches(set_name, info.get("set_name")):
             continue
         return c
-    log.info("pokewallet.lookup_exact miss set_id=%s num=%s", set_id, num)
+    log.info(
+        "pokewallet.lookup_exact miss set_id=%s num=%s candidates=%s",
+        set_id, num,
+        [
+            {"card_number": (c.get("card_info") or {}).get("card_number"),
+             "set_name": (c.get("card_info") or {}).get("set_name")}
+            for c in results[:3]
+        ],
+    )
     return None
+
+
+def _set_name_matches(expected: str | None, actual: object) -> bool:
+    """Set-name filter tolerant of formatting differences ("Twilight Masquerade"
+    vs "SV06: Twilight Masquerade"). The query is already set_id-scoped and the
+    numerator is exact-matched, so containment is safe here."""
+    if not expected:
+        return True
+    e = expected.strip().lower()
+    a = str(actual or "").strip().lower()
+    return e == a or e in a or a in e

@@ -27,6 +27,21 @@
   letter-spacing: -0.02em;
 }
 
+.home-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  min-height: 0;
+  font: inherit;
+  letter-spacing: inherit;
+}
+
+.home-link:hover:not(:disabled) {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+}
+
 .app-header nav {
   display: flex;
   gap: 6px;
@@ -242,6 +257,265 @@
   flex-direction: column;
   gap: 4px;
   font-size: 14px;
+}
+
+/* --- landing page + scan demo animation --- */
+
+.landing {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  text-align: center;
+}
+
+.landing h2 {
+  margin: 0.5rem 0 0;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.landing-sub {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.landing .primary {
+  font-size: 1.05rem;
+  min-height: 52px;
+}
+
+.scan-demo {
+  position: relative;
+  height: 280px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* Base styles are the readable static end-state (staircase + guides visible),
+   so reduced-motion users get a meaningful still image. */
+.demo-card {
+  position: absolute;
+  top: 4%;
+  left: 50%;
+  margin-left: -39px;
+  width: 78px;
+  height: 42%;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: linear-gradient(170deg, #33415a, #232d3f 55%);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+  transform: translateY(var(--ty));
+  animation: demo-card 8s ease-in-out infinite;
+}
+
+.demo-card::after {
+  content: "";
+  position: absolute;
+  inset: 7px 7px auto;
+  height: 46%;
+  border-radius: 4px;
+  background: linear-gradient(140deg, var(--accent-dim), #7c3aed);
+  opacity: 0.85;
+}
+
+.demo-guide {
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  height: 0;
+  border-top: 2px dashed rgba(255, 220, 0, 0.9);
+  animation: demo-guide 8s linear infinite;
+}
+
+.demo-card:nth-child(2) {
+  background: linear-gradient(170deg, #3a4a66, #28334a 55%);
+}
+
+.demo-card:nth-child(3) {
+  background: linear-gradient(170deg, #41536f, #2d3a52 55%);
+}
+
+.demo-card:nth-child(4) {
+  background: linear-gradient(170deg, #485c7a, #32405a 55%);
+}
+
+.demo-card:nth-child(5) {
+  background: linear-gradient(170deg, #506583, #374763 55%);
+}
+
+.demo-flash {
+  position: absolute;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 9;
+  animation: demo-flash 8s linear infinite;
+}
+
+.demo-check {
+  position: absolute;
+  z-index: 10;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  background: rgba(52, 211, 153, 0.15);
+  border: 1px solid var(--success);
+  color: var(--success);
+  font-size: 0.85rem;
+  font-weight: 700;
+  white-space: nowrap;
+  animation: demo-check 8s ease-in-out infinite;
+}
+
+.demo-captions {
+  position: relative;
+  height: 1.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.demo-captions span {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+.demo-cap-1 {
+  animation: demo-cap-1 8s linear infinite;
+}
+
+.demo-cap-2 {
+  animation: demo-cap-2 8s linear infinite;
+}
+
+.demo-cap-3 {
+  animation: demo-cap-3 8s linear infinite;
+}
+
+@keyframes demo-card {
+  0%,
+  14% {
+    transform: translateY(0);
+  }
+  32%,
+  93% {
+    transform: translateY(var(--ty));
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes demo-guide {
+  0%,
+  34% {
+    opacity: 0;
+  }
+  42%,
+  88% {
+    opacity: 1;
+  }
+  94%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes demo-flash {
+  0%,
+  60% {
+    opacity: 0;
+  }
+  62% {
+    opacity: 0.85;
+  }
+  66%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes demo-check {
+  0%,
+  66% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.8);
+  }
+  71%,
+  90% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  96%,
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0.9);
+  }
+}
+
+@keyframes demo-cap-1 {
+  0%,
+  2% {
+    opacity: 0;
+  }
+  6%,
+  28% {
+    opacity: 1;
+  }
+  33%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes demo-cap-2 {
+  0%,
+  34% {
+    opacity: 0;
+  }
+  40%,
+  55% {
+    opacity: 1;
+  }
+  60%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes demo-cap-3 {
+  0%,
+  62% {
+    opacity: 0;
+  }
+  68%,
+  92% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-card,
+  .demo-guide,
+  .demo-flash,
+  .demo-check,
+  .demo-captions span {
+    animation: none;
+  }
+
+  .demo-cap-3 {
+    opacity: 1;
+  }
 }
 
 .sr-only {

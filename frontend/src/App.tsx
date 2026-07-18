@@ -17,6 +17,7 @@ import MyPulls from "./pulls/MyPulls";
 import Dashboard from "./dashboard/Dashboard";
 import Dex from "./dex/Dex";
 import Battles from "./battles/Battles";
+import Landing from "./landing/Landing";
 
 type Step =
   | { name: "staircase" }
@@ -30,7 +31,7 @@ type Step =
 export default function App() {
   const { trainer, loading, logout } = useAuth();
   const [step, setStep] = useState<Step>({ name: "staircase" });
-  const [view, setView] = useState<"scan" | "pulls" | "dashboard" | "dex" | "battles">("scan");
+  const [view, setView] = useState<"home" | "scan" | "pulls" | "dashboard" | "dex" | "battles">("home");
   const [battlePull, setBattlePull] = useState<string | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const canViewStats = trainer?.role === "analyst" || trainer?.role === "admin";
@@ -67,7 +68,11 @@ export default function App() {
   return (
     <main className="app">
       <header className="app-header">
-        <h1>Pack Scanner</h1>
+        <h1>
+          <button type="button" className="home-link" onClick={() => setView("home")}>
+            Pack Scanner
+          </button>
+        </h1>
         <nav>
           <button type="button" onClick={() => setView("scan")}>Scan</button>
           <button type="button" onClick={() => setView("pulls")} disabled={!trainer}>My Pulls</button>
@@ -87,6 +92,10 @@ export default function App() {
           <AuthForms onDone={() => setAuthOpen(false)} />
           <button type="button" onClick={() => setAuthOpen(false)}>Cancel</button>
         </div>
+      )}
+
+      {view === "home" && (
+        <Landing onStart={() => { setStep({ name: "staircase" }); setView("scan"); }} />
       )}
 
       {view === "pulls" && trainer && <MyPulls />}

@@ -55,7 +55,14 @@ def _prep_variants(strip_bgr: np.ndarray) -> list[np.ndarray]:
 
 
 def _ocr_tokens(img: np.ndarray, config: str) -> list[tuple[str, float]]:
-    data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT)
+    try:
+        data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT)
+    except (pytesseract.TesseractError, OSError) as e:
+        # A single Tesseract subprocess failure (e.g. killed by a signal on a
+        # degenerate strip) degrades to "no tokens read" — one bad strip must
+        # never abort the whole scan.
+        log.warning("ocr.tesseract_failed err=%s", e)
+        return []
     out = []
     for text, conf in zip(data["text"], data["conf"]):
         t = (text or "").strip().upper()
@@ -86,6 +93,9 @@ def read_card_number(strip_bgr: np.ndarray) -> NumberReading:
     """Best card-number reading across preprocessing variants and PSM modes."""
     if strip_bgr.ndim != 3 or strip_bgr.shape[2] != 3 or strip_bgr.size == 0:
         log.warning("ocr.number invalid_input shape=%s", getattr(strip_bgr, "shape", None))
+        return NumberReading(blank=True)
+    if strip_bgr.shape[0] < 8:  # degenerate crop (row at the image border)
+        log.warning("ocr.number strip_too_small h=%s", strip_bgr.shape[0])
         return NumberReading(blank=True)
     best = NumberReading()
     any_text = False

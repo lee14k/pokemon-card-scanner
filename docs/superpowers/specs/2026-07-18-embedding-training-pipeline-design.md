@@ -101,23 +101,75 @@ requirement is high visibility into all of it:
   set_id nullable, card_key nullable — catalog id, split, source enum
   `synthetic|upload|harvest`).
 
-## Phase 3 — Flywheel + retrain cadence
+## Phase 3 — Flywheel
 - Harvester job (admin-triggered; later batch-stage): for review-confirmed
   saved pulls, re-crop strips from stored photos (re-derivation machinery) and
   insert as labeled `harvest` rows keyed to the confirmed cards.
-- Retrain: manual for now (run `training/train.py` on the exported pools; an
-  admin "export training data" endpoint bundles pools to a tarball). Automation
-  deferred until cadence is known.
+- Admin "export training data" endpoint bundles pools to a tarball for the
+  training environment.
+
+## Evaluation tiers & deploy gate
+
+Two labeled test tiers, kept separate from training data forever:
+
+- **Standard tier** — reasonably lit, in-focus staircase photos (protocol-ish
+  captures, guided or upload). **Deploy gate: 100% top-1 on this tier.** Any
+  miss is triaged (added to training data or shown to be a labeling error)
+  before the feature turns on for users. Until the gate passes, the matcher
+  service may deploy but `MATCHER_URL` stays unset in production — the feature
+  is off.
+- **Stress tier** — adversarial captures (the current handheld corpus pack,
+  glare/blur/low-light uploads). Tracked and reported on every model, expected
+  to climb over time; **non-blocking** for deploy. Baseline to beat: 4/8.
+
+Synthetic validation (held-out synth split, top-1 ≥90% same-set) is the fast
+inner-loop metric; the tiers are the truth.
+
+## Training cadence & retraining runbook
+
+Retraining must be an easily-followed pipeline, not archaeology. Phase 1
+delivers `docs/training-runbook.md` plus one command per stage:
+
+1. `python training/build_dataset.py` — regenerate synthetic scenes (seeded)
+   and pull the current labeled pools from the DB export into
+   `training/data/<dataset-version>/`.
+2. `python training/train.py --dataset <v>` — train; writes
+   `training/runs/<run-id>/` (checkpoints, metrics.json, config).
+3. `python training/eval.py --run <run-id>` — prints standard-tier,
+   stress-tier, and synth-val scores side-by-side with the currently deployed
+   model's scores.
+4. `python training/export.py --run <run-id>` — ONNX + version file.
+5. Deploy: update the model artifact reference in `matcher/Dockerfile`, push,
+   redeploy the matcher service, hit the admin reindex endpoint (indexes are
+   model-version-stamped, so stale ones refuse to serve and rebuild).
+6. Verify: run the eval harness against the deployed matcher.
+
+**When to retrain** (documented in the runbook):
+- New set released → **no retrain needed**: enumerate + index the set (the
+  embedding generalizes; indexes are per-set). Retrain only if the eval view
+  shows the new set underperforming.
+- Standard-tier miss found (via flywheel or admin uploads) → triage, add to
+  pools, retrain when a handful accumulate.
+- Labeled real pool grows ~2× since last training → retrain (real data is the
+  scarcest, highest-value signal).
+- Any eval regression after a pipeline change (segmentation, capture).
 
 ## Acceptance
-- Phase 1: corpus gate ≥ badge-anchor baseline (4/8) required; ≥7/8 top-1 or
-  8/8 top-3 aspirational; synth-val top-1 ≥90% same-set. Every result recorded
-  in the eval view (phase 2) or run logs (phase 1).
+- Phase 1: stress tier ≥ badge-anchor baseline (4/8) required, ≥7/8 top-1 or
+  8/8 top-3 aspirational; synth-val ≥90%; runbook committed and every stage
+  executed end-to-end at least once (a full dry run is part of acceptance).
 - Phase 2: smoke — upload labeled + unlabeled staircase photos of 3 and 11
-  cards, verify pools/galleries/predictions render; repo test suite untouched.
+  cards, verify pools/galleries/predictions/eval-tier views render; repo test
+  suite untouched.
+- Deploy gate (feature-on in prod): 100% top-1 on the standard tier, which
+  requires standard-tier photos to exist — supplied via the phase-2 intake.
 - No automated tests (repo rule); machine care rules apply to all smokes.
 
-## Out of scope
+## Out of scope now, planned later (roadmap)
+- Automated retraining + model deployment (runbook stays manual until cadence
+  is proven).
+- Foil / reverse-holo variant discrimination.
+- Non-staircase layouts: binders, spreads, singles-on-table.
+
+## Out of scope permanently (this sub-project)
 - Code-card OCR (working; user-confirmed).
-- Automated retraining/deployment of models; foil-variant discrimination;
-  non-staircase photo layouts (binders, spreads).

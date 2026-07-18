@@ -77,3 +77,20 @@ async def recompute_stats(
         background.add_task(run_batch, "manual")
         return {"status": "accepted", "trigger": "manual"}
     raise HTTPException(403, "admin role or cron token required")
+
+
+@router.post("/matcher/index/{set_id}")
+async def build_matcher_index(set_id: str, admin: CurrentAdmin) -> dict:
+    """Enumerate a set and (re)build its matcher index. Synchronous; admin-only."""
+    from app.cards import enumerated_cards_for_index
+    from app.matcher_client import build_index, enabled
+
+    if not enabled():
+        raise HTTPException(503, "MATCHER_URL not configured")
+    cards = await enumerated_cards_for_index(set_id)
+    if not cards:
+        raise HTTPException(502, "no reference cards available for set")
+    report = await build_index(set_id, cards)
+    if report is None:
+        raise HTTPException(502, "matcher index build failed")
+    return report

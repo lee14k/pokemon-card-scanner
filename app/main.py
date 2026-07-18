@@ -14,11 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.cards import cached_lookup_card
 from app.logging_config import configure_logging
 from app.pack.matching import card_fields_from_match
 from app.pack.pipeline import scan_pack
 from app.pack.set_resolution import load_denominator_table
-from app.pokewallet import get_api_key, lookup_card_exact
+from app.pokewallet import get_api_key
 from app.schemas import CardLookupResponse, PackCard, PackScanResponse, SetInfo
 from app.set_symbol_index import load_symbol_index
 from app.db.users import (
@@ -137,21 +138,22 @@ async def sets() -> list[SetInfo]:
 async def cards_lookup(set_id: str, number: str) -> CardLookupResponse:
     """Manual-fix flow: hand-entered (set, number) → card preview."""
     api_key = get_api_key()
-    if not api_key:
-        raise HTTPException(503, "POKEWALLET_API_KEY not configured")
     table = load_denominator_table()
     entry = next((s for s in table.sets if s.set_id == set_id), None)
     if entry is None:
         raise HTTPException(404, f"unknown set_id {set_id}")
     numerator = number.split("/")[0].strip()
     try:
-        match = await lookup_card_exact(set_id, numerator, set_name=entry.set_name,
-                                        api_key=api_key)
+        match = await cached_lookup_card(set_id, numerator, set_name=entry.set_name,
+                                         api_key=api_key)
     except httpx.HTTPStatusError as e:
         raise HTTPException(502, f"PokéWallet returned {e.response.status_code}") from e
     except httpx.HTTPError as e:
         raise HTTPException(503, f"PokéWallet unreachable: {e}") from e
     if match is None:
+        # Cache-only lookups work without a key; only a full miss needs the API.
+        if not api_key:
+            raise HTTPException(503, "POKEWALLET_API_KEY not configured")
         return CardLookupResponse(found=False, card=None)
     fields = card_fields_from_match(match)
     info = match.get("card_info") or {}

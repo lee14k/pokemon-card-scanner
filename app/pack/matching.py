@@ -8,8 +8,9 @@ from typing import Any
 
 import httpx
 
+from app.cards import cached_lookup_card
 from app.pack.set_resolution import SetResolution
-from app.pokewallet import lookup_card_exact, make_async_client, pokewallet_image_url
+from app.pokewallet import make_async_client, pokewallet_image_url
 
 log = logging.getLogger("pokemon_scanner.pack.matching")
 
@@ -19,19 +20,17 @@ async def lookup_resolved_cards(
     *,
     api_key: str | None,
 ) -> list[dict[str, Any] | None]:
-    """One PokéWallet hit per resolvable row, gathered concurrently.
+    """One cache-or-PokéWallet hit per resolvable row, gathered concurrently.
+    Without an api_key the local cache is still consulted (API misses stay None).
     Unresolvable rows and upstream failures yield None (graceful degradation):
     no single row's lookup may abort the whole pack scan."""
-    if not api_key:
-        return [None] * len(items)
-
     async with make_async_client() as client:
 
         async def one(numerator: str | None, res: SetResolution) -> dict[str, Any] | None:
             if not numerator or not res.set_id:
                 return None
             try:
-                return await lookup_card_exact(
+                return await cached_lookup_card(
                     res.set_id, numerator,
                     set_name=res.set_name, api_key=api_key, client=client,
                 )

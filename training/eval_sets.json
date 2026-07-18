@@ -1,0 +1,9 @@
+[
+  {
+    "photo": "tests/corpus/IMG_7102.heic",
+    "set_slug": "sv6",
+    "tier": "stress",
+    "rows": [null, null, "sv6-126", "sv6-101", "sv6-45", "sv6-143",
+             "sv6-79", "sv6-66", "sv6-78", "sv6-96", null]
+  }
+]

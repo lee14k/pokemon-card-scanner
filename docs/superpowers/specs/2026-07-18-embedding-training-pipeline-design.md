@@ -94,6 +94,21 @@ requirement is high visibility into all of it:
 - Labeling UI per strip: pick set → pick card (search by number/name against
   the catalog) or "skip row"; or mark the whole upload **unlabeled** → routes
   to the evaluation pool.
+
+### Label template generator (low-effort labeling)
+- Admin screen: pick any set (search by name/code across the catalog —
+  "Twilight Masquerade", "Perfect Order", ...) → instantly get generated JSON:
+  - **Set template**: `{set_id, set_code, set_name, cards:[{number, name,
+    card_key}...]}` — the full card list prefilled from the catalog, copyable/
+    downloadable.
+  - **Photo template**: for an uploaded photo, a skeleton prefilled with the
+    detected row count — `{set: "TWM", rows:[{row: 0, number: ""}, ...]}` —
+    the admin only types card numbers.
+- The intake accepts **pasted JSON labels** as a full alternative to the
+  click-through picker: `{"set": "TWM", "rows": ["010", "126", ...]}` (numbers
+  only; `null` for skip-row). The server resolves numbers → catalog cards and
+  rejects numbers not in the set with a clear per-row error. Labeling a photo
+  is: generate template, type numbers, paste.
 - Optional `capture_meta` passthrough when taken via the guided flow.
 - Storage: photos + strips on the Railway Volume under a `training/` prefix;
   new tables: `training_photo` (id, path, uploaded_by, labeled bool,

@@ -32,8 +32,8 @@ async def match_strips(set_key: str, strip_jpegs: list[bytes],
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(f"{base}/match/{set_key}", files=files, headers=_headers())
-        if r.status_code == 404:
-            return None  # no index yet — caller may trigger a build
+        if r.status_code in (404, 409):
+            return None  # no index / stale model version — caller may trigger a build
         r.raise_for_status()
         return r.json()
     except (httpx.HTTPError, ValueError) as e:

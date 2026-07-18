@@ -9,6 +9,9 @@ frontend/test-results/
 frontend/playwright-report/
 scripts/output/
 var/
-matcher/model/
+matcher/model/*
+!matcher/model/model.onnx
+!matcher/model/strip-embed-*.onnx
+!matcher/model/version.json
 training/data/
 training/runs/

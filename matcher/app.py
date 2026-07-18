@@ -75,7 +75,8 @@ async def build_index(set_key: str, req: IndexRequest) -> dict:
     if not ids:
         raise HTTPException(502, f"no reference images fetched ({failures} failures)")
     vectors = model.embed(crops)
-    info = index.save(config.index_dir(), set_key, ids, vectors, "api", failures)
+    info = index.save(config.index_dir(), set_key, ids, vectors, "api", failures,
+                      extra={"model_version": model.version()})
     log.info("index.built %s", info)
     return info
 
@@ -86,6 +87,9 @@ async def match(set_key: str, strips: list[UploadFile] = File(...)) -> list[list
     loaded = index.load(config.index_dir(), set_key)
     if loaded is None:
         raise HTTPException(404, "no index")
+    meta = index.status(config.index_dir(), set_key)
+    if meta and meta.get("model_version") != model.version():
+        raise HTTPException(409, "index built with different model")
     ids, vectors = loaded
     images: list[Image.Image] = []
     for s in strips:

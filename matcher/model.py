@@ -1,13 +1,16 @@
-"""CLIP ViT-B/32 image encoder via onnxruntime. Embeds letterboxed 224x224
-RGB images to L2-normalized float32[512] vectors."""
+"""Strip-embedding image encoder via onnxruntime. Embeds letterboxed 224x224
+RGB images (raw 0..1 input; normalization lives inside the ONNX graph) to
+L2-normalized float32 vectors."""
 from __future__ import annotations
+
+import json, os
 
 import numpy as np
 import onnxruntime as ort
 from PIL import Image
 
-_MEAN = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
-_STD = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32)
+from matcher import config
+
 _SIZE = 224
 
 _session: ort.InferenceSession | None = None
@@ -19,6 +22,13 @@ def load(model_path: str) -> None:
 def ready() -> bool:
     return _session is not None
 
+def version() -> str:
+    vf = os.path.join(os.path.dirname(config.model_path()), "version.json")
+    try:
+        return json.loads(open(vf).read()).get("model_version", "unknown")
+    except OSError:
+        return "unknown"
+
 def _letterbox(im: Image.Image) -> np.ndarray:
     im = im.convert("RGB")
     w, h = im.size
@@ -28,11 +38,10 @@ def _letterbox(im: Image.Image) -> np.ndarray:
     canvas = Image.new("RGB", (_SIZE, _SIZE), (128, 128, 128))
     canvas.paste(im, ((_SIZE - nw) // 2, (_SIZE - nh) // 2))
     arr = np.asarray(canvas, dtype=np.float32) / 255.0
-    arr = (arr - _MEAN) / _STD
     return arr.transpose(2, 0, 1)  # CHW
 
 def embed(images: list[Image.Image], batch: int = 16) -> np.ndarray:
-    """float32 [N, 512], L2-normalized."""
+    """float32 [N, dim], L2-normalized."""
     assert _session is not None, "model not loaded"
     out: list[np.ndarray] = []
     name = _session.get_inputs()[0].name
@@ -40,6 +49,6 @@ def embed(images: list[Image.Image], batch: int = 16) -> np.ndarray:
         x = np.stack([_letterbox(im) for im in images[i:i + batch]])
         (y,) = _session.run(None, {name: x})
         out.append(y.astype(np.float32))
-    v = np.concatenate(out) if out else np.zeros((0, 512), np.float32)
+    v = np.concatenate(out) if out else np.zeros((0, 0), np.float32)
     n = np.linalg.norm(v, axis=1, keepdims=True)
     return v / np.maximum(n, 1e-8)

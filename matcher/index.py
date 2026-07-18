@@ -10,12 +10,13 @@ def _paths(index_dir: str, set_key: str) -> tuple[pathlib.Path, pathlib.Path]:
     return base / f"{safe}.npz", base / f"{safe}.meta.json"
 
 def save(index_dir: str, set_key: str, ids: list[str], vectors: np.ndarray,
-         source: str, failures: int) -> dict:
+         source: str, failures: int, extra: dict | None = None) -> dict:
     npz, meta = _paths(index_dir, set_key)
     npz.parent.mkdir(parents=True, exist_ok=True)
     np.savez(npz, ids=np.array(ids), vectors=vectors.astype(np.float32))
     info = {"set_key": set_key, "count": len(ids), "failures": failures,
-            "source": source, "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+            "source": source, "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            **(extra or {})}
     meta.write_text(json.dumps(info))
     return info
 

@@ -7,7 +7,7 @@ import enum
 import uuid
 
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -222,6 +222,32 @@ class CardPrice(Base):
     usd_market_high: Mapped[float | None] = mapped_column(Float, nullable=True)
     eur_trend: Mapped[float | None] = mapped_column(Float, nullable=True)
     raw: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class Card(Base):
+    """Locally cached PokéWallet card, keyed by the upstream card id. Rows are
+    origin-agnostic: source records how a row arrived ('lookup' cache-fill,
+    'seed' history backfill, future bulk imports), nothing else depends on it."""
+
+    __tablename__ = "card"
+
+    match_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    set_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # Normalized: uppercased, leading zeros stripped, "0" if empty.
+    numerator: Mapped[str] = mapped_column(Text, nullable=False)
+    set_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rarity: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)  # raw PokéWallet card dict
+    source: Mapped[str] = mapped_column(
+        Text, nullable=False, default="lookup", server_default="lookup"
+    )
+    first_seen: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+    last_fetched: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+    # Non-unique: one (set, number) can map to several match_ids (variants/reprints).
+    __table_args__ = (Index("ix_card_set_id_numerator", "set_id", "numerator"),)
 
 
 class Battle(Base):

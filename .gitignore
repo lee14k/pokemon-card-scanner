@@ -10,3 +10,5 @@ frontend/playwright-report/
 scripts/output/
 var/
 matcher/model/
+training/data/
+training/runs/

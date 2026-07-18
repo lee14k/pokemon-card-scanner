@@ -34,6 +34,14 @@ class NumberReading:
 def _prep_variants(strip_bgr: np.ndarray) -> list[np.ndarray]:
     """Upscaled binarized variants of the strip's left region + full strip."""
     h, w = strip_bgr.shape[:2]
+    if w > 2400:
+        # Strips cropped from 12MP uploads don't need full width: the number
+        # type stays OCR-large at 2400, and the 3x upscale below would otherwise
+        # produce ~12k-wide variants (memory, Tesseract time).
+        s = 2400 / w
+        strip_bgr = cv2.resize(strip_bgr, (2400, max(1, int(h * s))),
+                               interpolation=cv2.INTER_AREA)
+        h, w = strip_bgr.shape[:2]
     left = strip_bgr[:, : max(1, int(w * 0.40))]
     variants = []
     for region in (left, strip_bgr):
@@ -244,6 +252,11 @@ def read_code_card(image_bgr: np.ndarray) -> CodeReading:
     if max(h, w) < 900:
         scale = 900 / max(h, w)
         gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    elif max(h, w) > 2400:
+        # Whole-frame fallback OCR doesn't need phone-camera resolution; the
+        # code text is large. Bounds Tesseract memory on 12MP uploads.
+        scale = 2400 / max(h, w)
+        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
     best: CodeReading = CodeReading()

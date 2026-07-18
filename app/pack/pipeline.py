@@ -79,12 +79,21 @@ async def scan_pack(
     # blocking CPU/subprocess work; offload to threads so this async path (a FastAPI
     # endpoint) doesn't pin the event loop for the whole pack.
     seg = await asyncio.to_thread(find_strips, stair, capture_meta)
+    # Bound OCR concurrency: each strip read spawns a Tesseract subprocess over
+    # 3x-upscaled variants; a 12-card pack running unbounded peaks near 1GB in a
+    # small container. Two or three in flight saturate a cloud vCPU anyway.
+    ocr_sem = asyncio.Semaphore(3)
+
+    async def _bounded(fn, *args):
+        async with ocr_sem:
+            return await asyncio.to_thread(fn, *args)
+
     readings = list(
-        await asyncio.gather(*(asyncio.to_thread(read_card_number, s.image) for s in seg.strips))
+        await asyncio.gather(*(_bounded(read_card_number, s.image) for s in seg.strips))
     )
     resolutions = list(
         await asyncio.gather(
-            *(asyncio.to_thread(resolve_set, r, s.image) for r, s in zip(readings, seg.strips))
+            *(_bounded(resolve_set, r, s.image) for r, s in zip(readings, seg.strips))
         )
     )
 

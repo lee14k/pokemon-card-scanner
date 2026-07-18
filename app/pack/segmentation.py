@@ -33,6 +33,12 @@ class SegmentationResult:
 # strict pass finds too few rows.
 _MIN_LINE_FRACS = (0.45, 0.30, 0.20)
 
+# Cap for the detection working copy (long side, px). Strips are still cropped
+# from the full-resolution original for OCR. 2800 preserves row recovery on
+# 12MP handheld-fan photos; smaller caps distort the Hough geometry enough to
+# admit junk row sets.
+_DETECT_MAX_DIM = 2800
+
 
 def _candidate_bottom_edges(
     gray: np.ndarray, min_frac: float = _MIN_LINE_FRACS[0]
@@ -154,9 +160,19 @@ def find_strips(img: np.ndarray, capture_meta: dict | None) -> SegmentationResul
     """
     cfg = settings()
     h, w = img.shape[:2]
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # Detection geometry doesn't need phone-camera resolution: denoise + Hough on
+    # a 12MP frame costs hundreds of MB. Detect on a capped copy, then map row
+    # positions back and crop OCR strips from the full-resolution original.
+    scale = 1.0
+    if max(h, w) > _DETECT_MAX_DIM:
+        scale = _DETECT_MAX_DIM / max(h, w)
+        small = cv2.resize(img, (int(w * scale), int(h * scale)),
+                           interpolation=cv2.INTER_AREA)
+    else:
+        small = img
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     gray = cv2.fastNlMeansDenoising(gray, h=7)
-    cands = _candidate_bottom_edges(gray)
+    cands = [(y / scale, a) for y, a in _candidate_bottom_edges(gray)]
 
     if capture_meta:
         parsed = _parse_capture_meta(capture_meta, h)
@@ -187,7 +203,8 @@ def find_strips(img: np.ndarray, capture_meta: dict | None) -> SegmentationResul
         if len(rows) >= cfg.min_rows:
             break
         log.info("segmentation.relax_min_line frac=%.2f rows=%s", frac, len(rows))
-        rows, median_gap = _rows_from_cands(_candidate_bottom_edges(gray, frac), h)
+        relaxed = [(y / scale, a) for y, a in _candidate_bottom_edges(gray, frac)]
+        rows, median_gap = _rows_from_cands(relaxed, h)
     if not rows:
         return SegmentationResult(strips=[], warning="no rows detected")
     band = max(20, int(median_gap * cfg.strip_band_frac))

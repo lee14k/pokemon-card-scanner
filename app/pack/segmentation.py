@@ -206,6 +206,21 @@ def find_strips(img: np.ndarray, capture_meta: dict | None) -> SegmentationResul
         log.info("segmentation.guided rows=%s snap_tol=%.1f", len(strips), tol)
         return SegmentationResult(strips=strips, warning=warning)
 
+    # Learned band detector (sub-project J): when enabled + model present, it
+    # locates number bands directly, robust to the spacing/tilt/curve that the
+    # geometric ladder below struggles with. Any miss/error → fall through.
+    if cfg.band_detector:
+        try:
+            from app.pack.band_detector import detect_bands
+
+            learned = detect_bands(img)
+        except Exception as e:  # import failure etc. — never break the scan
+            log.warning("segmentation.band_detector_error err=%r", e)
+            learned = None
+        if learned:
+            log.info("segmentation.band_detector rows=%s", len(learned))
+            return SegmentationResult(strips=learned, warning=None)
+
     # Ungrided: derive rows purely from detected edges. Uploads arrive at many
     # resolutions (browsers downscale phone photos), which shifts where true
     # rows appear along the relaxation ladder — and junky sets can clear a

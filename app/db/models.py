@@ -303,6 +303,63 @@ class CardIdMap(Base):
     built_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
 
 
+class TrainingPhoto(Base):
+    """Admin-uploaded staircase photo for the training pools (any row count ≥1)."""
+
+    __tablename__ = "training_photo"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    path: Mapped[str] = mapped_column(Text, nullable=False)  # storage-root-relative
+    tier: Mapped[str] = mapped_column(
+        Text, nullable=False, default="standard", server_default="standard"
+    )  # standard|stress
+    split: Mapped[str] = mapped_column(
+        Text, nullable=False, default="train", server_default="train"
+    )  # train|test
+    labeled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    set_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    uploaded_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("trainer.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+    strips: Mapped[list["TrainingStrip"]] = relationship(
+        back_populates="photo", cascade="all, delete-orphan", order_by="TrainingStrip.row_index"
+    )
+
+
+class TrainingStrip(Base):
+    __tablename__ = "training_strip"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    photo_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("training_photo.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    row_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    path: Mapped[str] = mapped_column(Text, nullable=False)  # storage-root-relative
+    set_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_key: Mapped[str | None] = mapped_column(Text, nullable=True)  # catalog id, e.g. "sv06-45"
+    source: Mapped[str] = mapped_column(
+        Text, nullable=False, default="upload", server_default="upload"
+    )  # upload|harvest
+    created_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+    photo: Mapped["TrainingPhoto"] = relationship(back_populates="strips")
+
+
+class EvalRun(Base):
+    __tablename__ = "eval_run"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    model_version: Mapped[str] = mapped_column(Text, nullable=False)
+    tier: Mapped[str] = mapped_column(Text, nullable=False)  # standard|stress
+    top1: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    top3: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    detail: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+
+
 class Battle(Base):
     __tablename__ = "battle"
 

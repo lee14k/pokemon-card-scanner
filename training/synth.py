@@ -123,12 +123,15 @@ def synth_scene(slug: str, seed: int, k: int | None = None
         ys, ye = max(0, y), min(H, y + ch)
         xs, xe = max(0, x0), min(W, x0 + card_w)
         canvas[ys:ye, xs:xe] = card[ys - y:ye - y, xs - x0:xe - x0]
-    # each card's visible band is its bottom `gap` px, full card width (pre-warp)
+    # Target = the number/set-symbol row: bottom ~7.5% of card height (a fixed
+    # visual feature), clamped to the visible gap. NOT the full visible band —
+    # that let the model fire on flavor text, which sits higher and varies.
+    num_strip = min(gap, max(8, int(0.075 * ch)))
     quads = []
     for i in range(len(picks)):
         bottom = y0 + i * gap + ch
         band_centers.append(bottom - gap / 2)
-        quads.append([[x0, bottom - gap], [x0 + card_w, bottom - gap],
+        quads.append([[x0, bottom - num_strip], [x0 + card_w, bottom - num_strip],
                       [x0 + card_w, bottom], [x0, bottom]])
 
     if rng.random() < 0.5:

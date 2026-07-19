@@ -13,19 +13,6 @@ import numpy as np
 
 from training.config import DATA, DEFAULT_SETS
 
-# The mask target is the number-strip (bottom fraction of the visible band), not
-# the full band. Thinner, better-separated targets stop adjacent bands merging
-# into one blob at mask resolution (the failure mode of the first model).
-_BAND_TARGET_FRAC = 0.55
-
-
-def _shrink_to_bottom(q: np.ndarray) -> np.ndarray:
-    """Keep the bottom _BAND_TARGET_FRAC of a TL,TR,BR,BL quad."""
-    q = q.astype(np.float32)
-    tl, tr, br, bl = q
-    return np.array([bl + _BAND_TARGET_FRAC * (tl - bl),
-                     br + _BAND_TARGET_FRAC * (tr - br), br, bl])
-
 
 def _build(job: tuple[str, int, str]) -> dict:
     version, i, slug = job
@@ -35,8 +22,9 @@ def _build(job: tuple[str, int, str]) -> dict:
     scene, truth = synth_scene(slug, seed=i)
     h, w = scene.shape[:2]
     mask = np.zeros((h, w), np.uint8)
+    # band_quads now target the number/set-symbol row directly (synth.py).
     for q in truth.band_quads:
-        cv2.fillPoly(mask, [_shrink_to_bottom(q).astype(np.int32)], 255)
+        cv2.fillPoly(mask, [q.astype(np.int32)], 255)
     scene_rel = f"scenes/{i:06d}.jpg"
     mask_rel = f"masks/{i:06d}.png"
     cv2.imwrite(str(root / scene_rel), scene, [cv2.IMWRITE_JPEG_QUALITY, 90])

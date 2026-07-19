@@ -21,7 +21,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.db.config import db_settings
-from app.db.models import Card, SetIdMap, TcgdexCard, TrainingPhoto, TrainingStrip
+from app.db.models import (Card, SetIdMap, TcgdexCard, TcgdexSet, TrainingPhoto,
+                           TrainingStrip)
 from app.db.session import async_session_maker
 from app.db.users import CurrentAdmin
 from app.pack.pipeline import _decode  # shared decode: EXIF transpose + HEIC support
@@ -149,6 +150,40 @@ async def _tcgdex_set_id(session, set_id: str) -> str | None:
     return row
 
 
+class TrainingSet(BaseModel):
+    set_id: str            # scanner set_id when known, else the tcgdex id
+    set_code: str | None
+    set_name: str
+    tcgdex_set_id: str | None
+
+
+async def _resolve_training_set(session, query: str) -> TrainingSet:
+    """Training-side set resolution: scanner catalog first, then TCGdex
+    directly — training data is not limited to sets the scanner supports
+    (e.g. brand-new eras like "me05" / "Pitch Black")."""
+    try:
+        entry = _resolve_set(query)
+        tdx = await _tcgdex_set_id(session, entry.set_id)
+        return TrainingSet(set_id=entry.set_id, set_code=entry.set_code,
+                           set_name=entry.set_name, tcgdex_set_id=tdx)
+    except HTTPException:
+        pass
+    q = query.strip()
+    rows = (await session.execute(select(TcgdexSet))).scalars().all()
+    hits = [s for s in rows if s.id.lower() == q.lower() or s.name.casefold() == q.casefold()]
+    if not hits:
+        sub = [s for s in rows if q.casefold() in s.name.casefold()]
+        if len(sub) == 1:
+            hits = sub
+        elif sub:
+            raise HTTPException(404, f"ambiguous set {query!r}: {sorted(s.name for s in sub)[:5]}")
+    if not hits:
+        raise HTTPException(404, f"unknown set {query!r} — try the full set name "
+                                 f"or a TCGdex id (e.g. me05 for Pitch Black)")
+    s = hits[0]
+    return TrainingSet(set_id=s.id, set_code=None, set_name=s.name, tcgdex_set_id=s.id)
+
+
 async def _tcgdex_cards(session, tcgdex_set_id: str) -> list[TcgdexCard]:
     rows = (await session.execute(
         select(TcgdexCard).where(TcgdexCard.set_id == tcgdex_set_id)
@@ -163,13 +198,12 @@ async def _tcgdex_cards(session, tcgdex_set_id: str) -> list[TcgdexCard]:
 
 @router.get("/label-template/{query}")
 async def label_template(query: str, admin: CurrentAdmin) -> dict:
-    entry = _resolve_set(query)
     async with async_session_maker() as session:
-        tdx = await _tcgdex_set_id(session, entry.set_id)
-        cards = await _tcgdex_cards(session, tdx) if tdx else []
+        ts = await _resolve_training_set(session, query)
+        cards = await _tcgdex_cards(session, ts.tcgdex_set_id) if ts.tcgdex_set_id else []
     return {
-        "set_id": entry.set_id, "set_code": entry.set_code, "set_name": entry.set_name,
-        "tcgdex_set_id": tdx,
+        "set_id": ts.set_id, "set_code": ts.set_code, "set_name": ts.set_name,
+        "tcgdex_set_id": ts.tcgdex_set_id,
         "cards": [{"number": c.local_id, "name": c.name, "card_key": c.id} for c in cards],
     }
 
@@ -181,8 +215,8 @@ class LabelBody(BaseModel):
 
 @router.patch("/photos/{photo_id}/labels")
 async def label_photo(photo_id: uuid.UUID, body: LabelBody, admin: CurrentAdmin) -> dict:
-    entry = _resolve_set(body.set)
     async with async_session_maker() as session:
+        entry = await _resolve_training_set(session, body.set)
         photo = (await session.execute(
             select(TrainingPhoto).where(TrainingPhoto.id == photo_id)
             .options(selectinload(TrainingPhoto.strips))
@@ -193,10 +227,9 @@ async def label_photo(photo_id: uuid.UUID, body: LabelBody, admin: CurrentAdmin)
         if len(body.rows) != len(strips):
             raise HTTPException(422, f"rows must have exactly {len(strips)} entries "
                                      f"(one per detected strip), got {len(body.rows)}")
-        tdx = await _tcgdex_set_id(session, entry.set_id)
         by_num: dict[str, TcgdexCard] = {}
-        if tdx:
-            for c in await _tcgdex_cards(session, tdx):
+        if entry.tcgdex_set_id:
+            for c in await _tcgdex_cards(session, entry.tcgdex_set_id):
                 by_num[_norm_num(c.local_id)] = c
         errors = []
         resolved: list[tuple[TrainingStrip, str | None, str | None]] = []
@@ -297,13 +330,13 @@ async def pools_summary(admin: CurrentAdmin) -> dict:
 
 @router.get("/references/{query}")
 async def references(query: str, admin: CurrentAdmin) -> dict:
-    entry = _resolve_set(query)
     async with async_session_maker() as session:
+        entry = await _resolve_training_set(session, query)
         cached = (await session.execute(
             select(Card).where(Card.set_id == str(entry.set_id))
         )).scalars().all()
-        tdx = await _tcgdex_set_id(session, entry.set_id)
-        tcgdex = await _tcgdex_cards(session, tdx) if tdx else []
+        tcgdex = (await _tcgdex_cards(session, entry.tcgdex_set_id)
+                  if entry.tcgdex_set_id else [])
     by_key: dict[str, dict] = {}
     for c in tcgdex:
         by_key[c.id] = {"card_key": c.id, "number": c.local_id, "name": c.name,
@@ -379,7 +412,8 @@ async def photo_predictions(photo_id: uuid.UUID, admin: CurrentAdmin) -> dict:
         raise HTTPException(404, "photo not found")
     if not photo.set_hint:
         raise HTTPException(422, "photo has no set_hint to match against")
-    entry = _resolve_set(photo.set_hint)
+    async with async_session_maker() as session:
+        entry = await _resolve_training_set(session, photo.set_hint)
     ranked = await match_strips(str(entry.set_id), await _strip_jpegs(photo.strips))
     if ranked is None:
         raise HTTPException(502, "matcher unavailable or set not indexed")

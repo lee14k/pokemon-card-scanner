@@ -129,7 +129,9 @@ function Pools() {
       {labelTarget && (
         <div className="auth-form">
           <strong>Labels for {labelTarget.photo_id.slice(0, 8)}…</strong>
-          <textarea rows={6} value={labelJson} onChange={(e) => setLabelJson(e.target.value)} />
+          <textarea rows={8} value={labelJson} onChange={(e) => setLabelJson(e.target.value)}
+                    style={{ width: "100%", maxWidth: "100%", boxSizing: "border-box",
+                             fontFamily: "monospace", fontSize: 13 }} />
           <div className="card-row-flag">
             <button type="button" className="primary" onClick={applyLabels}>Apply labels</button>
             <button type="button" onClick={() => setLabelTarget(null)}>Cancel</button>

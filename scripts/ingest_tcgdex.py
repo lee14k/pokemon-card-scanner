@@ -1,4 +1,4 @@
-"""Ingest the TCGdex card catalog (swsh + sv series) into tcgdex_set / tcgdex_card.
+"""Ingest the TCGdex card catalog (swsh + sv + me series) into tcgdex_set / tcgdex_card.
 
 Set-level summaries only: 2 series listings + one set-detail request per set
 (~47 requests total), throttled and sequential — never the per-card endpoints.
@@ -24,7 +24,7 @@ from app.db.models import TcgdexCard, TcgdexSet  # noqa: E402
 from app.db.session import async_session_maker  # noqa: E402
 
 BASE_URL = "https://api.tcgdex.net/v2/en"
-SERIES = ("swsh", "sv")
+SERIES = ("swsh", "sv", "me")
 REQUEST_DELAY_S = 0.15  # politeness throttle between sequential requests
 
 

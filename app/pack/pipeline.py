@@ -102,6 +102,32 @@ def _display_number(numerator: str | None, denominator: str | None,
     return None
 
 
+async def _apply_constraints(readings, resolutions) -> None:
+    """Snap denominators to the pack's canonical value and correct numerators
+    against the resolved set's catalog. Best-effort: any failure is a no-op."""
+    from collections import Counter
+
+    from app.pack.constraints import (correct_numerators, modal_denominator,
+                                      snap_denominators)
+    try:
+        # Snap only on a real denominator majority — a genuine single-set pack
+        # always has one; a mixed-set image (no shared denominator) does not, so
+        # it is correctly left alone.
+        canonical = modal_denominator(readings)
+        if canonical:
+            snap_denominators(readings, canonical)
+        # Numerator catalog correction against the pack's modal (dominant) set.
+        set_ids = [r.set_id for r in resolutions if r.set_id]
+        if set_ids:
+            modal_set, n = Counter(set_ids).most_common(1)[0]
+            if n >= max(2, (len(set_ids) + 1) // 2):  # dominant set only
+                from app.cards import get_set_numerators
+
+                correct_numerators(readings, await get_set_numerators(modal_set))
+    except Exception as e:
+        log.warning("pipeline.constraints_failed err=%r", e)
+
+
 async def scan_pack(
     staircase_bytes: bytes,
     code_bytes: bytes,
@@ -132,6 +158,11 @@ async def scan_pack(
             *(_bounded(resolve_set, r, s.image) for r, s in zip(readings, seg.strips))
         )
     )
+
+    # Pack-level constraint repair: cards in one pack share a denominator and
+    # their numerators exist in the set catalog — priors that fix OCR glyph
+    # confusions the reader can't. Corrects readings in place before lookup.
+    await _apply_constraints(readings, resolutions)
 
     art = await _match_art(seg, resolutions)  # None when disabled/unavailable
     art_ids = [a["id"] for a in (art or []) if a]

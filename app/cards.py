@@ -12,11 +12,39 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.db.models import Card
+import re
+
+from app.db.models import Card, SetIdMap, TcgdexCard
 from app.db.session import async_session_maker
 from app.pokewallet import lookup_card_exact, pokewallet_image_url
 
 log = logging.getLogger("pokemon_scanner.cards")
+
+
+async def get_set_numerators(set_id: str) -> set[str]:
+    """Normalized (no leading zero) numeric card numbers of a set, via
+    set_id_map -> tcgdex_card. Feeds OCR constraint repair. {} on any failure
+    or when the set isn't mapped/ingested — the caller then simply skips
+    catalog correction."""
+    try:
+        async with async_session_maker() as session:
+            tdx = (await session.execute(
+                select(SetIdMap.tcgdex_set_id)
+                .where(SetIdMap.pokewallet_set_id == str(set_id))
+            )).scalar_one_or_none()
+            if not tdx:
+                return set()
+            rows = (await session.execute(
+                select(TcgdexCard.local_id).where(TcgdexCard.set_id == tdx)
+            )).scalars().all()
+        out: set[str] = set()
+        for lid in rows:
+            if re.fullmatch(r"\d+", lid or ""):
+                out.add(str(int(lid)))  # "012" -> "12"
+        return out
+    except Exception as e:
+        log.warning("cards.set_numerators_failed set=%s err=%r", set_id, e)
+        return set()
 
 
 def normalize_numerator(numerator: str) -> str:

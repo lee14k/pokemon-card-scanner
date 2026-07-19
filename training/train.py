@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
-from training.config import DATA, IMG_SIZE, RUNS
+from training.config import DATA, IMG_H, IMG_W, RUNS
 from training.model import StripEncoder
 
 # Parallel image decode: batch loading is CPU-bound and otherwise stalls the
@@ -32,7 +32,7 @@ def letterbox(img_bgr: np.ndarray) -> torch.Tensor:
     # signal; both towers get the same transform, so the network learns the
     # distortion. Serving-side preprocessing must match (matcher/model.py).
     im = Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
-    im = im.resize((IMG_SIZE, IMG_SIZE), Image.BICUBIC)
+    im = im.resize((IMG_W, IMG_H), Image.BICUBIC)
     return torch.from_numpy(np.asarray(im, np.float32) / 255.0).permute(2, 0, 1)
 
 

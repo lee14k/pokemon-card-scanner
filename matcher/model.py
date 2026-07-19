@@ -11,13 +11,19 @@ from PIL import Image
 
 from matcher import config
 
-_SIZE = 224
+_DEFAULT_HW = (224, 224)
+_input_hw = _DEFAULT_HW  # set from version.json at load()
 
 _session: ort.InferenceSession | None = None
 
 def load(model_path: str) -> None:
-    global _session
+    global _session, _input_hw
     _session = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+    vf = os.path.join(os.path.dirname(model_path), "version.json")
+    try:
+        _input_hw = tuple(json.loads(open(vf).read()).get("input_hw", _DEFAULT_HW))
+    except OSError:
+        _input_hw = _DEFAULT_HW
 
 def ready() -> bool:
     return _session is not None
@@ -33,7 +39,8 @@ def _letterbox(im: Image.Image) -> np.ndarray:
     # Stretch-to-fill, NOT aspect-preserving: must mirror training-side
     # preprocessing exactly (training/train.py letterbox). Aspect-preserving
     # padding starves ~13:1 strips to ~17px of content — run v1a failed on it.
-    im = im.convert("RGB").resize((_SIZE, _SIZE), Image.BICUBIC)
+    h, w = _input_hw
+    im = im.convert("RGB").resize((w, h), Image.BICUBIC)
     arr = np.asarray(im, dtype=np.float32) / 255.0
     return arr.transpose(2, 0, 1)  # CHW
 

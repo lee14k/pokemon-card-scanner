@@ -7,6 +7,8 @@ import argparse, json, pathlib, shutil
 import numpy as np
 import torch
 
+from training.config import IMG_H, IMG_W
+
 from training.config import RUNS
 from training.model import StripEncoder
 
@@ -25,7 +27,7 @@ def main() -> None:
 
     MATCHER_MODEL_DIR.mkdir(parents=True, exist_ok=True)
     out = MATCHER_MODEL_DIR / f"strip-embed-{args.run}.onnx"
-    dummy = torch.rand(2, 3, 224, 224)
+    dummy = torch.rand(2, 3, IMG_H, IMG_W)
     torch.onnx.export(model, dummy, out, input_names=["pixel_values"],
                       output_names=["embedding"],
                       dynamic_axes={"pixel_values": {0: "batch"},
@@ -41,7 +43,8 @@ def main() -> None:
     assert err < 1e-3, f"ONNX parity failed: {err}"
     shutil.copy(out, MATCHER_MODEL_DIR / "model.onnx")
     (MATCHER_MODEL_DIR / "version.json").write_text(json.dumps(
-        {"model_version": args.run, "embed_dim": ref.shape[1]}))
+        {"model_version": args.run, "embed_dim": ref.shape[1],
+         "input_hw": [IMG_H, IMG_W]}))
     print(f"exported {out.name} (parity max err {err:.2e}); "
           f"model.onnx + version.json updated")
 

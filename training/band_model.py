@@ -6,7 +6,7 @@ import torch.nn as nn
 from torchvision.models import MobileNet_V3_Small_Weights, mobilenet_v3_small
 
 INPUT = 384   # letterboxed square scene input
-MASK = 96     # output mask side (INPUT / 4)
+MASK = 192    # output mask side (INPUT / 2) — fine enough to separate close bands
 
 _MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
 _STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
@@ -27,9 +27,10 @@ class BandNet(nn.Module):
         self.dec = nn.Sequential(
             _up(576, 256),   # /16
             _up(256, 128),   # /8
-            _up(128, 64),    # /4  == MASK
+            _up(128, 64),    # /4
+            _up(64, 32),     # /2  == MASK
         )
-        self.head = nn.Conv2d(64, 1, 1)
+        self.head = nn.Conv2d(32, 1, 1)
         self.register_buffer("mean", _MEAN)
         self.register_buffer("std", _STD)
 

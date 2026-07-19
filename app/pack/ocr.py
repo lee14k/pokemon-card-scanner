@@ -1,4 +1,5 @@
-"""Tesseract OCR for bottom-strip card numbers and code cards."""
+"""Card-number + code-card OCR: RapidOCR (PP-OCR) primary for numbers, with a
+Tesseract variant-sweep fallback; Tesseract for code cards."""
 
 from __future__ import annotations
 
@@ -89,14 +90,53 @@ def _matched_token_confidence(
     return float(np.mean(hit)) / 100.0 if hit else 0.3
 
 
+def _rapid_reading(strip_bgr: np.ndarray) -> NumberReading | None:
+    """Number reading via RapidOCR, or None when it's unavailable / finds no
+    number-shaped text. Prefers a match carrying a plausible denominator."""
+    try:
+        from app.pack.rapidocr_reader import read_text
+    except Exception:
+        return None
+    out = read_text(strip_bgr)
+    if out is None:
+        return None
+    joined, conf = out
+    m = NUMBER_RE.search(joined)
+    if m:
+        num, den = m.group(1), m.group(2)
+        # RapidOCR often glues the set badge ("TWM EN") onto the number. Normal
+        # numerators are pure digits; keep leading letters only when the
+        # denominator also has them (true TG/GG/SV cards, e.g. TG12/TG30).
+        if not re.match(r"^[A-Z]", den):
+            num = re.sub(r"^[A-Z]+", "", num) or num
+        return NumberReading(raw=joined, numerator=num, denominator=den,
+                             prefix=None, confidence=round(conf, 3), pattern_ok=True,
+                             tokens=joined.split())
+    p = PROMO_RE.search(joined)
+    if p:
+        return NumberReading(raw=joined, numerator=p.group(2), denominator=None,
+                             prefix=p.group(1), confidence=round(conf, 3),
+                             pattern_ok=True, tokens=joined.split())
+    return None
+
+
 def read_card_number(strip_bgr: np.ndarray) -> NumberReading:
-    """Best card-number reading across preprocessing variants and PSM modes."""
+    """Best card-number reading: RapidOCR first, Tesseract variant sweep fallback."""
     if strip_bgr.ndim != 3 or strip_bgr.shape[2] != 3 or strip_bgr.size == 0:
         log.warning("ocr.number invalid_input shape=%s", getattr(strip_bgr, "shape", None))
         return NumberReading(blank=True)
     if strip_bgr.shape[0] < 8:  # degenerate crop (row at the image border)
         log.warning("ocr.number strip_too_small h=%s", strip_bgr.shape[0])
         return NumberReading(blank=True)
+
+    # Primary: RapidOCR (PP-OCR) — much stronger on real photos than Tesseract.
+    # Falls through to the Tesseract variant sweep when unavailable or no match.
+    rr = _rapid_reading(strip_bgr)
+    if rr is not None and rr.pattern_ok:
+        log.info("ocr.number rapid num=%s den=%s prefix=%s conf=%.2f",
+                 rr.numerator, rr.denominator, rr.prefix, rr.confidence)
+        return rr
+
     best = NumberReading()
     any_text = False
     for variant in _prep_variants(strip_bgr):

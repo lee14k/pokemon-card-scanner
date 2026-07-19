@@ -1,0 +1,56 @@
+"""RapidOCR (PP-OCR models on onnxruntime) number reader — far stronger than
+Tesseract on real-photo small/tilted/low-contrast text. Lazily loaded; any
+failure returns None so read_card_number falls back to the Tesseract path."""
+from __future__ import annotations
+
+import logging
+
+import cv2
+import numpy as np
+
+log = logging.getLogger("pokemon_scanner.pack.rapidocr")
+
+_engine = None
+_loaded = False
+
+
+def _get():
+    global _engine, _loaded
+    if _loaded:
+        return _engine
+    _loaded = True
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+
+        _engine = RapidOCR()
+        log.info("rapidocr.loaded")
+    except Exception as e:  # not installed / init failure
+        log.warning("rapidocr.load_failed err=%r", e)
+        _engine = None
+    return _engine
+
+
+def read_text(strip_bgr: np.ndarray) -> tuple[str, float] | None:
+    """(joined uppercase text, mean confidence) for a strip, or None."""
+    eng = _get()
+    if eng is None:
+        return None
+    h, w = strip_bgr.shape[:2]
+    if max(h, w) > 2400:                      # bound memory/time on 12MP crops
+        s = 2400 / max(h, w)
+        strip_bgr = cv2.resize(strip_bgr, (int(w * s), int(h * s)),
+                               interpolation=cv2.INTER_AREA)
+    elif max(h, w) < 1200:                    # upscale tiny strips for the recognizer
+        s = 1200 / max(h, w)
+        strip_bgr = cv2.resize(strip_bgr, (int(w * s), int(h * s)),
+                               interpolation=cv2.INTER_CUBIC)
+    try:
+        res, _ = eng(strip_bgr)
+    except Exception as e:
+        log.warning("rapidocr.infer_failed err=%r", e)
+        return None
+    if not res:
+        return None
+    joined = " ".join(t for _, t, _ in res).upper()
+    conf = float(np.mean([c for *_, c in res]))
+    return joined, conf

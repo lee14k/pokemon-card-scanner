@@ -12,6 +12,6 @@
   },
   "deploy": {
     "startCommand": "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'",
-    "aptPackages": ["tesseract-ocr"]
+    "aptPackages": ["tesseract-ocr", "libgl1", "libglib2.0-0"]
   }
 }

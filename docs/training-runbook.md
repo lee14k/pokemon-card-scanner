@@ -162,3 +162,18 @@ Uploads labeled in the app (Training Data → Intake & Pools) live in the app DB
 Card-key note: uploads use TCGdex ids (`sv06-045`); the merge normalizes to the
 pokemontcg.io ref key (`sv6-45`) via `training/config.tcgdex_card_key_to_ref`.
 Subset slugs that break the mechanical rule live in `config._SLUG_OVERRIDES`.
+
+## Band detector (sub-project J)
+
+Learned number-band segmentation replacing geometric slicing. Stages:
+
+1. `python training/build_band_dataset.py --version bandv1 --scenes 1500 --sets sv6 sv1 sv3 swsh1 swsh9 swsh12 --workers 4`
+2. `python training/train_band.py --dataset bandv1 --epochs 12 --run-id bandv1a`
+3. `python training/eval_band.py --run bandv1a --dataset bandv1` — synth mask IoU
+   + band-count error, and real number-readable rate (learned vs Hough).
+4. `python training/export_band.py --run bandv1a` — writes app/pack/band_model/.
+5. Serve: set `PACK_BAND_DETECTOR=1` on the app; `find_strips` ungrided path
+   uses it (Hough fallback on any miss). `PACK_BAND_THRESHOLD` tunes the mask cut.
+
+Acceptance: synth IoU ≥0.7 & count-error≤1 on ≥90%; real readable rate beats
+Hough. Retrain when new eras or real band annotations arrive.

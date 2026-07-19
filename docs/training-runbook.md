@@ -177,3 +177,25 @@ Learned number-band segmentation replacing geometric slicing. Stages:
 
 Acceptance: synth IoU ≥0.7 & count-error≤1 on ≥90%; real readable rate beats
 Hough. Retrain when new eras or real band annotations arrive.
+
+### Band detector — phase-1 verdict (2026-07-19): does NOT pass, stays OFF
+
+Three synthetic-only iterations (bandv1a/v2a/v3a):
+- v1a: full-band targets, 96-res — synth IoU 0.923 but bands merged into one
+  blob (aspect 1.2) → 0 detected on real photos.
+- v2a: thinner targets + 192-res — separated, but fired on flavor text, 0/6
+  readable on the real photo.
+- v3a: number-strip targets — correct region, reads 1 number, but the mask is
+  imprecise/blobby on real photos (sim-to-real gap); 1-D projection peaks land
+  shifted from the true numbers.
+
+Head-to-head number-readable rate, Hough vs band, all 6 corpus photos:
+`7/10 vs 1/3 · 2/8 vs 0/2 · 2/9 vs 1/2 · 1/5 vs 0/3 · 8/11 vs 1/2 · 0/5 vs 0/1`
+— **Hough wins on every photo.** The synthetic-only detector does not transfer
+to real photos with enough precision to beat geometric slicing.
+
+Root cause (same wall as the embedding matcher): synthetic training gets the
+concept but not real-photo precision. The unlock is real band-box annotations
+(phase-2: annotation UI or bootstrap-and-correct), NOT more synthetic retrains.
+`PACK_BAND_DETECTOR` stays unset in production. All code/pipeline retained for
+when real band-box data exists.

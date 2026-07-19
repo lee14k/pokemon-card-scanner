@@ -40,6 +40,15 @@ class Settings:
     strip_band_frac: float = field(
         default_factory=lambda: _env_float("PACK_STRIP_BAND_FRAC", 0.85)
     )
+    # Learned band detector (sub-project J): when on AND the ONNX model is
+    # present, the ungrided path uses it instead of Hough (falls back on any
+    # miss/error). Off by default — exact current behavior.
+    band_detector: bool = field(
+        default_factory=lambda: os.environ.get("PACK_BAND_DETECTOR", "").strip() in ("1", "true", "True")
+    )
+    band_threshold: float = field(
+        default_factory=lambda: _env_float("PACK_BAND_THRESHOLD", 0.5)
+    )
 
 
 def settings() -> Settings:

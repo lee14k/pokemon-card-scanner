@@ -3,6 +3,7 @@ reference crops; all pairs in a batch come from ONE set (hard negatives).
 Usage: python training/train.py --dataset v1 [--epochs 8] [--batch 48] [--run-id r1]"""
 import argparse, json, random, time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import cv2
@@ -14,15 +15,25 @@ from PIL import Image
 from training.config import DATA, IMG_SIZE, RUNS
 from training.model import StripEncoder
 
+# Parallel image decode: batch loading is CPU-bound and otherwise stalls the
+# GPU between steps.
+_loader = ThreadPoolExecutor(max_workers=8)
+
+
+def _load_pair(paths: tuple[Path, Path]) -> tuple[torch.Tensor, torch.Tensor]:
+    s, r = paths
+    return letterbox(cv2.imread(str(s))), letterbox(cv2.imread(str(r)))
+
 
 def letterbox(img_bgr: np.ndarray) -> torch.Tensor:
+    # Stretch-to-fill, not true letterboxing: strips are ~13:1, so preserving
+    # aspect leaves ~17px of content in a 224px square (run v1a failed on
+    # exactly this — synth-val 21%). Anisotropic resize fills every pixel with
+    # signal; both towers get the same transform, so the network learns the
+    # distortion. Serving-side preprocessing must match (matcher/model.py).
     im = Image.fromarray(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
-    w, h = im.size
-    s = IMG_SIZE / max(w, h)
-    im = im.resize((max(1, round(w * s)), max(1, round(h * s))), Image.BICUBIC)
-    canvas = Image.new("RGB", (IMG_SIZE, IMG_SIZE), (128, 128, 128))
-    canvas.paste(im, ((IMG_SIZE - im.width) // 2, (IMG_SIZE - im.height) // 2))
-    return torch.from_numpy(np.asarray(canvas, np.float32) / 255.0).permute(2, 0, 1)
+    im = im.resize((IMG_SIZE, IMG_SIZE), Image.BICUBIC)
+    return torch.from_numpy(np.asarray(im, np.float32) / 255.0).permute(2, 0, 1)
 
 
 def load_pairs(root: Path) -> dict[str, list[tuple[Path, Path]]]:
@@ -76,8 +87,9 @@ def main() -> None:
         for step in range(steps):
             slug = rng.choice(sets)
             batch = rng.sample(by_set[slug], min(args.batch, len(by_set[slug])))
-            xs = torch.stack([letterbox(cv2.imread(str(s))) for s, _ in batch]).to(device)
-            ys = torch.stack([letterbox(cv2.imread(str(r))) for _, r in batch]).to(device)
+            pairs = list(_loader.map(_load_pair, batch))
+            xs = torch.stack([a for a, _ in pairs]).to(device)
+            ys = torch.stack([b for _, b in pairs]).to(device)
             loss = nt_xent(model(xs), model(ys))
             opt.zero_grad(); loss.backward(); opt.step()
             losses.append(float(loss))

@@ -15,3 +15,7 @@ matcher/model/*
 !matcher/model/version.json
 training/data/
 training/runs/
+# band-detector served model (small ONNX export, committed)
+app/pack/band_model/*
+!app/pack/band_model/model.onnx
+!app/pack/band_model/version.json

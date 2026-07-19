@@ -15,7 +15,10 @@ import httpx
 
 # Corpus pack ground truth, top row → bottom row (read off the photo).
 # None = the SVE energy card, which is not part of the sv6 index.
-TRUTH = ["10", "126", "101", "45", "143", "122", "79", "66", "78", "96", None]
+# Per DETECTED row (find_strips ungrided order), verified against the strip
+# contact sheet: rows 0-1 are mid-card slices of the top card (no number band),
+# row 10 is the SVE energy card — all None.
+TRUTH = [None, None, "126", "101", "45", "143", "79", "66", "78", "96", None]
 
 
 async def main(base: str) -> None:
@@ -25,7 +28,9 @@ async def main(base: str) -> None:
 
     headers = {"Authorization": f"Bearer {os.environ['MATCHER_TOKEN']}"}
     async with httpx.AsyncClient(timeout=900.0) as client:
-        cards = [{"id": f"sv6-{n}", "image_url": f"https://images.pokemontcg.io/sv6/{n}.png"}
+        # _hires: reference embeddings must match training's hires crops — the
+        # 245px small variants embed differently and break parity.
+        cards = [{"id": f"sv6-{n}", "image_url": f"https://images.pokemontcg.io/sv6/{n}_hires.png"}
                  for n in range(1, 227)]
         r = await client.post(f"{base}/index/sv6", json={"cards": cards}, headers=headers)
         print("index build:", r.status_code, r.text[:200])

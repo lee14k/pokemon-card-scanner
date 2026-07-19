@@ -120,3 +120,27 @@ pkill -f "uvicorn matcher.app"
 - Labeled real pool grows ~2× since last training → retrain (real data is the
   scarcest, highest-value signal).
 - Any eval regression after a pipeline change (segmentation, capture).
+
+## Dry-run results (phase-1 acceptance, 2026-07-18/19)
+
+| Run | Data | Preprocessing | Synth-val top-1 | Stress top-1 (real pack) |
+|---|---|---|---|---|
+| v1a | v1: 1.5k scenes, 3 sets, 8 ep | aspect-preserving letterbox | 21.4% | 0/8 |
+| v1b | v1, 8 ep | **stretch-to-fill** | 46.8% | **3/8** |
+| v1c | v2: 4k scenes, 6 sets, 12 ep | stretch | 66.2% | 2/8 (top-3 3/8) |
+
+- Stretch preprocessing was decisive (v1a→v1b: one change, doubled synth-val,
+  first real-photo hits of any learned or off-the-shelf model).
+- Scaling data/epochs kept improving the synthetic domain but NOT the real
+  photo — the sim-to-real gap is the binding constraint. Highest-leverage next
+  input: real labeled strips (phase-2 intake + flywheel), plus augmentation
+  realism tuned against real captures.
+- Serving parity (stage 6) caught two deployment-class bugs: matcher
+  preprocessing still letterboxing after training switched to stretch, and the
+  harness indexing 245px small references vs training's hires. After both
+  fixes, service-side stress = 3/8, identical to direct eval. Deployed model:
+  v1b.
+- **Acceptance verdict: pipeline + runbook proven end-to-end; accuracy gates
+  not yet met** (stress 3/8 vs ≥4/8 required; synth-val 66% vs ≥90%). The
+  matcher feature stays OFF in production (`MATCHER_URL` unset) per the deploy
+  gate. Next: phase 2, so real labeled data starts flowing.

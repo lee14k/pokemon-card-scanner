@@ -30,14 +30,11 @@ def version() -> str:
         return "unknown"
 
 def _letterbox(im: Image.Image) -> np.ndarray:
-    im = im.convert("RGB")
-    w, h = im.size
-    s = _SIZE / max(w, h)
-    nw, nh = max(1, round(w * s)), max(1, round(h * s))
-    im = im.resize((nw, nh), Image.BICUBIC)
-    canvas = Image.new("RGB", (_SIZE, _SIZE), (128, 128, 128))
-    canvas.paste(im, ((_SIZE - nw) // 2, (_SIZE - nh) // 2))
-    arr = np.asarray(canvas, dtype=np.float32) / 255.0
+    # Stretch-to-fill, NOT aspect-preserving: must mirror training-side
+    # preprocessing exactly (training/train.py letterbox). Aspect-preserving
+    # padding starves ~13:1 strips to ~17px of content — run v1a failed on it.
+    im = im.convert("RGB").resize((_SIZE, _SIZE), Image.BICUBIC)
+    arr = np.asarray(im, dtype=np.float32) / 255.0
     return arr.transpose(2, 0, 1)  # CHW
 
 def embed(images: list[Image.Image], batch: int = 16) -> np.ndarray:

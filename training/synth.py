@@ -18,6 +18,7 @@ class SceneTruth:
     card_keys: list[str]        # front (fully visible) first
     band_centers: list[float]   # y of each card's visible band center, post-warp
     band_height: float
+    band_quads: list = None     # per-card [4,2] band rectangle corners, post-warp
 
 
 def _load_refs(slug: str) -> list[Path]:
@@ -122,9 +123,13 @@ def synth_scene(slug: str, seed: int, k: int | None = None
         ys, ye = max(0, y), min(H, y + ch)
         xs, xe = max(0, x0), min(W, x0 + card_w)
         canvas[ys:ye, xs:xe] = card[ys - y:ye - y, xs - x0:xe - x0]
+    # each card's visible band is its bottom `gap` px, full card width (pre-warp)
+    quads = []
     for i in range(len(picks)):
         bottom = y0 + i * gap + ch
         band_centers.append(bottom - gap / 2)
+        quads.append([[x0, bottom - gap], [x0 + card_w, bottom - gap],
+                      [x0 + card_w, bottom], [x0, bottom]])
 
     if rng.random() < 0.5:
         _finger(canvas, rng)
@@ -135,6 +140,7 @@ def synth_scene(slug: str, seed: int, k: int | None = None
     canvas = cv2.warpAffine(canvas, m, (W, H), borderMode=cv2.BORDER_REPLICATE)
     pts = np.array([[[W / 2, y] for y in band_centers]], np.float32)
     band_centers = [float(p[1]) for p in cv2.transform(pts, m)[0]]
+    band_quads = [cv2.transform(np.array([q], np.float32), m)[0] for q in quads]
 
     canvas = _degrade(canvas, rng)
-    return canvas, SceneTruth(card_keys, band_centers, float(gap))
+    return canvas, SceneTruth(card_keys, band_centers, float(gap), band_quads)

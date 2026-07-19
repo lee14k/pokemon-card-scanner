@@ -9,6 +9,7 @@ siblings — server-generated UUID path segments only, no traversal surface.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import uuid
@@ -257,6 +258,52 @@ async def label_photo(photo_id: uuid.UUID, body: LabelBody, admin: CurrentAdmin)
     labeled = sum(1 for _, _, k in resolved if k)
     return {"photo_id": str(photo_id), "labeled_rows": labeled,
             "skipped_rows": len(resolved) - labeled}
+
+
+# ── Export: bundle labeled strips for the training machine ───────────────────
+@router.get("/export")
+async def export_training_data(admin: CurrentAdmin) -> Response:
+    """Stream a .tar.gz of every labeled strip + a manifest, for the local
+    training pipeline (`training/fetch_uploads.py`). Includes ALL splits/tiers;
+    the training side separates them."""
+    import io
+    import tarfile
+
+    async with async_session_maker() as session:
+        rows = (await session.execute(
+            select(TrainingStrip, TrainingPhoto)
+            .join(TrainingPhoto, TrainingStrip.photo_id == TrainingPhoto.id)
+            .where(TrainingStrip.card_key.is_not(None), TrainingPhoto.labeled.is_(True))
+        )).all()
+
+    manifest = {"strips": []}
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for strip, photo in rows:
+            arc = f"strips/{strip.id}.jpg"
+            try:
+                data = open_photo(strip.path)
+            except FileNotFoundError:
+                log.warning("export.missing_strip id=%s path=%s", strip.id, strip.path)
+                continue
+            info = tarfile.TarInfo(arc)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+            manifest["strips"].append({
+                "file": arc, "card_key": strip.card_key, "set_id": strip.set_id,
+                "split": photo.split, "tier": photo.tier, "source": strip.source,
+                "photo_id": str(photo.id), "row_index": strip.row_index,
+            })
+        mbytes = json.dumps(manifest).encode()
+        minfo = tarfile.TarInfo("manifest.json")
+        minfo.size = len(mbytes)
+        tar.addfile(minfo, io.BytesIO(mbytes))
+
+    log.info("export.done strips=%s by=%s", len(manifest["strips"]), admin.id)
+    return Response(
+        buf.getvalue(), media_type="application/gzip",
+        headers={"content-disposition": "attachment; filename=training-export.tar.gz"},
+    )
 
 
 # ── Browse: photos, pools, references, synthetic ─────────────────────────────

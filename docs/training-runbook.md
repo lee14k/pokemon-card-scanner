@@ -144,3 +144,21 @@ pkill -f "uvicorn matcher.app"
   not yet met** (stress 3/8 vs ≥4/8 required; synth-val 66% vs ≥90%). The
   matcher feature stays OFF in production (`MATCHER_URL` unset) per the deploy
   gate. Next: phase 2, so real labeled data starts flowing.
+
+## Pulling real labeled uploads into training (export connector)
+
+Uploads labeled in the app (Training Data → Intake & Pools) live in the app DB
++ volume. To fold them into a local training run:
+
+1. `PYTHONPATH=. python training/fetch_uploads.py --base <app-url> --email <admin> --password <pw>`
+   — downloads every labeled strip into `training/data/uploads/` (train + test).
+2. `python training/build_dataset.py --version <v> --scenes <n> --sets ... --include-uploads`
+   — merges TRAIN-split upload strips as `source=upload` pairs (oversampled 3×
+   in training); TEST-split strips are held for eval. Unpairable strips (set
+   with no local refs) are skipped and counted, never fatal.
+3. Train/eval as usual. `eval.py` automatically folds TEST-split uploads into
+   the standard/stress tiers alongside `eval_sets.json`.
+
+Card-key note: uploads use TCGdex ids (`sv06-045`); the merge normalizes to the
+pokemontcg.io ref key (`sv6-45`) via `training/config.tcgdex_card_key_to_ref`.
+Subset slugs that break the mechanical rule live in `config._SLUG_OVERRIDES`.

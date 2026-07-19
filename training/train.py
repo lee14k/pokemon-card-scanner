@@ -36,8 +36,12 @@ def letterbox(img_bgr: np.ndarray) -> torch.Tensor:
     return torch.from_numpy(np.asarray(im, np.float32) / 255.0).permute(2, 0, 1)
 
 
+_UPLOAD_OVERSAMPLE = 3  # real strips are scarce and high-value; count each 3x
+
+
 def load_pairs(root: Path) -> dict[str, list[tuple[Path, Path]]]:
-    """set -> [(strip_path, ref_path)] for the train split."""
+    """set -> [(strip_path, ref_path)] for the train split. Real (source=upload)
+    pairs are oversampled since real data is the scarcest, highest-value signal."""
     by_set: dict[str, list] = defaultdict(list)
     for line in open(root / "manifest.jsonl"):
         row = json.loads(line)
@@ -45,7 +49,8 @@ def load_pairs(root: Path) -> dict[str, list[tuple[Path, Path]]]:
             continue
         ref = root / "refs" / f"{row['card_key']}.jpg"
         if ref.exists():
-            by_set[row["set"]].append((root / row["path"], ref))
+            reps = _UPLOAD_OVERSAMPLE if row.get("source") == "upload" else 1
+            by_set[row["set"]].extend([(root / row["path"], ref)] * reps)
     return by_set
 
 

@@ -11,7 +11,8 @@ import cv2
 import numpy as np
 import torch
 
-from training.config import DATA, REF_BOTTOM_FRAC, REFS_RAW, ROOT, RUNS
+from training.config import (DATA, REF_BOTTOM_FRAC, REFS_RAW, ROOT, RUNS,
+                             UPLOADS, tcgdex_card_key_to_ref)
 from training.model import StripEncoder
 from training.train import letterbox
 
@@ -89,6 +90,33 @@ def main() -> None:
             t[2] += 1
             print(f"  [{entry['tier']}] row{i}: want={want} "
                   f"top1={ids[order[0]]}@{s[order[0]]:.3f}")
+    # real tiers from uploaded TEST-split strips (training/data/uploads/)
+    umanifest = UPLOADS / "manifest.json"
+    if umanifest.exists():
+        by_slug = defaultdict(list)  # slug -> [(ref_key, tier, strip_path)]
+        for s in json.loads(umanifest.read_text())["strips"]:
+            if s["split"] != "test":
+                continue
+            ref_key = tcgdex_card_key_to_ref(s["card_key"])
+            if ref_key is None:
+                continue
+            by_slug[ref_key.rsplit("-", 1)[0]].append(
+                (ref_key, s["tier"], UPLOADS / s["file"]))
+        for slug, items in by_slug.items():
+            if not (REFS_RAW / slug).is_dir():
+                print(f"upload eval: no refs for {slug}, skipping {len(items)} strips")
+                continue
+            ids, refv = ref_index(model, slug, device)
+            imgs = [cv2.imread(str(p)) for _, _, p in items]
+            sv = embed_many(model, imgs, device)
+            sims = sv @ refv.T
+            for (ref_key, tier, _), s in zip(items, sims):
+                order = np.argsort(-s)
+                t = tiers[tier]
+                t[0] += ids[order[0]] == ref_key
+                t[1] += ref_key in [ids[o] for o in order[:3]]
+                t[2] += 1
+
     for tier, (c1, c3, tot) in tiers.items():
         print(f"{tier}-tier: top1={c1}/{tot} top3={c3}/{tot}")
     if "standard" not in tiers:

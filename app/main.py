@@ -35,6 +35,7 @@ from app.dex.routes import router as dex_router
 from app.pulls import router as pulls_router
 from app.stats_api import router as stats_router
 from app.storage import ensure_photo_dir
+from app.training_data import router as training_data_router
 
 log = logging.getLogger("pokemon_scanner.api")
 
@@ -179,6 +180,7 @@ app.include_router(
 )
 app.include_router(pulls_router)
 app.include_router(admin_router)
+app.include_router(training_data_router)
 app.include_router(stats_router)
 app.include_router(dex_router)
 app.include_router(battles_router)

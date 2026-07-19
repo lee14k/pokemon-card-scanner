@@ -328,6 +328,25 @@ async def list_photos(admin: CurrentAdmin, split: str | None = None,
     } for p in photos]
 
 
+@router.delete("/photos/{photo_id}")
+async def delete_training_photo(photo_id: uuid.UUID, admin: CurrentAdmin) -> dict:
+    """Delete a training photo + its strips (DB cascade) and remove its files."""
+    import shutil
+
+    from sqlalchemy import delete as sa_delete
+    async with async_session_maker() as session:
+        exists = (await session.execute(
+            select(TrainingPhoto.id).where(TrainingPhoto.id == photo_id)
+        )).scalar_one_or_none()
+        if exists is None:
+            raise HTTPException(404, "photo not found")
+        await session.execute(sa_delete(TrainingPhoto).where(TrainingPhoto.id == photo_id))
+        await session.commit()
+    shutil.rmtree(_root() / "training" / str(photo_id), ignore_errors=True)
+    log.info("training.delete photo=%s by=%s", photo_id, admin.id)
+    return {"deleted": str(photo_id)}
+
+
 def _serve_photo(rel_path: str) -> Response:
     try:
         return Response(open_photo(rel_path), media_type="image/jpeg")

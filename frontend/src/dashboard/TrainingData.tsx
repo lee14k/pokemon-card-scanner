@@ -94,6 +94,16 @@ function Pools() {
     catch (e) { setMsg(String(e)); }
   };
 
+  const del = async (p: Photo) => {
+    if (!confirm(`Delete this ${p.tier}/${p.split} upload (${p.rows.length} rows)?`)) return;
+    try {
+      await j(`/admin/training/photos/${p.photo_id}`, { method: "DELETE" });
+      setMsg("Deleted.");
+      if (labelTarget?.photo_id === p.photo_id) setLabelTarget(null);
+      refresh();
+    } catch (e) { setMsg(String(e)); }
+  };
+
   return (
     <div>
       <div className="auth-form">
@@ -147,12 +157,22 @@ function Pools() {
               <div className="card-row-flag">
                 <button type="button" onClick={() => template(p)}>{p.labeled ? "Relabel" : "Label (JSON)"}</button>
                 {!p.labeled && <button type="button" onClick={() => predict(p)}>Predictions</button>}
+                <button type="button" onClick={() => del(p)}>Delete</button>
               </div>
-              <div style={{ overflowX: "auto", whiteSpace: "nowrap" }}>
+              {/* Strips are wide (~13:1) bands — stack them full-width so nothing
+                  runs off a phone screen; each row shows its label + strip. */}
+              <div style={{ maxWidth: "100%" }}>
                 {p.rows.map((r) => (
-                  <img key={r.strip_id} src={`${base}/admin/training/strips/${r.strip_id}/image`}
-                       alt={`row ${r.row_index}`} title={r.card_key ?? `row ${r.row_index}`}
-                       style={{ height: 34, marginRight: 4, border: r.card_key ? "2px solid #4a4" : "1px solid #555" }} />
+                  <div key={r.strip_id} style={{ marginBottom: 4 }}>
+                    <span style={{ fontSize: 11, opacity: 0.7 }}>
+                      row {r.row_index}{r.card_key ? ` · ${r.card_key}` : ""}
+                    </span>
+                    <img src={`${base}/admin/training/strips/${r.strip_id}/image`}
+                         alt={`row ${r.row_index}`}
+                         style={{ display: "block", width: "100%", maxWidth: "100%",
+                                  height: "auto",
+                                  border: r.card_key ? "2px solid #4a4" : "1px solid #555" }} />
+                  </div>
                 ))}
               </div>
               {preds[p.photo_id] && (

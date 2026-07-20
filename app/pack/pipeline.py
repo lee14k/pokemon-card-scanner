@@ -34,7 +34,7 @@ _MATCH_ACCEPT = float(os.environ.get("PACK_MATCH_ACCEPT", "0.85"))
 _MATCH_MARGIN = float(os.environ.get("PACK_MATCH_MARGIN", "0.02"))
 
 
-async def _match_art(seg, resolutions) -> list[dict | None] | None:
+async def _match_art(strips, resolutions) -> list[dict | None] | None:
     """Batched art match for all strips against the pack's modal set.
     Returns per-strip accepted {'id','score'} or None; None overall when the
     matcher is disabled, unindexed (build kicked), or errored."""
@@ -45,7 +45,7 @@ async def _match_art(seg, resolutions) -> list[dict | None] | None:
         return None
     modal_set = Counter(set_ids).most_common(1)[0][0]
     jpegs = []
-    for s in seg.strips:
+    for s in strips:
         ok, buf = cv2.imencode(".jpg", s.image, [cv2.IMWRITE_JPEG_QUALITY, 90])
         jpegs.append(buf.tobytes() if ok else b"")
     results = await match_strips(str(modal_set), jpegs)
@@ -100,6 +100,50 @@ def _display_number(numerator: str | None, denominator: str | None,
     if numerator and denominator:
         return f"{numerator}/{denominator}"
     return None
+
+
+def detect_first(img):
+    """Detection-first card finding: PP-OCR's real-photo-trained detector
+    localizes and reads every card number across the whole photo; each becomes a
+    card with a cropped number-row band (for set resolution / review / save).
+    Returns (strips, readings) top->bottom, or None when it finds too few cards
+    (caller falls back to Hough segmentation)."""
+    from app.pack.ocr import parse_number
+    from app.pack.segmentation import Strip
+    try:
+        from app.pack.rapidocr_reader import detect_lines
+
+        lines = detect_lines(img)
+    except Exception as e:
+        log.warning("pipeline.detect_first_failed err=%r", e)
+        return None
+
+    parsed = [(y, r) for y, text, conf in lines
+              if (r := parse_number(text, conf)) is not None and r.pattern_ok]
+    # dedup numerators, keeping the highest-confidence read
+    by_num: dict[str, tuple[float, object]] = {}
+    for y, r in parsed:
+        cur = by_num.get(r.numerator)
+        if cur is None or r.confidence > cur[1].confidence:
+            by_num[r.numerator] = (y, r)
+    parsed = sorted(by_num.values(), key=lambda t: t[0])
+    if len(parsed) < 3:
+        return None
+
+    h, w = img.shape[:2]
+    ys = [y for y, _ in parsed]
+    gap = float(np.median(np.diff(ys))) if len(ys) > 1 else h * 0.08
+    band = max(30, int(gap * 0.95))
+    strips, readings = [], []
+    for i, (y, r) in enumerate(parsed):
+        y0, y1 = max(0, int(y - band * 0.55)), min(h, int(y + band * 0.45))
+        if y1 - y0 < 8:
+            continue
+        strips.append(Strip(row_index=len(strips), image=img[y0:y1, :].copy(),
+                            bbox=(0, y0, w, y1 - y0), angle=0.0))
+        readings.append(r)
+    log.info("pipeline.detect_first cards=%s", len(strips))
+    return (strips, readings) if len(strips) >= 3 else None
 
 
 async def _read_numbers(img, strips, bounded, use_wholephoto: bool):
@@ -206,7 +250,6 @@ async def scan_pack(
     # Segmentation (fastNlMeansDenoising + Hough), OCR, and symbol matching are all
     # blocking CPU/subprocess work; offload to threads so this async path (a FastAPI
     # endpoint) doesn't pin the event loop for the whole pack.
-    seg = await asyncio.to_thread(find_strips, stair, capture_meta)
     # Bound OCR concurrency: each strip read spawns a Tesseract subprocess over
     # 3x-upscaled variants; a 12-card pack running unbounded peaks near 1GB in a
     # small container. Two or three in flight saturate a cloud vCPU anyway.
@@ -216,13 +259,24 @@ async def scan_pack(
         async with ocr_sem:
             return await asyncio.to_thread(fn, *args)
 
-    # Whole-photo number detection helps the upload path (weak segmentation);
-    # the guided path already has precise strip positions, so keep per-strip OCR.
-    readings = await _read_numbers(stair, seg.strips, _bounded,
-                                   use_wholephoto=capture_meta is None)
+    # Detection-first (upload path): PP-OCR detection finds+reads the cards
+    # directly. Falls back to Hough segmentation + per-strip OCR for the guided
+    # path or when detection finds too few cards.
+    strips = readings = None
+    seg_warning = None
+    if capture_meta is None:
+        df = await asyncio.to_thread(detect_first, stair)
+        if df is not None:
+            strips, readings = df
+    if strips is None:
+        seg = await asyncio.to_thread(find_strips, stair, capture_meta)
+        strips = seg.strips
+        seg_warning = seg.warning
+        readings = await _read_numbers(stair, strips, _bounded,
+                                       use_wholephoto=capture_meta is None)
     resolutions = list(
         await asyncio.gather(
-            *(_bounded(resolve_set, r, s.image) for r, s in zip(readings, seg.strips))
+            *(_bounded(resolve_set, r, s.image) for r, s in zip(readings, strips))
         )
     )
 
@@ -231,7 +285,7 @@ async def scan_pack(
     # confusions the reader can't. Corrects readings in place before lookup.
     await _apply_constraints(readings, resolutions)
 
-    art = await _match_art(seg, resolutions)  # None when disabled/unavailable
+    art = await _match_art(strips, resolutions)  # None when disabled/unavailable
     art_ids = [a["id"] for a in (art or []) if a]
     from app.cards import get_cached_by_match_ids
     art_payloads = await get_cached_by_match_ids(art_ids) if art_ids else {}
@@ -245,7 +299,7 @@ async def scan_pack(
     )
 
     cards: list[PackCard] = []
-    for i, (strip, reading, res, match) in enumerate(zip(seg.strips, readings, resolutions, matches)):
+    for i, (strip, reading, res, match) in enumerate(zip(strips, readings, resolutions, matches)):
         art_hit = art[i] if art else None
         payload = art_payloads.get(art_hit["id"]) if art_hit else None
         if art_hit and payload:
@@ -288,7 +342,7 @@ async def scan_pack(
         cards=cards,
         code_card=code_result,
         pack_confidence=pack_confidence([c.confidence for c in cards]),
-        segmentation_warning=seg.warning,
+        segmentation_warning=seg_warning,
     )
     log.info("pipeline.done rows=%s flagged=%s pack_conf=%.3f code=%s",
              len(cards), sum(1 for c in cards if c.low_confidence_reason),

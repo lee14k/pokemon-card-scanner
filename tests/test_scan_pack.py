@@ -51,11 +51,10 @@ def test_scan_pack_guided_happy_path(client):
     assert body["pack_confidence"] >= 0.8
 
 
-def test_scan_pack_ungrided_fallback(client):
-    """Ungrided over-segments by design: the fully-visible top card's TOP edge is a
-    real horizontal line, so it becomes a phantom row. The honest contract is that
-    every real card is still identified and every phantom row is flagged (never
-    silently trusted) — not that the row count matches exactly."""
+def test_scan_pack_ungrided_detection_first(client):
+    """Ungrided (no capture_meta) now uses whole-photo PP-OCR detection: it finds
+    and reads each card number directly, so every real card is identified with no
+    phantom rows (a card is created per detected number, not per geometric edge)."""
     truth = _truth()
     r = _post_scan(client, with_meta=False)
     assert r.status_code == 200, r.text
@@ -63,11 +62,8 @@ def test_scan_pack_ungrided_fallback(client):
     identified = {(c["set_id"], c["card_number"]) for c in body["cards"]}
     expected = {(t["set_id"], t["number"]) for t in truth["cards"]}
     assert expected <= identified, f"missing real cards: {expected - identified}"
-    # Any extra (phantom) row must carry a low-confidence reason.
-    phantom = [c for c in body["cards"] if (c["set_id"], c["card_number"]) not in expected]
-    assert all(c["low_confidence_reason"] is not None for c in phantom)
-    # Ungrided detects 4 rows here (3 cards + top-edge phantom) < PACK_MIN_ROWS=5 → warning.
-    assert body["segmentation_warning"] is not None
+    # Detection-first makes one card per detected number — no phantom rows.
+    assert len(body["cards"]) == len(truth["cards"])
 
 
 def test_scan_pack_count_mismatch_warns(client):

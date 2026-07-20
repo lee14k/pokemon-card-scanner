@@ -30,8 +30,11 @@ export default function ReviewScreen({ scan, onConfirm, onRetake }: Props) {
   const markResolved = (row: number) =>
     setResolvedRows((prev) => new Set(prev).add(row));
 
+  // Block confirmation only on genuinely uncertain cards. needs_review reflects
+  // identity confidence (number + set + catalog), not whether the DB lookup ran,
+  // so confidently-read cards never burden the user.
   const unresolved = cards.filter(
-    (c) => c.low_confidence_reason !== null && !resolvedRows.has(c.row_index)
+    (c) => (c.needs_review ?? c.low_confidence_reason !== null) && !resolvedRows.has(c.row_index)
   );
 
   return (

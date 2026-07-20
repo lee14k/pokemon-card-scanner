@@ -109,7 +109,7 @@ export default function App() {
       {view === "scan" && (
         <>
           {step.name === "staircase" && (
-            <StaircaseCapture onDone={(photo, meta) => setStep({ name: "code", staircase: photo, meta })} />
+            <StaircaseCapture onDone={(photo) => setStep({ name: "code", staircase: photo })} />
           )}
           {step.name === "code" && (
             <CodeCardCapture onDone={(codePhoto) => submit(step.staircase, codePhoto, step.meta)} />

@@ -15,7 +15,7 @@ interface Props {
 }
 
 export default function CardRow({ card, resolved, onFix, onKeep }: Props) {
-  const flagged = card.low_confidence_reason !== null && !resolved;
+  const flagged = (card.needs_review ?? card.low_confidence_reason !== null) && !resolved;
   return (
     <li className={`card-row${flagged ? " flagged" : ""}`}>
       {card.image_url ? (

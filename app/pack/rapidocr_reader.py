@@ -30,6 +30,31 @@ def _get():
     return _engine
 
 
+def detect_lines(img_bgr: np.ndarray, cap: int = 2600) -> list[tuple[float, str, float]]:
+    """Run detection+recognition over the WHOLE photo; return (y_center, text,
+    conf) per detected line. PP-OCR's real-photo-trained detector localizes the
+    number rows far better than geometric cropping. [] on failure."""
+    eng = _get()
+    if eng is None:
+        return None if False else []
+    h, w = img_bgr.shape[:2]
+    scale = 1.0
+    if max(h, w) > cap:
+        scale = cap / max(h, w)
+        img_bgr = cv2.resize(img_bgr, (int(w * scale), int(h * scale)),
+                             interpolation=cv2.INTER_AREA)
+    try:
+        res, _ = eng(img_bgr)
+    except Exception as e:
+        log.warning("rapidocr.detect_failed err=%r", e)
+        return []
+    out: list[tuple[float, str, float]] = []
+    for box, txt, conf in (res or []):
+        y = float(np.mean([p[1] for p in box])) / scale  # back to source coords
+        out.append((y, txt.upper(), float(conf)))
+    return out
+
+
 def read_text(strip_bgr: np.ndarray) -> tuple[str, float] | None:
     """(joined uppercase text, mean confidence) for a strip, or None."""
     eng = _get()

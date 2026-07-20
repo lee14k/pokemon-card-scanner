@@ -90,22 +90,15 @@ def _matched_token_confidence(
     return float(np.mean(hit)) / 100.0 if hit else 0.3
 
 
-def _rapid_reading(strip_bgr: np.ndarray) -> NumberReading | None:
-    """Number reading via RapidOCR, or None when it's unavailable / finds no
-    number-shaped text. Prefers a match carrying a plausible denominator."""
-    try:
-        from app.pack.rapidocr_reader import read_text
-    except Exception:
-        return None
-    out = read_text(strip_bgr)
-    if out is None:
-        return None
-    joined, conf = out
+def parse_number(text: str, conf: float) -> NumberReading | None:
+    """Extract a card number from an OCR text line, or None. Strips the set
+    badge ("TWM EN") that RapidOCR glues onto normal numerators. Shared by the
+    per-strip reader and the whole-photo detector."""
+    joined = (text or "").upper()
     m = NUMBER_RE.search(joined)
     if m:
         num, den = m.group(1), m.group(2)
-        # RapidOCR often glues the set badge ("TWM EN") onto the number. Normal
-        # numerators are pure digits; keep leading letters only when the
+        # Normal numerators are pure digits; keep leading letters only when the
         # denominator also has them (true TG/GG/SV cards, e.g. TG12/TG30).
         if not re.match(r"^[A-Z]", den):
             num = re.sub(r"^[A-Z]+", "", num) or num
@@ -118,6 +111,16 @@ def _rapid_reading(strip_bgr: np.ndarray) -> NumberReading | None:
                              prefix=p.group(1), confidence=round(conf, 3),
                              pattern_ok=True, tokens=joined.split())
     return None
+
+
+def _rapid_reading(strip_bgr: np.ndarray) -> NumberReading | None:
+    """Number reading via RapidOCR on a single strip, or None."""
+    try:
+        from app.pack.rapidocr_reader import read_text
+    except Exception:
+        return None
+    out = read_text(strip_bgr)
+    return parse_number(out[0], out[1]) if out is not None else None
 
 
 def read_card_number(strip_bgr: np.ndarray) -> NumberReading:

@@ -102,6 +102,57 @@ def _display_number(numerator: str | None, denominator: str | None,
     return None
 
 
+async def _read_numbers(img, strips, bounded, use_wholephoto: bool):
+    """Per-strip OCR for every strip, then (upload path only) fill the strips it
+    failed on with PP-OCR's whole-photo number detections — its real-photo-
+    trained detector localizes number rows geometric cropping misses. Union
+    beats either source; per-strip stays primary so precise crops win."""
+    from app.pack.ocr import parse_number
+
+    readings = list(await asyncio.gather(
+        *(bounded(read_card_number, s.image) for s in strips)))
+    if not use_wholephoto:
+        return readings
+
+    boxes: list = []
+    try:
+        from app.pack.rapidocr_reader import detect_lines
+
+        for y, text, conf in await asyncio.to_thread(detect_lines, img):
+            r = parse_number(text, conf)
+            if r is not None and r.pattern_ok:
+                boxes.append((y, r))
+    except Exception as e:
+        log.warning("pipeline.wholephoto_failed err=%r", e)
+        return readings
+
+    # Fill only the strips per-strip OCR failed on, claiming the nearest unused
+    # box whose number isn't already read on another strip (no duplicates).
+    have = {r.numerator for r in readings if r.pattern_ok and r.numerator}
+    used = set()
+    filled = 0
+    for i, s in enumerate(strips):
+        if readings[i].pattern_ok:
+            continue
+        _, sy, _, sh = s.bbox
+        cy = sy + sh / 2
+        best = best_d = None
+        for j, (y, r) in enumerate(boxes):
+            if j in used or r.numerator in have:
+                continue
+            d = abs(y - cy)
+            if d <= sh and (best_d is None or d < best_d):
+                best, best_d = j, d
+        if best is not None:
+            readings[i] = boxes[best][1]
+            used.add(best)
+            have.add(boxes[best][1].numerator)
+            filled += 1
+    log.info("pipeline.numbers per_strip=%s wholephoto_filled=%s of %s strips",
+             sum(1 for r in readings if r.pattern_ok) - filled, filled, len(strips))
+    return readings
+
+
 async def _apply_constraints(readings, resolutions) -> None:
     """Snap denominators to the pack's canonical value and correct numerators
     against the resolved set's catalog. Best-effort: any failure is a no-op."""
@@ -150,9 +201,10 @@ async def scan_pack(
         async with ocr_sem:
             return await asyncio.to_thread(fn, *args)
 
-    readings = list(
-        await asyncio.gather(*(_bounded(read_card_number, s.image) for s in seg.strips))
-    )
+    # Whole-photo number detection helps the upload path (weak segmentation);
+    # the guided path already has precise strip positions, so keep per-strip OCR.
+    readings = await _read_numbers(stair, seg.strips, _bounded,
+                                   use_wholephoto=capture_meta is None)
     resolutions = list(
         await asyncio.gather(
             *(_bounded(resolve_set, r, s.image) for r, s in zip(readings, seg.strips))

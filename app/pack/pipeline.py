@@ -107,7 +107,7 @@ async def _read_numbers(img, strips, bounded, use_wholephoto: bool):
     failed on with PP-OCR's whole-photo number detections — its real-photo-
     trained detector localizes number rows geometric cropping misses. Union
     beats either source; per-strip stays primary so precise crops win."""
-    from app.pack.ocr import parse_number
+    from app.pack.ocr import NumberReading, parse_number
 
     readings = list(await asyncio.gather(
         *(bounded(read_card_number, s.image) for s in strips)))
@@ -127,7 +127,8 @@ async def _read_numbers(img, strips, bounded, use_wholephoto: bool):
         return readings
 
     # Fill only the strips per-strip OCR failed on, claiming the nearest unused
-    # box whose number isn't already read on another strip (no duplicates).
+    # box (within ~1.5 strip-heights, to tolerate the strip/number misalignment
+    # that weak segmentation causes) whose number isn't already read elsewhere.
     have = {r.numerator for r in readings if r.pattern_ok and r.numerator}
     used = set()
     filled = 0
@@ -141,15 +142,29 @@ async def _read_numbers(img, strips, bounded, use_wholephoto: bool):
             if j in used or r.numerator in have:
                 continue
             d = abs(y - cy)
-            if d <= sh and (best_d is None or d < best_d):
+            if d <= 1.5 * sh and (best_d is None or d < best_d):
                 best, best_d = j, d
         if best is not None:
             readings[i] = boxes[best][1]
             used.add(best)
             have.add(boxes[best][1].numerator)
             filled += 1
-    log.info("pipeline.numbers per_strip=%s wholephoto_filled=%s of %s strips",
-             sum(1 for r in readings if r.pattern_ok) - filled, filled, len(strips))
+
+    # A pack's card numbers are unique: if two strips ended with the same
+    # numerator (an OCR false positive), keep the higher-confidence one.
+    by_num: dict[str, int] = {}
+    for i, r in enumerate(readings):
+        if not (r.pattern_ok and r.numerator):
+            continue
+        j = by_num.get(r.numerator)
+        if j is None:
+            by_num[r.numerator] = i
+        elif readings[i].confidence > readings[j].confidence:
+            readings[j] = NumberReading(blank=True); by_num[r.numerator] = i
+        else:
+            readings[i] = NumberReading(blank=True)
+
+    log.info("pipeline.numbers wholephoto_filled=%s of %s strips", filled, len(strips))
     return readings
 
 

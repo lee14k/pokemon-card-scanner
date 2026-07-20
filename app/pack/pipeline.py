@@ -233,9 +233,12 @@ async def _apply_constraints(readings, resolutions) -> None:
             if n >= max(2, (len(set_ids) + 1) // 2):  # dominant set only
                 from app.cards import get_set_numerators
 
-                correct_numerators(readings, await get_set_numerators(modal_set))
+                valid = await get_set_numerators(modal_set)
+                correct_numerators(readings, valid)
+                return valid
     except Exception as e:
         log.warning("pipeline.constraints_failed err=%r", e)
+    return set()
 
 
 async def scan_pack(
@@ -283,7 +286,18 @@ async def scan_pack(
     # Pack-level constraint repair: cards in one pack share a denominator and
     # their numerators exist in the set catalog — priors that fix OCR glyph
     # confusions the reader can't. Corrects readings in place before lookup.
-    await _apply_constraints(readings, resolutions)
+    valid_nums = await _apply_constraints(readings, resolutions)
+
+    def _needs_review(reading, res) -> bool:
+        # A card is confidently identified when its number reads cleanly, its set
+        # resolves, and (when we have the set catalog) its numerator is a real
+        # card in that set. Independent of the DB lookup, which only adds name/
+        # price — a clean number IS the identity.
+        if not reading.pattern_ok or reading.blank or not res.set_id:
+            return True
+        if valid_nums and reading.numerator and reading.numerator.isdigit():
+            return (reading.numerator.lstrip("0") or "0") not in valid_nums
+        return False
 
     art = await _match_art(strips, resolutions)  # None when disabled/unavailable
     art_ids = [a["id"] for a in (art or []) if a]
@@ -314,6 +328,7 @@ async def scan_pack(
                 card_number=art_num or ocr_num,
                 set_id=res.set_id, set_code=res.set_code, set_name=res.set_name,
                 confidence=round(conf, 3), low_confidence_reason=reason,
+                needs_review=reason is not None,
                 **card_fields_from_match(payload),
             ))
             continue
@@ -327,6 +342,7 @@ async def scan_pack(
             set_name=res.set_name,
             confidence=conf,
             low_confidence_reason=reason,
+            needs_review=_needs_review(reading, res),
             **card_fields_from_match(match),
         ))
 

@@ -1,0 +1,5 @@
+runpod>=1.6
+transformers>=4.49
+accelerate>=0.34
+qwen-vl-utils>=0.0.8
+pillow>=10.0.0

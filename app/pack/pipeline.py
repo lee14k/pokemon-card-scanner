@@ -241,6 +241,72 @@ async def _apply_constraints(readings, resolutions) -> None:
     return set()
 
 
+async def _vlm_fallback(cards, strips, resolutions) -> None:
+    """Send still-uncertain cards to the RunPod VLM worker; merge definitive IDs
+    back in (number, set, re-lookup name/price). Best-effort — any failure or a
+    disabled worker leaves the Phase-1 cards untouched."""
+    from app.pack import vlm_client
+    if not vlm_client.enabled():
+        return
+    idx = [i for i, c in enumerate(cards) if c.needs_review]
+    if not idx:
+        return
+    try:
+        from app.pack.set_resolution import load_denominator_table
+
+        table = load_denominator_table()
+        set_ids = [r.set_id for r in resolutions if r.set_id]
+        hint_set = hint_den = None
+        if set_ids:
+            modal = Counter(set_ids).most_common(1)[0][0]
+            e = next((s for s in table.sets if s.set_id == modal), None)
+            if e:
+                hint_set = e.set_name
+                hint_den = e.denominators[0] if len(e.denominators) == 1 else None
+        payload = [{"row_index": cards[i].row_index, "image": strips[i].image,
+                    "hint_set": hint_set, "hint_denominator": hint_den} for i in idx]
+        result = await vlm_client.identify(payload)
+        if not result:
+            return
+
+        from app.cards import cached_lookup_card
+        from app.pack.matching import card_fields_from_match
+
+        for i in idx:
+            card = cards[i]
+            ans = result.get(card.row_index)
+            if not ans or not ans.get("number"):
+                continue
+            num = str(ans["number"]).split("/")[0].strip()
+            den = ans.get("denominator")
+            card.card_number = f"{num}/{den}" if den else num
+            set_id = card.set_id
+            if ans.get("set_name"):
+                sn = str(ans["set_name"]).casefold()
+                match = next((s for s in table.sets if s.set_name.casefold() == sn), None) or \
+                    next((s for s in table.sets
+                          if sn in s.set_name.casefold() or s.set_name.casefold() in sn), None)
+                if match:
+                    card.set_id, card.set_code, card.set_name = \
+                        match.set_id, match.set_code, match.set_name
+                    set_id = match.set_id
+            if set_id and num.isdigit():
+                try:
+                    m = await cached_lookup_card(set_id, num, api_key=get_api_key())
+                    if m:
+                        for k, v in card_fields_from_match(m).items():
+                            setattr(card, k, v)
+                except Exception as e:
+                    log.warning("vlm.relookup_failed err=%r", e)
+            if float(ans.get("confidence") or 0) >= 0.7:
+                card.needs_review = False
+                card.low_confidence_reason = None
+                card.confidence = max(card.confidence, float(ans["confidence"]))
+        log.info("vlm.fallback applied cards=%s", len(idx))
+    except Exception as e:
+        log.warning("pipeline.vlm_fallback_failed err=%r", e)
+
+
 async def scan_pack(
     staircase_bytes: bytes,
     code_bytes: bytes,
@@ -345,6 +411,10 @@ async def scan_pack(
             needs_review=_needs_review(reading, res),
             **card_fields_from_match(match),
         ))
+
+    # Confidence-gated VLM fallback: send only the still-uncertain cards to the
+    # RunPod worker for definitive ID. Off when VLM_ENDPOINT unset; never blocks.
+    await _vlm_fallback(cards, strips, resolutions)
 
     code_img = _decode(code_bytes)
     if code_img is None:

@@ -273,39 +273,11 @@ async def _vlm_fallback(cards, strips, resolutions) -> None:
         if not result:
             return
 
-        from app.cards import cached_lookup_card
-        from app.pack.matching import card_fields_from_match
+        from app.pack.vlm_merge import apply_vlm_answer
 
         for i in idx:
             card = cards[i]
-            ans = result.get(card.row_index)
-            if not ans or not ans.get("number"):
-                continue
-            num = str(ans["number"]).split("/")[0].strip()
-            den = ans.get("denominator")
-            card.card_number = f"{num}/{den}" if den else num
-            set_id = card.set_id
-            if ans.get("set_name"):
-                sn = str(ans["set_name"]).casefold()
-                match = next((s for s in table.sets if s.set_name.casefold() == sn), None) or \
-                    next((s for s in table.sets
-                          if sn in s.set_name.casefold() or s.set_name.casefold() in sn), None)
-                if match:
-                    card.set_id, card.set_code, card.set_name = \
-                        match.set_id, match.set_code, match.set_name
-                    set_id = match.set_id
-            if set_id and num.isdigit():
-                try:
-                    m = await cached_lookup_card(set_id, num, api_key=get_api_key())
-                    if m:
-                        for k, v in card_fields_from_match(m).items():
-                            setattr(card, k, v)
-                except Exception as e:
-                    log.warning("vlm.relookup_failed err=%r", e)
-            if float(ans.get("confidence") or 0) >= 0.7:
-                card.needs_review = False
-                card.low_confidence_reason = None
-                card.confidence = max(card.confidence, float(ans["confidence"]))
+            await apply_vlm_answer(card, result.get(card.row_index) or {}, table)
         log.info("vlm.fallback applied cards=%s", len(idx))
     except Exception as e:
         log.warning("pipeline.vlm_fallback_failed err=%r", e)

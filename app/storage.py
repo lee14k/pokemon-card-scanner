@@ -1,7 +1,11 @@
 """Filesystem boundary for pull photos (Railway Volume in prod, local dir in dev).
 
-Paths are built only from server-generated UUIDs — no user-controlled segments,
-so there is no path-traversal surface.
+Most paths are built only from server-generated UUIDs. The one exception is
+``move_session_frames``, whose ``session_id`` arrives as a client-supplied
+``live_session_id`` form field: it is validated as a uuid4 hex string and
+containment-checked against the live-sessions root before use, so the
+traversal surface is closed by validation rather than by absence of user
+input.
 """
 
 from __future__ import annotations
@@ -56,8 +60,18 @@ def move_session_frames(
     ``frame_NN.jpg`` (preserving numeric order). Returns the number moved. A live
     session can legitimately be gone by save time (TTL sweep), so a missing/empty
     source dir is non-fatal and returns 0.
+
+    ``session_id`` is client-supplied (the caller's ``live_session_id`` form
+    field), so it is validated as a uuid4 hex string and containment-checked
+    against the live-sessions root before any filesystem access — otherwise
+    it would be an arbitrary-path escape (absolute path or ``..`` traversal).
     """
-    src_dir = _root() / "live_sessions" / session_id
+    if not re.fullmatch(r"[0-9a-f]{32}", session_id or ""):
+        return 0
+    base = (_root() / "live_sessions").resolve()
+    src_dir = (base / session_id).resolve()
+    if base != src_dir.parent:
+        return 0
     if not src_dir.is_dir():
         return 0
     frames = [p for p in src_dir.iterdir() if re.fullmatch(r"frame_\d+\.jpg", p.name)]

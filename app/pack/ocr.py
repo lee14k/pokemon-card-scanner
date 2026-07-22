@@ -239,6 +239,16 @@ def _code_from_tokens(tokens: list[tuple[str, float]]) -> CodeReading | None:
     return best
 
 
+def is_code_card(image_bgr: np.ndarray) -> bool:
+    """Cheap classifier: a detectable QR square means this frame is the code
+    card, not a Pokémon card."""
+    try:
+        _txt, pts, _ = cv2.QRCodeDetector().detectAndDecode(image_bgr)
+    except cv2.error:
+        return False
+    return pts is not None
+
+
 def _read_code_via_qr(image_bgr: np.ndarray) -> CodeReading | None:
     """QR-anchored read for real code-card photos. The QR locates reliably even
     in cluttered scenes; when its payload decodes we take the code from it, and

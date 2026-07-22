@@ -5,6 +5,7 @@ strip) instead of whole-card OCR — that is the latency win. Decision ladder:
 name+number agree > name+denominator-unique > number+catalog-valid > VLM."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Literal
@@ -59,16 +60,17 @@ async def _pw_set_id_for(tcgdex_set_id: str) -> str | None:
 
 async def identify_frame(card_bgr: np.ndarray, strip_bgr: np.ndarray | None,
                          prior: SessionPrior | None) -> FrameResult:
-    if is_code_card(card_bgr):
-        cr: CodeReading = read_code_card(card_bgr)
+    if await asyncio.to_thread(is_code_card, card_bgr):
+        cr: CodeReading = await asyncio.to_thread(read_code_card, card_bgr)
         return FrameResult(
             "code_card", None,
             CodeCardResult(code=cr.code, confidence=round(cr.confidence, 3),
                            format_ok=cr.format_ok),
             None, needs_vlm=False)
 
-    name_lines = detect_lines(_name_band(card_bgr), cap=1400)
-    strip_lines = detect_lines(strip_bgr, cap=1600) if strip_bgr is not None else []
+    name_lines = await asyncio.to_thread(detect_lines, _name_band(card_bgr), cap=1400)
+    strip_lines = await asyncio.to_thread(detect_lines, strip_bgr, cap=1600) \
+        if strip_bgr is not None else []
     if not name_lines and not strip_lines:
         return FrameResult("no_card", None, None, None, needs_vlm=False)
 

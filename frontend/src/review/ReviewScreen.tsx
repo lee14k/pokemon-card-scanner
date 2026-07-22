@@ -1,13 +1,16 @@
-import { useState } from "react";
-import type { PackScanResponse, PackCard } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { liveState, type LiveCard, type PackCard, type PackScanResponse } from "../api";
 import CardRow from "./CardRow";
 import FixCardForm from "./FixCardForm";
 
 interface Props {
   scan: PackScanResponse;
+  liveSessionId?: string;
   onConfirm: (cards: PackCard[]) => void;
   onRetake: () => void;
 }
+
+const POLL_MS = 2000; // mirrors LiveScanScreen's pending_vlm poll interval
 
 // Turn the backend's machine-readable segmentation_warning into a friendly sentence.
 function friendlyWarning(warning: string): string {
@@ -22,20 +25,69 @@ function friendlyWarning(warning: string): string {
   return "We couldn't read the capture cleanly — retake or continue.";
 }
 
-export default function ReviewScreen({ scan, onConfirm, onRetake }: Props) {
-  const [cards, setCards] = useState<PackCard[]>(scan.cards);
+export default function ReviewScreen({ scan, liveSessionId, onConfirm, onRetake }: Props) {
+  // scan.cards is a PackCard[], structurally assignable to LiveCard[] (state is
+  // optional) — this seeds each row's `state` from the initial scan when the
+  // backend happened to include it, and leaves it undefined (treated as
+  // settled, same as "ok") otherwise. No PackCard/LiveCard redefinition needed.
+  const [cards, setCards] = useState<LiveCard[]>(scan.cards);
   const [resolvedRows, setResolvedRows] = useState<Set<number>>(new Set());
   const [fixing, setFixing] = useState<number | null>(null);
+
+  // Mirrors `cards` for use inside the poll's interval tick, which must always
+  // see the freshest value regardless of which render's closure is running.
+  const cardsRef = useRef<LiveCard[]>(cards);
+  cardsRef.current = cards;
 
   const markResolved = (row: number) =>
     setResolvedRows((prev) => new Set(prev).add(row));
 
   // Block confirmation only on genuinely uncertain cards. needs_review reflects
   // identity confidence (number + set + catalog), not whether the DB lookup ran,
-  // so confidently-read cards never burden the user.
+  // so confidently-read cards never burden the user. pending_vlm rows are
+  // excluded from blocking too — they're still being identified in the
+  // background; the user can wait for the poll below to resolve them or fix
+  // manually, but Finish must never stall on a still-pending row.
   const unresolved = cards.filter(
-    (c) => (c.needs_review ?? c.low_confidence_reason !== null) && !resolvedRows.has(c.row_index)
+    (c) =>
+      c.state !== "pending_vlm" &&
+      (c.needs_review ?? c.low_confidence_reason !== null) &&
+      !resolvedRows.has(c.row_index)
   );
+
+  // Poll live state while any row is still pending_vlm, patching rows in place
+  // as VLM answers land. One persistent interval per session, NOT torn down or
+  // restarted on every card patch — depending on `cards` here would reset the
+  // interval on every poll-driven update and it could starve. Pending-ness is
+  // read from cardsRef inside the tick instead, and the network call is
+  // skipped entirely when nothing is pending. Mirrors the pattern in
+  // LiveScanScreen's own pending_vlm poll.
+  useEffect(() => {
+    if (!liveSessionId) return;
+    let cancelled = false;
+    const id = window.setInterval(async () => {
+      if (cancelled) return;
+      const anyPending = cardsRef.current.some((c) => c.state === "pending_vlm");
+      if (!anyPending) return;
+      try {
+        const st = await liveState(liveSessionId);
+        if (cancelled) return;
+        setCards((prev) =>
+          prev.map((c) => {
+            const match = st.cards.find((m) => m.row_index === c.row_index);
+            return match ? { ...match } : c;
+          })
+        );
+      } catch {
+        // best effort -- session may be mid-recovery elsewhere; try again next tick
+      }
+    }, POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSessionId]);
 
   return (
     <section>
@@ -52,6 +104,7 @@ export default function ReviewScreen({ scan, onConfirm, onRetake }: Props) {
             key={c.row_index}
             card={c}
             resolved={resolvedRows.has(c.row_index)}
+            liveSessionId={liveSessionId}
             onFix={() => setFixing(c.row_index)}
             onKeep={() => markResolved(c.row_index)}
           />
@@ -66,7 +119,7 @@ export default function ReviewScreen({ scan, onConfirm, onRetake }: Props) {
           initial={cards.find((c) => c.row_index === fixing)!}
           onApply={(fixed) => {
             setCards((prev) =>
-              prev.map((c) => (c.row_index === fixing ? fixed : c))
+              prev.map((c) => (c.row_index === fixing ? { ...fixed, state: "ok" } : c))
             );
             markResolved(fixing);
             setFixing(null);

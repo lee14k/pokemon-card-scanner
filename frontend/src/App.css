@@ -137,9 +137,25 @@
   border-radius: var(--radius);
 }
 
+/* Only review rows set role="button" (whole row opens the fix form) — scoped
+   so this doesn't bleed into the non-clickable live-tray chips or summary
+   encounter rows, which also use the .card-row class. */
+.card-row[role="button"] {
+  cursor: pointer;
+}
+
+.card-row[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .card-row.flagged {
   border-color: var(--danger);
   background: rgba(248, 113, 113, 0.12);
+}
+
+.card-row.pending {
+  border-color: var(--accent);
 }
 
 .card-thumb {
@@ -155,6 +171,11 @@
   justify-content: center;
   background: var(--surface);
   color: var(--text-muted);
+}
+
+.review-thumb {
+  width: 64px;
+  height: 89px;
 }
 
 .card-row-body {
@@ -174,6 +195,21 @@
   min-height: 36px;
   padding: 0.3rem 0.65rem;
   font-size: 0.85rem;
+}
+
+.card-row-edit {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  min-height: 28px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.78rem;
+}
+
+.card-row-edit:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .pull-row-toggle {

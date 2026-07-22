@@ -142,6 +142,7 @@ export default function App() {
           {step.name === "review" && (
             <ReviewScreen
               scan={step.scan}
+              liveSessionId={step.liveSessionId}
               onRetake={() => setStep({ name: "staircase" })}
               onConfirm={(cards) => doSave(step, cards)}
             />

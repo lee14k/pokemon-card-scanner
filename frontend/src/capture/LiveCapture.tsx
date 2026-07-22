@@ -263,8 +263,12 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
     layoutOverlay();
   }
 
-  function stopLoop() {
-    const video = videoRef.current;
+  // Takes `video` as a parameter rather than reading videoRef.current so it works
+  // correctly from the unmount cleanup: React nulls DOM element refs during the
+  // synchronous commit phase, which runs BEFORE passive-effect cleanup — by the time
+  // this runs there, videoRef.current is already null. Callers pass the same
+  // closure-captured video reference used elsewhere in that scope.
+  function stopLoop(video: HTMLVideoElement | null) {
     if (loopModeRef.current === "rvfc" && video && rvfcIdRef.current !== null) {
       video.cancelVideoFrameCallback(rvfcIdRef.current);
     }
@@ -277,8 +281,8 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
   }
 
   function startLoop() {
-    stopLoop();
     const video = videoRef.current;
+    stopLoop(video);
     if (!video) return;
 
     if (typeof video.requestVideoFrameCallback === "function") {
@@ -395,12 +399,30 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
 
     const secondBest = ringRef.current[0]?.blob ?? null;
 
+    // Fire-gating state (disarm/cooldown/rearm/flash/vibrate) is only consumed once
+    // BOTH blobs are successfully produced and onFire is actually called. If either
+    // toBlob() yields null (rare: zero-size/tainted canvas), we leave the gating state
+    // untouched so the next tick can retry instead of silently eating a capture.
     cardCanvas.toBlob(
       (cardBlob) => {
-        if (!cardBlob) return;
+        if (!cardBlob) {
+          console.warn("LiveCapture: capture produced no blob");
+          return;
+        }
         stripCanvas.toBlob(
           (stripBlob) => {
-            if (!stripBlob) return;
+            if (!stripBlob) {
+              console.warn("LiveCapture: capture produced no blob");
+              return;
+            }
+            const firedAt = performance.now();
+            lastFireAtRef.current = firedAt;
+            armedRef.current = false; // require motion > REARM_MOTION before the next window
+            stableSinceRef.current = null;
+            windowIdRef.current += 1;
+            ringRef.current = [];
+            flashUntilRef.current = firedAt + FLASH_MS;
+            navigator.vibrate?.(30);
             onFireRef.current(cardBlob, stripBlob, secondBest);
           },
           "image/jpeg",
@@ -410,15 +432,6 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
       "image/jpeg",
       0.8
     );
-
-    const firedAt = performance.now();
-    lastFireAtRef.current = firedAt;
-    armedRef.current = false; // require motion > REARM_MOTION before the next window
-    stableSinceRef.current = null;
-    windowIdRef.current += 1;
-    ringRef.current = [];
-    flashUntilRef.current = firedAt + FLASH_MS;
-    navigator.vibrate?.(30);
   }
 
   function manualFire() {
@@ -494,14 +507,14 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
   function handleTrackInterrupt() {
     interruptedRef.current = true;
     setInterrupted(true);
-    stopLoop();
+    stopLoop(videoRef.current);
   }
 
   function handleVisibilityChange() {
     if (document.visibilityState === "hidden") {
       interruptedRef.current = true;
       setInterrupted(true);
-      stopLoop();
+      stopLoop(videoRef.current);
     } else if (document.visibilityState === "visible") {
       requestWakeLock();
     }
@@ -526,7 +539,7 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
   }
 
   async function setupStream() {
-    stopLoop();
+    stopLoop(videoRef.current);
     const oldTrack = trackRef.current;
     oldTrack?.removeEventListener("mute", handleTrackInterrupt);
     oldTrack?.removeEventListener("ended", handleTrackInterrupt);
@@ -585,7 +598,7 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
 
     return () => {
       mountedRef.current = false;
-      stopLoop();
+      stopLoop(video);
       video?.removeEventListener("loadedmetadata", handleLoadedMetadata);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("resize", handleResize);

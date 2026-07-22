@@ -68,9 +68,17 @@ async def identify_frame(card_bgr: np.ndarray, strip_bgr: np.ndarray | None,
                            format_ok=cr.format_ok),
             None, needs_vlm=False)
 
-    name_lines = await asyncio.to_thread(detect_lines, _name_band(card_bgr), cap=1400)
-    strip_lines = await asyncio.to_thread(detect_lines, strip_bgr, cap=1600) \
-        if strip_bgr is not None else []
+    # Run the name-band and number-strip OCR passes CONCURRENTLY rather than back
+    # to back — for a single scanner (the common case) this overlaps them across
+    # the CPUs and roughly halves per-card OCR wall-time. Concurrent RapidOCR use
+    # is already exercised by the pack pipeline (OCR_GATE lets several run at once),
+    # so the shared engine handles it. Cross-request load stays bounded by OCR_GATE.
+    name_task = asyncio.to_thread(detect_lines, _name_band(card_bgr), cap=1400)
+    if strip_bgr is not None:
+        name_lines, strip_lines = await asyncio.gather(
+            name_task, asyncio.to_thread(detect_lines, strip_bgr, cap=1600))
+    else:
+        name_lines, strip_lines = await name_task, []
     if not name_lines and not strip_lines:
         return FrameResult("no_card", None, None, None, needs_vlm=False)
 

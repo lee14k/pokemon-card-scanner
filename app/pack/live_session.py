@@ -203,12 +203,41 @@ class LiveSession:
 
     def finish(self) -> list[PackCard]:
         """Renumber row_index 0..n-1 in capture order, dropping the dup_prompt rows
-        the user never confirmed. Frames stay on disk for Task 7 to move."""
-        out: list[PackCard] = []
-        for lc in self.cards:
-            if lc.state == "dup_prompt":
+        the user never confirmed. Frame files on disk are remapped to match, so the
+        row_index -> frame_<row_index>.jpg invariant still holds afterward (Task 7 /
+        the review screen address frames by the final row_index). Frames stay on
+        disk (renamed in place) for Task 7 to move."""
+        survivors = [lc for lc in self.cards if lc.state != "dup_prompt"]
+        dropped = [lc for lc in self.cards if lc.state == "dup_prompt"]
+
+        # Original on-disk index for each survivor, captured before row_index is
+        # overwritten below -- that's the append index its frame was persisted under.
+        originals = [lc.card.row_index for lc in survivors]
+
+        # Delete the orphaned frames of ignored dup_prompt rows first, so a dropped
+        # row's original filename is free to receive a surviving frame.
+        for lc in dropped:
+            self.frame_path(lc.card.row_index).unlink(missing_ok=True)
+
+        # Two-phase rename: original and new index ranges overlap, so a naive
+        # in-place rename could overwrite a not-yet-moved source. Move every
+        # surviving frame to a temp name first, then into its final compacted name.
+        tmp_of: dict[int, Path] = {}
+        for new, original in enumerate(originals):
+            if original == new:
                 continue
-            lc.card.row_index = len(out)
+            src = self.frame_path(original)
+            if not src.exists():
+                continue  # e.g. a card whose frame was never persisted -- tolerate
+            tmp = self._dir() / f"_tmp_{new}.jpg"
+            src.rename(tmp)
+            tmp_of[new] = tmp
+        for new, tmp in tmp_of.items():
+            tmp.rename(self.frame_path(new))
+
+        out: list[PackCard] = []
+        for new, lc in enumerate(survivors):
+            lc.card.row_index = new
             out.append(lc.card)
         return out
 

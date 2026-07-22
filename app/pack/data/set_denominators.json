@@ -1,5 +1,5 @@
 {
-  "_provisional": "hand-seeded 2026-06-11 (+TG/GG/shiny-vault subsets 2026-06-15); promo sets + MEW/151 omitted (set_id unknown); regenerate with scripts/build_denominator_table.py once POKEWALLET_API_KEY is available",
+  "_provisional": "hand-seeded 2026-06-11 (+TG/GG/shiny-vault subsets 2026-06-15); promo sets + MEW/151 omitted (set_id unknown); regenerate with scripts/build_denominator_table.py once POKEWALLET_API_KEY is available. me-era sets (me01-me05, me02.5) hand-added 2026-07-21 from tcgdex_set.card_count_official — PokéWallet has no me-era coverage, so set_id/set_code hold the TCGdex id directly (identity-only resolution; no PokéWallet price bridge).",
   "sets": [
     {
       "set_id": "23876",
@@ -360,6 +360,72 @@
         "SV122"
       ],
       "promo_prefix": null
+    },
+    {
+      "set_id": "me01",
+      "set_code": "me01",
+      "set_name": "Mega Evolution",
+      "era": "me",
+      "denominators": [
+        "132"
+      ],
+      "promo_prefix": null,
+      "tcgdex_id": "me01"
+    },
+    {
+      "set_id": "me02",
+      "set_code": "me02",
+      "set_name": "Phantasmal Flames",
+      "era": "me",
+      "denominators": [
+        "94"
+      ],
+      "promo_prefix": null,
+      "tcgdex_id": "me02"
+    },
+    {
+      "set_id": "me02.5",
+      "set_code": "me02.5",
+      "set_name": "Ascended Heroes",
+      "era": "me",
+      "denominators": [
+        "217"
+      ],
+      "promo_prefix": null,
+      "tcgdex_id": "me02.5"
+    },
+    {
+      "set_id": "me03",
+      "set_code": "me03",
+      "set_name": "Perfect Order",
+      "era": "me",
+      "denominators": [
+        "88"
+      ],
+      "promo_prefix": null,
+      "tcgdex_id": "me03"
+    },
+    {
+      "set_id": "me04",
+      "set_code": "me04",
+      "set_name": "Chaos Rising",
+      "era": "me",
+      "denominators": [
+        "86"
+      ],
+      "promo_prefix": null,
+      "tcgdex_id": "me04"
+    },
+    {
+      "set_id": "me05",
+      "set_code": "me05",
+      "set_name": "Pitch Black",
+      "era": "me",
+      "denominators": [
+        "84"
+      ],
+      "promo_prefix": null,
+      "tcgdex_id": "me05"
     }
   ]
 }

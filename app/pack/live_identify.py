@@ -54,7 +54,7 @@ async def _pw_set_id_for(tcgdex_set_id: str) -> str | None:
     async with async_session_maker() as session:
         return (await session.execute(
             select(SetIdMap.pokewallet_set_id)
-            .where(SetIdMap.tcgdex_set_id == tcgdex_set_id))).scalar_one_or_none()
+            .where(SetIdMap.tcgdex_set_id == tcgdex_set_id))).scalars().first()
 
 
 async def identify_frame(card_bgr: np.ndarray, strip_bgr: np.ndarray | None,

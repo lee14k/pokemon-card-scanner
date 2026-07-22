@@ -62,13 +62,15 @@ class NameIndex:
     def match(self, ocr_text: str, *, denominator: str | None = None,
               min_score: int = 82) -> NameMatch | None:
         q = normalize_name(ocr_text)
-        if len(q) < 3:
+        if len(q) < 3 or not any(c.isalpha() for c in q):
             return None
         best = process.extractOne(q, self._keys, scorer=fuzz.WRatio,
                                   score_cutoff=min_score)
         if best is None:
             return None
         key, score, _ = best
+        if len(q) < 0.5 * len(key):
+            return None
         cands = self._entries[key]
         # substring hazard: "pikachu" inside "surfing pikachu" etc. (whole-word
         # containment only, so "hatterene v" is not flagged by "hatterene vmax")

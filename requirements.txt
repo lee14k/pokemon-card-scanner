@@ -19,3 +19,4 @@ fastapi-users[sqlalchemy]>=15.0,<16
 sqlalchemy[asyncio]>=2.0.30,<2.1
 asyncpg>=0.29
 alembic>=1.18,<2
+rapidfuzz>=3.0

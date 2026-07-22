@@ -145,6 +145,25 @@ pkill -f "uvicorn matcher.app"
   matcher feature stays OFF in production (`MATCHER_URL` unset) per the deploy
   gate. Next: phase 2, so real labeled data starts flowing.
 
+## Live-mode capture data (future training input)
+
+Live scan mode (`POST /scan/live/*`) saves each identified card's individual
+phone frame into its pull's photo dir as `frame_<row_index>.jpg` alongside the
+usual `staircase.jpg`/`code.jpg` — real, single-card photos taken at whatever
+angle/lighting the trainer held the card up in. Nothing consumes them yet;
+they're future real-photo training/eval material once phase-2 intake grows an
+ingestion path for them (today's `fetch_uploads.py` connector only pulls
+admin-labeled uploads, not live-scan frames).
+
+Live pulls (`Pull.capture_path == "live"`) are excluded from both
+`rederive_pending()` (`app/stats/rederive.py`) and the training-upload
+harvest: their "staircase" is a synthetic contact sheet, not a real
+photograph, so re-OCRing or embedding it would be garbage. Their derived card
+rows are instead written directly at save time from the live session's own
+server-verified `/finish` output (`app/pulls.py::save_pull`), and
+`derive_status` is set to `done` immediately — rederive's `capture_path !=
+"live"` filter is belt-and-suspenders on top of that.
+
 ## Pulling real labeled uploads into training (export connector)
 
 Uploads labeled in the app (Training Data → Intake & Pools) live in the app DB

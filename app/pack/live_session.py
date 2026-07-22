@@ -239,6 +239,13 @@ class LiveSession:
         for new, lc in enumerate(survivors):
             lc.card.row_index = new
             out.append(lc.card)
+
+        # Drop the ignored dup_prompt rows from session state so post-finish
+        # GET /scan/live/{sid} (which iterates self.cards) returns only survivors
+        # with unique row_index -- the VLM drain patches by LiveCard object
+        # reference (row_map in _drain_vlm), not by re-indexing into self.cards,
+        # so a still-pending_vlm survivor stays reachable after this reassignment.
+        self.cards = survivors
         return out
 
     # --- VLM background drain ------------------------------------------------

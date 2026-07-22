@@ -42,6 +42,39 @@ export default function ReviewScreen({ scan, liveSessionId, onConfirm, onRetake 
   const markResolved = (row: number) =>
     setResolvedRows((prev) => new Set(prev).add(row));
 
+  // Bootstrap once on mount: seed real per-row `state` (and any VLM-refreshed
+  // identity fields) from the live session. `scan.cards` is a PackScanResponse
+  // from liveFinish, and PackCard has no `state` field -- only
+  // GET /scan/live/{sid} injects it per row. Without this, every card.state is
+  // undefined at mount, the poll gate below never sees "pending_vlm", and a
+  // still-identifying row never shows the spinner or gets patched. This is a
+  // one-shot effect, separate from the recurring poll effect, so it can't
+  // restart or duplicate the poll's interval. Defensive: if the session is
+  // already gone (e.g. expired), swallow the error and leave scan.cards as-is
+  // -- the feature just no-ops rather than crashing the review screen.
+  useEffect(() => {
+    if (!liveSessionId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const st = await liveState(liveSessionId);
+        if (cancelled) return;
+        setCards((prev) =>
+          prev.map((c) => {
+            const match = st.cards.find((m) => m.row_index === c.row_index);
+            return match ? { ...match } : c;
+          })
+        );
+      } catch {
+        // best effort -- session may already be expired/gone; scan.cards stands
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSessionId]);
+
   // Block confirmation only on genuinely uncertain cards. needs_review reflects
   // identity confidence (number + set + catalog), not whether the DB lookup ran,
   // so confidently-read cards never burden the user. pending_vlm rows are

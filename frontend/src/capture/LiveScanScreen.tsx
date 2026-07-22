@@ -21,7 +21,7 @@ import LiveCapture from "./LiveCapture";
 // hold-up, we queue it and drain the queue through liveFrame() one request at a
 // time, patching an optimistic "tray" of chips as responses come back.
 
-const SESSION_STORAGE_KEY = "pokemon-scanner:live-session-id";
+export const SESSION_STORAGE_KEY = "pokemon-scanner:live-session-id";
 const COOLDOWN_MS = 1500; // mirrors LiveCapture's min gap between fires
 const POLL_MS = 2000; // pending_vlm poll interval
 const MAX_COMPOSITE_THUMBS = 100;
@@ -49,6 +49,7 @@ interface ArchivedFrame {
   clientId: string;
   card: Blob;
   strip?: Blob;
+  capturedAt: number;
 }
 
 interface CapturedCodeCard {
@@ -183,7 +184,31 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
   }
 
   function archiveAccepted(clientId: string, card: Blob, strip?: Blob) {
-    capturedBlobsRef.current.push({ clientId, card, strip });
+    capturedBlobsRef.current.push({ clientId, card, strip, capturedAt: performance.now() });
+  }
+
+  // Rebuilds the tray from authoritative server state — used both on a
+  // stored-session RESUME at mount and after 404-recovery replay, so the
+  // displayed tray can never silently diverge from what the server actually
+  // holds. Chips still "capturing" (queued/in-flight, not yet archived) have
+  // no server-side counterpart yet, so they're carried over untouched instead
+  // of being dropped; every other chip's blob URL is revoked before being
+  // replaced by a server-image-backed chip.
+  function hydrateTrayFromServer(sid: string, st: LiveState) {
+    setTray((prev) => {
+      const inFlight = prev.filter((c) => c.state === "capturing");
+      prev.forEach((c) => {
+        if (c.state !== "capturing") URL.revokeObjectURL(c.thumbUrl);
+      });
+      const serverChips: TrayChip[] = st.cards.map((c) => ({
+        clientId: `resumed-${c.row_index}`,
+        state: c.state ?? "ok",
+        thumbUrl: liveCardImageUrl(sid, c.row_index),
+        row: c,
+      }));
+      return [...serverChips, ...inFlight];
+    });
+    resolvedCountRef.current = st.cards.length;
   }
 
   // --- mount: start (or resume) the session -------------------------------
@@ -197,15 +222,7 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
           if (cancelled) return;
           sidRef.current = stored;
           setSessionId(stored);
-          setTray(
-            st.cards.map((c) => ({
-              clientId: `resumed-${c.row_index}`,
-              state: c.state ?? "ok",
-              thumbUrl: liveCardImageUrl(stored, c.row_index),
-              row: c,
-            }))
-          );
-          resolvedCountRef.current = st.cards.length;
+          hydrateTrayFromServer(stored, st);
           setPhase("scanning");
           return;
         } catch {
@@ -239,13 +256,21 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
   }, []);
 
   // --- poll while any card is pending_vlm, patching chips in place ---------
+  // One persistent interval per session, NOT torn down/restarted on tray
+  // mutations (auto-fire cooldown is 1500ms, shorter than POLL_MS's 2000ms,
+  // so depending on `tray` here would keep resetting the interval before it
+  // ever fires under continuous scanning). Pending-ness is checked from
+  // trayRef inside the tick instead, and the network call is skipped
+  // entirely when nothing is pending.
   useEffect(() => {
-    const anyPending = tray.some((c) => c.state === "pending_vlm");
-    if (!anyPending || !sessionId) return;
+    if (!sessionId) return;
     let cancelled = false;
     const id = window.setInterval(async () => {
+      if (cancelled) return;
+      const anyPending = trayRef.current.some((c) => c.state === "pending_vlm");
+      if (!anyPending) return;
       const sid = sidRef.current;
-      if (cancelled || !sid) return;
+      if (!sid) return;
       try {
         const st = await liveState(sid);
         if (cancelled) return;
@@ -259,7 +284,7 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
       window.clearInterval(id);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tray, sessionId]);
+  }, [sessionId]);
 
   function patchTrayFromState(st: LiveState) {
     setTray((prev) =>
@@ -431,11 +456,25 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
       sessionStorage.setItem(SESSION_STORAGE_KEY, newSid);
 
       // Replay every previously-accepted frame against the new session, in
-      // order. The tray already reflects these cards' identities, so this is
-      // purely reconstructing server-side state (dedup keys, code card) —
-      // duplicate prompts are auto-resolved with the decision the user
+      // order. The backend dedups same-identity frames within a 2s window
+      // (DUP_WINDOW_S) — treating a <2s-apart re-fire as a refinement of the
+      // same card but a >2s-apart re-fire as a genuine second copy. Sending
+      // the whole backlog back-to-back would collapse genuine duplicates
+      // (originally shown seconds apart) into one card, so each send after
+      // the first waits out the ORIGINAL gap between that frame and the
+      // previous one, clamped to 2.5s: short gaps (accidental double-fires)
+      // stay collapsed, long gaps (real re-shows) still clear the 2s window,
+      // and we never stall more than ~2.5s per card.
+      //
+      // Duplicate prompts are auto-resolved with the decision the user
       // already made the first time, keyed by the originating chip.
-      for (const item of capturedBlobsRef.current) {
+      const frames = capturedBlobsRef.current;
+      for (let i = 0; i < frames.length; i++) {
+        const item = frames[i];
+        if (i > 0) {
+          const gapMs = Math.max(0, item.capturedAt - frames[i - 1].capturedAt);
+          await sleep(Math.min(gapMs, 2500));
+        }
         try {
           const res = await liveFrame(newSid, item.card, item.strip);
           if (res.event === "duplicate_prompt" && res.card) {
@@ -447,6 +486,16 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
         } catch (e) {
           console.warn("live-scan replay: one frame failed to replay", e);
         }
+      }
+
+      // Reconcile against server truth regardless of how the replay went —
+      // this is what guarantees the tray never silently diverges even if a
+      // frame still collapsed or failed to replay.
+      try {
+        const st = await liveState(newSid);
+        hydrateTrayFromServer(newSid, st);
+      } catch (e) {
+        console.warn("live-scan replay: post-replay reconcile failed", e);
       }
 
       if (requeueEntry) {
@@ -478,6 +527,15 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
     } else {
       dropChip(chip.clientId, null);
     }
+  }
+
+  // --- cancel ---------------------------------------------------------------
+  // Cancelling mid-scan must discard the session client-side too, otherwise
+  // sessionStorage still points at the abandoned session (TTL 30min) and
+  // re-entering Live silently resumes it instead of starting fresh.
+  function handleCancel() {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+    onCancel();
   }
 
   // --- finish -------------------------------------------------------------------
@@ -595,7 +653,7 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
             >
               Finish scanning
             </button>
-            <button type="button" onClick={onCancel}>Cancel</button>
+            <button type="button" onClick={handleCancel}>Cancel</button>
           </div>
         </>
       )}

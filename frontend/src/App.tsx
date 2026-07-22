@@ -10,7 +10,7 @@ import {
 } from "./api";
 import StaircaseCapture from "./capture/StaircaseCapture";
 import CodeCardCapture from "./capture/CodeCardCapture";
-import LiveScanScreen from "./capture/LiveScanScreen";
+import LiveScanScreen, { SESSION_STORAGE_KEY as LIVE_SESSION_STORAGE_KEY } from "./capture/LiveScanScreen";
 import ReviewScreen from "./review/ReviewScreen";
 import { useAuth } from "./auth/AuthContext";
 import AuthForms from "./auth/AuthForms";
@@ -131,7 +131,7 @@ export default function App() {
               onDone={(scan, sid, composite, code) =>
                 setStep({ name: "review", scan, staircase: composite, code: code ?? composite, meta: undefined, liveSessionId: sid })
               }
-              onCancel={() => setStep({ name: "mode" })}
+              onCancel={() => { sessionStorage.removeItem(LIVE_SESSION_STORAGE_KEY); setStep({ name: "mode" }); }}
             />
           )}
           {step.name === "code" && (

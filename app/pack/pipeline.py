@@ -7,6 +7,7 @@ import io
 import logging
 import os
 from collections import Counter
+from typing import Callable
 
 import cv2
 import numpy as np
@@ -287,10 +288,24 @@ async def scan_pack(
     staircase_bytes: bytes,
     code_bytes: bytes,
     capture_meta: dict | None,
+    *,
+    progress: Callable[[dict], None] | None = None,
 ) -> PackScanResponse:
+    def _emit(ev: dict) -> None:
+        # Fire-and-forget: a broken/slow callback (e.g. a full SSE queue) must
+        # never break or block a scan. Default None skips this entirely, so the
+        # no-callback path is byte-identical to before this param existed.
+        if progress is None:
+            return
+        try:
+            progress(ev)
+        except Exception as e:
+            log.warning("pipeline.progress_callback_failed err=%r", e)
+
     stair = _decode(staircase_bytes)
     if stair is None:
         raise ValueError("staircase image could not be decoded")
+    _emit({"stage": "decoded"})
 
     # Segmentation (fastNlMeansDenoising + Hough), OCR, and symbol matching are all
     # blocking CPU/subprocess work; offload to threads so this async path (a FastAPI
@@ -318,9 +333,25 @@ async def scan_pack(
         seg_warning = seg.warning
         readings = await _read_numbers(stair, strips, _bounded,
                                        use_wholephoto=capture_meta is None)
+    _emit({"stage": "cards_found", "count": len(strips)})
+
+    # Per-card "identifying" progress: resolve_set is the natural per-card unit
+    # of work remaining after strip/number detection, bounded by OCR_GATE so
+    # cards genuinely finish at staggered times (not all at once). asyncio.gather
+    # preserves input order in `resolutions` regardless of completion order, so
+    # this changes nothing about the result — only adds a side-effect callback.
+    _done = 0
+
+    async def _resolve_with_progress(r, s):
+        nonlocal _done
+        res = await _bounded(resolve_set, r, s.image)
+        _done += 1
+        _emit({"stage": "identifying", "done": _done, "total": len(strips)})
+        return res
+
     resolutions = list(
         await asyncio.gather(
-            *(_bounded(resolve_set, r, s.image) for r, s in zip(readings, strips))
+            *(_resolve_with_progress(r, s) for r, s in zip(readings, strips))
         )
     )
 
@@ -408,4 +439,5 @@ async def scan_pack(
     log.info("pipeline.done rows=%s flagged=%s pack_conf=%.3f code=%s",
              len(cards), sum(1 for c in cards if c.low_confidence_reason),
              resp.pack_confidence, code_result.code)
+    _emit({"stage": "done"})
     return resp

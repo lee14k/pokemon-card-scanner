@@ -3,10 +3,12 @@ import "./App.css";
 import {
   savePull,
   scanPack,
+  scanPackStream,
   type CaptureMeta,
   type Encounter,
   type PackCard,
   type PackScanResponse,
+  type ScanProgressEvent,
 } from "./api";
 import StaircaseCapture from "./capture/StaircaseCapture";
 import CodeCardCapture from "./capture/CodeCardCapture";
@@ -25,11 +27,33 @@ type Step =
   | { name: "staircase" }
   | { name: "live" }
   | { name: "code"; staircase: Blob; meta?: CaptureMeta }
-  | { name: "submitting" }
+  | { name: "submitting"; stage?: string; count?: number; done?: number; total?: number }
   | { name: "review"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta; liveSessionId?: string }
   | { name: "saving"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta; cards: PackCard[]; liveSessionId?: string }
   | { name: "summary"; verified: boolean; count: number; encounters: Encounter[]; pullId: string }
   | { name: "error"; message: string };
+
+function submittingStageText(step: Extract<Step, { name: "submitting" }>): string {
+  switch (step.stage) {
+    case "decoded":
+      return "Reading photo…";
+    case "cards_found":
+      return `Found ${step.count ?? "…"} cards — identifying…`;
+    case "identifying":
+      return `Identifying cards… ${step.done ?? 0}/${step.total ?? step.count ?? "?"}`;
+    case "done":
+      return "Finishing up…";
+    default:
+      return "Reading cards…";
+  }
+}
+
+// Feature-detect fetch+ReadableStream support (unavailable in some older/embedded
+// webviews) — those fall straight through to the non-streaming scanPack().
+function supportsScanStream(): boolean {
+  return typeof window !== "undefined" && "ReadableStream" in window
+    && typeof window.ReadableStream === "function";
+}
 
 export default function App() {
   const { trainer, loading, logout } = useAuth();
@@ -41,8 +65,24 @@ export default function App() {
 
   const submit = async (staircase: Blob, code: Blob, meta?: CaptureMeta) => {
     setStep({ name: "submitting" });
+    const onProgress = (ev: ScanProgressEvent) => {
+      setStep((prev) => (prev.name === "submitting" ? { ...prev, ...ev } : prev));
+    };
     try {
-      const scan = await scanPack(staircase, code, meta);
+      let scan: PackScanResponse;
+      if (supportsScanStream()) {
+        try {
+          scan = await scanPackStream(staircase, code, meta, onProgress);
+        } catch {
+          // Any stream failure (network hiccup, parse error, mid-stream error
+          // event) falls back to the plain non-streaming scan — reset the
+          // stage/skeleton state first so the fallback shows a plain spinner.
+          setStep({ name: "submitting" });
+          scan = await scanPack(staircase, code, meta);
+        }
+      } else {
+        scan = await scanPack(staircase, code, meta);
+      }
       setStep({ name: "review", scan, staircase, code, meta });
     } catch (e) {
       setStep({ name: "error", message: e instanceof Error ? e.message : String(e) });
@@ -137,7 +177,30 @@ export default function App() {
           {step.name === "code" && (
             <CodeCardCapture onDone={(codePhoto) => submit(step.staircase, codePhoto, step.meta)} />
           )}
-          {step.name === "submitting" && <p className="status">Reading cards…</p>}
+          {step.name === "submitting" && (
+            <section className="status">
+              <span className="spinner" />
+              <p>{submittingStageText(step)}</p>
+              {typeof step.count === "number" && step.count > 0 && (
+                <ul className="card-rows">
+                  {Array.from({ length: step.count }).map((_, i) => (
+                    <li
+                      key={i}
+                      className={`card-row skeleton-row${
+                        typeof step.done === "number" && i < step.done ? " skeleton-done" : ""
+                      }`}
+                    >
+                      <div className="card-thumb placeholder skeleton-block" />
+                      <div className="card-row-body">
+                        <div className="skeleton-line skeleton-line-wide" />
+                        <div className="skeleton-line" />
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
           {step.name === "saving" && <p className="status">Saving your pull…</p>}
           {step.name === "review" && (
             <ReviewScreen

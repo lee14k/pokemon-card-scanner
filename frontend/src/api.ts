@@ -88,6 +88,87 @@ export async function scanPack(
   return parse(await fetch(`${base}/scan/pack`, { method: "POST", body: form }));
 }
 
+export interface ScanProgressEvent {
+  stage: string; // "decoded" | "cards_found" | "identifying" | "done" | ...
+  count?: number;
+  done?: number;
+  total?: number;
+}
+
+// Progressive variant of scanPack(): same request, but reads a
+// text/event-stream response so the caller can render stage-by-stage
+// progress (skeleton rows, "identifying 3/9", etc) instead of a bare
+// spinner. EventSource can't POST a body, so this hand-rolls SSE parsing
+// over a fetch() ReadableStream. Any parse/network/stream error rejects —
+// callers should catch and fall back to scanPack().
+export async function scanPackStream(
+  staircase: Blob,
+  codeCard: Blob,
+  meta: CaptureMeta | undefined,
+  onProgress: (ev: ScanProgressEvent) => void
+): Promise<PackScanResponse> {
+  const form = new FormData();
+  form.append("staircase", staircase, "staircase.jpg");
+  form.append("code_card", codeCard, "code.jpg");
+  if (meta) form.append("capture_meta", JSON.stringify(meta));
+
+  const res = await fetch(`${base}/scan/pack/stream`, { method: "POST", body: form });
+  if (!res.ok) {
+    // Mirror parse()'s error shape (throws ApiError) so callers see a
+    // consistent failure regardless of which scan path they took.
+    return parse(res);
+  }
+  if (!res.body) {
+    // 200 with no readable body (should not happen for a fetch Response once
+    // ReadableStream is feature-detected, but guard rather than risk
+    // silently mis-parsing raw SSE text as a PackScanResponse below).
+    throw new Error("scan stream: response has no body");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+
+  // Parses one complete "event:\ndata:\n\n" frame (blank-line separated, per
+  // SSE). Lines starting with ":" are comments (our heartbeats) — ignored.
+  const handleFrame = (frame: string): PackScanResponse | undefined => {
+    let event = "message";
+    const dataLines: string[] = [];
+    for (const line of frame.split("\n")) {
+      if (!line || line.startsWith(":")) continue;
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    if (dataLines.length === 0) return undefined;
+    const data = JSON.parse(dataLines.join("\n"));
+    if (event === "progress") {
+      onProgress(data as ScanProgressEvent);
+      return undefined;
+    }
+    if (event === "error") {
+      throw new Error(data?.message || "scan failed");
+    }
+    if (event === "result") {
+      return data as PackScanResponse;
+    }
+    return undefined;
+  };
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value) buf += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) !== -1) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const result = handleFrame(frame);
+      if (result) return result;
+    }
+    if (done) break;
+  }
+  throw new Error("scan stream ended without a result");
+}
+
 export async function lookupCard(
   setId: string,
   number: string

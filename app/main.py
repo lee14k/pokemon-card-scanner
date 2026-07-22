@@ -11,13 +11,14 @@ from pathlib import Path
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.cards import cached_lookup_card
 from app.logging_config import configure_logging
 from app.pack.matching import card_fields_from_match
 from app.pack.pipeline import scan_pack
+from app.pack.scan_stream import scan_pack_sse
 from app.pack.set_resolution import load_denominator_table
 from app.pokewallet import get_api_key
 from app.schemas import CardLookupResponse, PackCard, PackScanResponse, SetInfo
@@ -95,6 +96,17 @@ async def _read_image(upload: UploadFile, field: str) -> bytes:
     return data
 
 
+def _parse_capture_meta(capture_meta: str | None) -> dict | None:
+    if not capture_meta:
+        return None
+    if len(capture_meta) > _MAX_CAPTURE_META:
+        raise HTTPException(400, "capture_meta: payload too large")
+    try:
+        return json.loads(capture_meta)
+    except (json.JSONDecodeError, RecursionError):
+        raise HTTPException(400, "capture_meta: invalid JSON")
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -110,20 +122,34 @@ async def scan_pack_endpoint(
 ) -> PackScanResponse:
     stair_bytes = await _read_image(staircase, "staircase")
     code_bytes = await _read_image(code_card, "code_card")
-
-    meta: dict | None = None
-    if capture_meta:
-        if len(capture_meta) > _MAX_CAPTURE_META:
-            raise HTTPException(400, "capture_meta: payload too large")
-        try:
-            meta = json.loads(capture_meta)
-        except (json.JSONDecodeError, RecursionError):
-            raise HTTPException(400, "capture_meta: invalid JSON")
+    meta = _parse_capture_meta(capture_meta)
 
     try:
         return await scan_pack(stair_bytes, code_bytes, meta)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+
+
+@app.post("/scan/pack/stream")
+async def scan_pack_stream_endpoint(
+    staircase: UploadFile = File(..., description="Staircase photo of the pack"),
+    code_card: UploadFile = File(..., description="Close-up of the TCG Live code card"),
+    capture_meta: str | None = Form(
+        None, description='Guided-capture metadata JSON: {"guide_positions":[y...],"image_dims":[w,h],"declared_count":n}'
+    ),
+) -> StreamingResponse:
+    """SSE variant of /scan/pack: streams {stage} progress events while the
+    scan runs, then a terminal `result` (or `error`) event. Purely additive —
+    /scan/pack above is untouched and remains the non-streaming fallback."""
+    stair_bytes = await _read_image(staircase, "staircase")
+    code_bytes = await _read_image(code_card, "code_card")
+    meta = _parse_capture_meta(capture_meta)
+
+    return StreamingResponse(
+        scan_pack_sse(stair_bytes, code_bytes, meta),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/sets", response_model=list[SetInfo])

@@ -265,6 +265,46 @@
   }
 }
 
+/* --- progressive-scan skeleton rows (SSE staircase scan) --- */
+
+.skeleton-row {
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+.skeleton-row.skeleton-done {
+  opacity: 1;
+}
+
+.skeleton-block {
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.skeleton-line {
+  height: 0.85rem;
+  width: 60%;
+  border-radius: 3px;
+  background: var(--surface);
+  animation: skeleton-pulse 1.2s ease-in-out infinite;
+}
+
+.skeleton-line-wide {
+  width: 85%;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 /* --- mode chooser --- */
 
 .mode-choice {

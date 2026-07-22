@@ -16,6 +16,9 @@ const TARGET_CARD_H = 1400; // upload card crop height cap
 const PRESENCE_THRESHOLD = 0.05;
 const EDGE_THRESHOLD = 24;
 const FLASH_MS = 220;
+// Frames of agreement before the guide box changes color — keeps a borderline
+// card-presence reading from flapping the overlay blue<->green.
+const PRESENCE_HYSTERESIS = 3;
 
 // Resolution tiers (facingMode is added per-request from the live front/back toggle).
 const HQ_DIMS = { width: { ideal: 3840 }, height: { ideal: 2160 } } as const;
@@ -181,6 +184,11 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
   const geometryRef = useRef<Geometry | null>(null);
   const prevGrayRef = useRef<Uint8ClampedArray | null>(null);
   const phaseRef = useRef<Phase>("searching");
+  // Overlay anti-flicker: repaint only when the drawn phase actually changes, and
+  // debounce card presence so a borderline reading can't flap the box color.
+  const lastPaintedPhaseRef = useRef<Phase | null>(null);
+  const visualPresentRef = useRef(false);
+  const presenceFlipRef = useRef(0);
 
   // Stability / fire-gating refs.
   const armedRef = useRef(true);
@@ -250,6 +258,7 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
     canvas.width = video.clientWidth || video.videoWidth || 1;
     canvas.height = video.clientHeight || video.videoHeight || 1;
     paintOverlay(phaseRef.current);
+    lastPaintedPhaseRef.current = phaseRef.current;
   }
 
   function refreshGeometry() {
@@ -468,8 +477,7 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
 
     const presence = hasCardPresence(gray, geometry.metricsW, geometry.metricsH, geometry.guideMetrics);
 
-    let phase: Phase = "searching";
-
+    // Fire-gating (unchanged) uses the raw, responsive motion/presence signals.
     if (armedRef.current && motion < FIRE_MOTION && presence) {
       // (c): strip sharpness, only computed when stable+present+armed.
       const sharpness = measureStripSharpness(video, mctx, metricsCanvas, geometry);
@@ -479,7 +487,6 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
         windowIdRef.current += 1;
         ringRef.current = [];
       }
-      phase = "locking";
 
       const elapsed = now - stableSinceRef.current;
       if (elapsed >= STABLE_MS) {
@@ -494,9 +501,27 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
       stableSinceRef.current = null;
     }
 
+    // Visual phase is decoupled from the frame-to-frame motion gate so the guide
+    // box doesn't flicker blue<->green while a card is held. It tracks card
+    // PRESENCE (bistable) with a few frames of hysteresis, and we repaint ONLY on
+    // a real change — no per-tick clear/redraw churn.
+    if (presence !== visualPresentRef.current) {
+      presenceFlipRef.current += 1;
+      if (presenceFlipRef.current >= PRESENCE_HYSTERESIS) {
+        visualPresentRef.current = presence;
+        presenceFlipRef.current = 0;
+      }
+    } else {
+      presenceFlipRef.current = 0;
+    }
+
+    let phase: Phase = visualPresentRef.current ? "locking" : "searching";
     if (now < flashUntilRef.current) phase = "fired";
     phaseRef.current = phase;
-    paintOverlay(phase);
+    if (phase !== lastPaintedPhaseRef.current) {
+      lastPaintedPhaseRef.current = phase;
+      paintOverlay(phase);
+    }
   }
 
   function handleLoadedMetadata() {

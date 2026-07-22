@@ -72,6 +72,23 @@
   pointer-events: none;
 }
 
+.live-resume {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  text-align: center;
+  background: rgba(15, 20, 25, 0.88);
+  color: var(--text);
+  border: none;
+  border-radius: var(--radius);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
 .camera-actions {
   display: flex;
   gap: 12px;

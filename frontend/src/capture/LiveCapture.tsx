@@ -17,16 +17,10 @@ const PRESENCE_THRESHOLD = 0.05;
 const EDGE_THRESHOLD = 24;
 const FLASH_MS = 220;
 
-const HQ_CONSTRAINTS: MediaTrackConstraints = {
-  facingMode: "environment",
-  width: { ideal: 3840 },
-  height: { ideal: 2160 },
-};
-const LQ_CONSTRAINTS: MediaTrackConstraints = {
-  facingMode: "environment",
-  width: { ideal: 1920 },
-  height: { ideal: 1080 },
-};
+// Resolution tiers (facingMode is added per-request from the live front/back toggle).
+const HQ_DIMS = { width: { ideal: 3840 }, height: { ideal: 2160 } } as const;
+const LQ_DIMS = { width: { ideal: 1920 }, height: { ideal: 1080 } } as const;
+type Facing = "environment" | "user";
 
 interface Rect {
   x: number;
@@ -148,6 +142,12 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [interrupted, setInterrupted] = useState(false);
+  // Rear camera by default (correct for scanning); the toggle flips to the front
+  // camera. facingRef is read inside setupStream (which runs from the mount-only
+  // effect), so it must mirror the state like the other latest-value refs below.
+  const [facing, setFacing] = useState<Facing>("environment");
+  const facingRef = useRef<Facing>("environment");
+  facingRef.current = facing;
 
   // Two persistent, ref-scoped canvases (never allocated per-frame). metricsCanvas is
   // reused as scratch space for both the low-res motion/presence pass (METRICS_W wide)
@@ -547,12 +547,13 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
     streamRef.current = null;
     trackRef.current = null;
 
+    const facingMode = facingRef.current;
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: HQ_CONSTRAINTS });
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode, ...HQ_DIMS } });
     } catch {
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: LQ_CONSTRAINTS });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode, ...LQ_DIMS } });
       } catch {
         if (mountedRef.current) {
           setCameraError("Camera unavailable — check permissions and reload.");
@@ -583,6 +584,16 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
   }
 
   function resume() {
+    setupStream();
+  }
+
+  function flipCamera() {
+    // Set the ref before re-acquiring so setupStream picks up the new facing
+    // immediately (state update is async). setupStream tears down the old track
+    // and re-acquires; loadedmetadata then refreshes geometry for the new stream.
+    const next: Facing = facingRef.current === "environment" ? "user" : "environment";
+    facingRef.current = next;
+    setFacing(next);
     setupStream();
   }
 
@@ -631,6 +642,16 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
         {!cameraError && (
           <button type="button" className="primary" onClick={manualFire} disabled={paused || interrupted}>
             Capture
+          </button>
+        )}
+        {!cameraError && (
+          <button
+            type="button"
+            className="secondary live-flip"
+            onClick={flipCamera}
+            aria-label={facing === "environment" ? "Switch to front camera" : "Switch to back camera"}
+          >
+            Flip camera{facing === "user" ? " (front)" : ""}
           </button>
         )}
       </div>

@@ -96,6 +96,17 @@
   margin-top: 8px;
 }
 
+.live-flip {
+  min-height: var(--tap-min);
+  padding: 0.5rem 0.9rem;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .camera-error {
   color: var(--danger);
 }

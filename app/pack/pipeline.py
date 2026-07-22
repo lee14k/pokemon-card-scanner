@@ -33,6 +33,10 @@ log = logging.getLogger("pokemon_scanner.pack.pipeline")
 _MATCH_ACCEPT = float(os.environ.get("PACK_MATCH_ACCEPT", "0.85"))
 _MATCH_MARGIN = float(os.environ.get("PACK_MATCH_MARGIN", "0.02"))
 
+# Global OCR admission gate — shared by pack scans AND live-frame OCR so
+# concurrent scanners can't oversubscribe the (small) Railway CPU.
+OCR_GATE = asyncio.Semaphore(int(os.environ.get("OCR_CONCURRENCY", "3")))
+
 
 async def _match_art(strips, resolutions) -> list[dict | None] | None:
     """Batched art match for all strips against the pack's modal set.
@@ -322,10 +326,9 @@ async def scan_pack(
     # Bound OCR concurrency: each strip read spawns a Tesseract subprocess over
     # 3x-upscaled variants; a 12-card pack running unbounded peaks near 1GB in a
     # small container. Two or three in flight saturate a cloud vCPU anyway.
-    ocr_sem = asyncio.Semaphore(3)
 
     async def _bounded(fn, *args):
-        async with ocr_sem:
+        async with OCR_GATE:
             return await asyncio.to_thread(fn, *args)
 
     # Detection-first (upload path): PP-OCR detection finds+reads the cards

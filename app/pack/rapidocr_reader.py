@@ -22,7 +22,25 @@ def _get():
     try:
         from rapidocr_onnxruntime import RapidOCR
 
-        _engine = RapidOCR()
+        import os as _os
+        _threads = int(_os.environ.get("OCR_THREADS", "0"))
+        kwargs = {}
+        if _threads > 0:
+            # rapidocr-onnxruntime 1.4.x accepts intra_op_num_threads per stage
+            kwargs = {
+                "det_use_cuda": False, "rec_use_cuda": False, "cls_use_cuda": False,
+                "intra_op_num_threads": _threads, "inter_op_num_threads": 1,
+            }
+        try:
+            import cv2 as _cv2
+            if _threads > 0:
+                _cv2.setNumThreads(_threads)
+        except Exception:
+            pass
+        try:
+            _engine = RapidOCR(**kwargs)
+        except TypeError:
+            _engine = RapidOCR()
         log.info("rapidocr.loaded")
     except Exception as e:  # not installed / init failure
         log.warning("rapidocr.load_failed err=%r", e)

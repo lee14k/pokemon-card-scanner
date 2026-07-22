@@ -32,6 +32,7 @@ from app.db.users import (
 from app.admin import router as admin_router
 from app.battles import router as battles_router
 from app.dex.routes import router as dex_router
+from app.pack.live_api import router as live_api_router
 from app.pulls import router as pulls_router
 from app.stats_api import router as stats_router
 from app.storage import ensure_photo_dir
@@ -179,6 +180,7 @@ app.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate), prefix="/users", tags=["users"]
 )
 app.include_router(pulls_router)
+app.include_router(live_api_router)
 app.include_router(admin_router)
 app.include_router(training_data_router)
 app.include_router(stats_router)

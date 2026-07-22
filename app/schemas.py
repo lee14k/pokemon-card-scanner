@@ -19,6 +19,8 @@ class PackCard(BaseModel):
     low_confidence_reason: str | None = None
     # one of: unreadable_strip | number_ambiguous | set_ambiguous | no_db_match
     needs_review: bool = False  # true when the card is uncertain (frontend highlights it)
+    price_usd_low: float | None = None
+    price_usd_high: float | None = None
 
 
 class CodeCardResult(BaseModel):

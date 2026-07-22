@@ -171,6 +171,96 @@ export async function listPulls(): Promise<SavedPull[]> {
   return parse(await fetch(`${base}/pulls`, { credentials: "include" }));
 }
 
+export async function patchPullCode(
+  pullId: string,
+  code: Blob
+): Promise<{ verified: boolean; code: string | null }> {
+  const form = new FormData();
+  form.append("code_card", code, "code.jpg");
+  return parse(
+    await fetch(`${base}/pulls/${pullId}/code`, {
+      method: "PATCH",
+      credentials: "include",
+      body: form,
+    })
+  );
+}
+
+export type LiveCardState = "ok" | "pending_vlm" | "vlm_failed" | "dup_prompt";
+export type LiveEventKind = "card" | "code_card" | "duplicate_prompt" | "no_card" | "unreadable";
+export interface LiveCard extends PackCard {
+  state?: LiveCardState;
+}
+export interface LiveFrameOut {
+  event: LiveEventKind;
+  card: PackCard | null;
+  pending_vlm: boolean;
+  code_card: CodeCardResult | null;
+  cards_count: number;
+}
+export interface LiveState {
+  cards: LiveCard[];
+  code_card: CodeCardResult | null;
+  any_pending: boolean;
+}
+
+export async function liveStart(): Promise<string> {
+  const { session_id } = await parse<{ session_id: string }>(
+    await fetch(`${base}/scan/live/start`, { method: "POST", credentials: "include" })
+  );
+  return session_id;
+}
+
+export async function liveFrame(sid: string, card: Blob, strip?: Blob): Promise<LiveFrameOut> {
+  const form = new FormData();
+  form.append("card", card, "card.jpg");
+  if (strip) form.append("strip", strip, "strip.jpg");
+  const res = await fetch(`${base}/scan/live/${sid}/frame`, {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  if (res.status === 409) throw { status: 409 };
+  return parse(res);
+}
+
+export async function liveState(sid: string): Promise<LiveState> {
+  return parse(await fetch(`${base}/scan/live/${sid}`, { credentials: "include" }));
+}
+
+export function liveCardImageUrl(sid: string, row: number): string {
+  return `${base}/scan/live/${sid}/card/${row}/image`;
+}
+
+export async function liveDuplicate(sid: string, row: number, add: boolean): Promise<void> {
+  await parse(
+    await fetch(`${base}/scan/live/${sid}/card/${row}/duplicate`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ add }),
+    })
+  );
+}
+
+export async function liveReplace(sid: string, row: number): Promise<void> {
+  await parse(
+    await fetch(`${base}/scan/live/${sid}/card/${row}/replace`, {
+      method: "POST",
+      credentials: "include",
+    })
+  );
+}
+
+export async function liveFinish(sid: string): Promise<PackScanResponse> {
+  return parse(
+    await fetch(`${base}/scan/live/${sid}/finish`, {
+      method: "POST",
+      credentials: "include",
+    })
+  );
+}
+
 export interface SetSummary { set_id: string; verified_pack_count: number; }
 export interface SetDetail {
   set_id: string;

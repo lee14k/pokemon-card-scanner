@@ -26,7 +26,15 @@ async def rederive_pending(limit: int = 200) -> int:
         pulls = (
             await session.execute(
                 select(Pull)
-                .where(Pull.verified.is_(True), Pull.derive_status == DeriveStatus.pending)
+                # Live pulls store a SYNTHETIC contact-sheet as their staircase photo;
+                # re-OCRing it would yield garbage. They get authoritative derived rows
+                # written directly at save time (see app/pulls.py::save_pull), so skip
+                # them here. Belt-and-suspenders with them being set derive_status=done.
+                .where(
+                    Pull.verified.is_(True),
+                    Pull.derive_status == DeriveStatus.pending,
+                    Pull.capture_path != "live",
+                )
                 .limit(limit)
             )
         ).scalars().all()

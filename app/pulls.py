@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import datetime
 import json
+import logging
 import re
 import uuid
 from collections import Counter
@@ -16,13 +18,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Pull, PullCard
+from app.db.models import DeriveStatus, Pull, PullCard, PullCardDerived
 from app.db.session import async_session_maker
 from app.db.users import CurrentTrainer
 from app.dex.species import species_of
 from app.prices import latest_price_map
 from app.pack.ocr import read_code_card
-from app.storage import open_photo, save_pull_photos
+from app.storage import move_session_frames, open_photo, save_code_photo, save_pull_photos
+
+log = logging.getLogger("pokemon_scanner.pulls")
 
 router = APIRouter(prefix="/pulls", tags=["pulls"])
 
@@ -134,6 +138,7 @@ async def save_pull(
     pack_confidence: float = Form(0.0),
     segmentation_warning: str | None = Form(None),
     capture_meta: str | None = Form(None, description="Guided-capture metadata JSON"),
+    live_session_id: str | None = Form(None, description="Live-scan session id (frames to adopt)"),
 ) -> PullOut:
     stair_bytes = await _read_image(staircase, "staircase")
     code_bytes = await _read_image(code_card, "code_card")
@@ -178,6 +183,38 @@ async def save_pull(
             want_verified=want_verified, staircase_path=staircase_path, code_path=code_path,
             card_list=card_list, capture_meta=meta_obj,
         )
+
+        # Live pulls: their staircase is a SYNTHETIC contact-sheet, so rederive can't
+        # re-OCR them. Instead the client-confirmed cards ARE the server's own /finish
+        # output (server-OCR'd, authoritative) — write them straight to the derived
+        # table and mark the pull done so stats aggregation reads them and rederive
+        # skips it. Runs once here on the committed pull (kept out of _insert_pull's
+        # verified-retry loop) and regardless of verified state. Non-live pulls are
+        # completely unchanged by this block.
+        if capture_path == "live":
+            for i, c in enumerate(card_list):
+                session.add(PullCardDerived(
+                    pull_id=saved.id, row_index=int(c.get("row_index", i)),
+                    card_number=c.get("card_number"), set_id=c.get("set_id"),
+                    set_code=c.get("set_code"), set_name=c.get("set_name"),
+                    name=c.get("name"), rarity=c.get("rarity"),
+                    match_id=c.get("match_id"), confidence=float(c.get("confidence", 0.0)),
+                ))
+            saved.derive_status = DeriveStatus.done
+            saved.derived_at = datetime.datetime.now(datetime.timezone.utc)
+            await session.commit()
+            # Adopt the live session's per-card frames into the pull dir. Purely a
+            # bonus (training data / review thumbnails) — a swept session or any
+            # filesystem hiccup must never fail an otherwise-saved pull.
+            if live_session_id:
+                try:
+                    moved = move_session_frames(live_session_id, trainer.id, saved.id)
+                    log.info("live_save.frames_moved pull=%s session=%s count=%s",
+                             saved.id, live_session_id, moved)
+                except Exception as e:  # pragma: no cover - defensive
+                    log.warning("live_save.frame_move_failed pull=%s session=%s err=%r",
+                                saved.id, live_session_id, e)
+
         out = _pull_to_out(saved)
         try:
             out.encounters = await _compute_encounters(session, trainer.id, saved)
@@ -280,6 +317,65 @@ async def get_pull(trainer: CurrentTrainer, pull_id: uuid.UUID) -> PullOut:
         await session.refresh(pull, attribute_names=["cards"])
         prices, as_of = await latest_price_map(session)
         return _enrich_prices(_pull_to_out(pull), prices, as_of)
+
+
+@router.patch("/{pull_id}/code")
+async def rescue_pull_code(
+    trainer: CurrentTrainer,
+    pull_id: uuid.UUID,
+    code_card: UploadFile = File(...),
+) -> dict:
+    """Re-submit a clearer code photo for an unverified pull. Owner-only. Re-OCRs the
+    code exactly like save_pull and, if it now reads a valid unique code, flips the
+    pull to verified. Mirrors the verified-code uniqueness handling: if another pull
+    already owns this code, the rescue still records the read code but stays unverified.
+    """
+    code_bytes = await _read_image(code_card, "code_card")
+
+    # Server re-OCRs the code (authoritative — same block as save_pull).
+    code_img = cv2.imdecode(np.frombuffer(code_bytes, np.uint8), cv2.IMREAD_COLOR)
+    cr = read_code_card(code_img) if code_img is not None else None
+    code = cr.code if cr else None
+    code_norm = _normalize_code(code)
+    code_ok = bool(cr and cr.format_ok)
+    code_conf = float(cr.confidence) if cr else 0.0
+    want_verified = bool(code_norm) and code_ok
+
+    async with async_session_maker() as session:
+        pull = await session.get(Pull, pull_id)
+        if pull is None or pull.trainer_id != trainer.id:
+            raise HTTPException(404, "pull not found")
+        if pull.verified:
+            raise HTTPException(409, "pull already verified")
+
+        pull.code = code
+        pull.code_normalized = code_norm
+        pull.code_confidence = code_conf
+        pull.code_format_ok = code_ok
+
+        if want_verified:
+            try:
+                pull.verified = True
+                await session.flush()  # surfaces the partial-unique-index violation here
+            except IntegrityError as exc:
+                await session.rollback()
+                # Only the verified-code dedup conflict is retryable (someone else
+                # already owns this code) — fall back to unverified. Anything else is real.
+                if "uq_pull_verified_code" not in str(exc.orig):
+                    raise HTTPException(500, "database error updating code") from exc
+                pull = await session.get(Pull, pull_id)
+                pull.code = code
+                pull.code_normalized = code_norm
+                pull.code_confidence = code_conf
+                pull.code_format_ok = code_ok
+                pull.verified = False
+        await session.commit()
+        result = {"verified": pull.verified, "code": pull.code}
+
+    # Overwrite the stored code photo with the rescued frame. Non-transactional, so
+    # it runs after the DB update commits and never gates it.
+    save_code_photo(trainer.id, pull_id, code_bytes)
+    return result
 
 
 @router.get("/{pull_id}/photo/{kind}")

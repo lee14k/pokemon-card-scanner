@@ -6,6 +6,8 @@ so there is no path-traversal surface.
 
 from __future__ import annotations
 
+import re
+import shutil
 import uuid
 from pathlib import Path
 
@@ -34,6 +36,39 @@ def save_pull_photos(
     (d / "code.jpg").write_bytes(code)
     rel = Path(str(trainer_id)) / str(pull_id)
     return str(rel / "staircase.jpg"), str(rel / "code.jpg")
+
+
+def save_code_photo(trainer_id: uuid.UUID, pull_id: uuid.UUID, code: bytes) -> str:
+    """Overwrite the pull's stored code photo (used by the PATCH code-rescue path).
+    Returns the storage-root-relative path."""
+    d = _pull_dir(trainer_id, pull_id)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "code.jpg").write_bytes(code)
+    return str(Path(str(trainer_id)) / str(pull_id) / "code.jpg")
+
+
+def move_session_frames(
+    session_id: str, trainer_id: uuid.UUID, pull_id: uuid.UUID
+) -> int:
+    """Move a live session's per-card frames into the saved pull's photo dir.
+
+    Moves every ``live_sessions/<session_id>/frame_*.jpg`` into the pull dir as
+    ``frame_NN.jpg`` (preserving numeric order). Returns the number moved. A live
+    session can legitimately be gone by save time (TTL sweep), so a missing/empty
+    source dir is non-fatal and returns 0.
+    """
+    src_dir = _root() / "live_sessions" / session_id
+    if not src_dir.is_dir():
+        return 0
+    frames = [p for p in src_dir.iterdir() if re.fullmatch(r"frame_\d+\.jpg", p.name)]
+    if not frames:
+        return 0
+    frames.sort(key=lambda p: int(re.search(r"\d+", p.name).group()))
+    dest_dir = _pull_dir(trainer_id, pull_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for p in frames:
+        shutil.move(str(p), str(dest_dir / p.name))
+    return len(frames)
 
 
 def open_photo(rel_path: str) -> bytes:

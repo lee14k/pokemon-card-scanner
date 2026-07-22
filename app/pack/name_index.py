@@ -25,6 +25,19 @@ def normalize_name(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _is_token_subsequence(short: str, long: str) -> bool:
+    """True if `short`'s space-separated tokens appear as a contiguous run
+    inside `long`'s tokens (whole-word containment), e.g. 'pikachu' in
+    'surfing pikachu' -> True, but 'hatterene v' in 'hatterene vmax' -> False."""
+    a, b = short.split(), long.split()
+    if not a or len(a) >= len(b):
+        return False
+    for i in range(len(b) - len(a) + 1):
+        if b[i:i + len(a)] == a:
+            return True
+    return False
+
+
 @dataclass
 class NameMatch:
     tcgdex_set_id: str
@@ -57,8 +70,9 @@ class NameIndex:
             return None
         key, score, _ = best
         cands = self._entries[key]
-        # substring hazard: "pikachu" inside "surfing pikachu" etc.
-        substr = any(key != k and key in k for k in self._keys)
+        # substring hazard: "pikachu" inside "surfing pikachu" etc. (whole-word
+        # containment only, so "hatterene v" is not flagged by "hatterene vmax")
+        substr = any(k != key and _is_token_subsequence(key, k) for k in self._keys)
         if denominator is not None and denominator.isdigit():
             den = int(denominator)
             narrowed = [c for c in cands if c[4] == den]
@@ -91,6 +105,7 @@ async def get_name_index() -> NameIndex:
             rows = (await session.execute(
                 select(TcgdexSet.id, TcgdexSet.name, TcgdexCard.local_id,
                        TcgdexCard.name, TcgdexSet.card_count_official)
-                .join(TcgdexCard, TcgdexCard.set_id == TcgdexSet.id))).all()
+                .join(TcgdexCard, TcgdexCard.set_id == TcgdexSet.id)
+                .order_by(TcgdexSet.id, TcgdexCard.local_id))).all()
         _index = NameIndex([tuple(r) for r in rows])
         return _index

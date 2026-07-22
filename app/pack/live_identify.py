@@ -92,13 +92,29 @@ async def identify_frame(card_bgr: np.ndarray, strip_bgr: np.ndarray | None,
 
     # name: highest-confidence line in the TITLE band only (hard filter)
     idx = await get_name_index()
+    den = reading.denominator if (reading and reading.denominator) \
+        else (prior.denominator if prior else None)
     name_match = None
+    top_name_text = None
     for _y, text, conf in sorted(name_lines, key=lambda t: -t[2]):
-        den = reading.denominator if reading else (prior.denominator if prior else None)
+        if top_name_text is None:
+            top_name_text = text
         m = idx.match(text, denominator=den)
         if m is not None:
             name_match = m
             break
+    # Fallback for prefixed "Trainer's Pokemon" names (e.g. Ascended Heroes): OCR
+    # frequently drops the "Erika's"/"Sabrina's" prefix, so the bare Pokemon name
+    # matches a commoner printing in another set ambiguously. If the session already
+    # knows the set, or the denominator uniquely identifies one, re-match scoped to
+    # that set's cards.
+    if (name_match is None or name_match.ambiguous) and top_name_text:
+        scoped = idx.match_in_set(
+            top_name_text,
+            set_id=(prior.set_id if prior and prior.set_id else None),
+            denominator=den)
+        if scoped is not None and not scoped.ambiguous:
+            name_match = scoped
 
     numerator = None
     if reading is not None and reading.numerator:

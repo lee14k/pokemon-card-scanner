@@ -292,9 +292,9 @@ async def scan_pack(
     progress: Callable[[dict], None] | None = None,
 ) -> PackScanResponse:
     def _emit(ev: dict) -> None:
-        # Fire-and-forget: a broken/slow callback (e.g. a full SSE queue) must
-        # never break or block a scan. Default None skips this entirely, so the
-        # no-callback path is byte-identical to before this param existed.
+        # Fire-and-forget: defensive against any put error (the callback must
+        # never break or block a scan). Default None skips this entirely, so
+        # the no-callback path is byte-identical to before this param existed.
         if progress is None:
             return
         try:

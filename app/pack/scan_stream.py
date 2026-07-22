@@ -26,6 +26,12 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+# Sentinel enqueued (in a `finally`) once scan_pack finishes or raises, so the
+# consumer loop below — which otherwise only wakes on queue.get() — is
+# guaranteed a prompt wakeup instead of waiting for the next heartbeat.
+_SENTINEL = object()
+
+
 async def scan_pack_sse(
     staircase_bytes: bytes,
     code_bytes: bytes,
@@ -39,26 +45,32 @@ async def scan_pack_sse(
     terminal `event: error` on failure. Either terminal event ends the stream.
     """
     queue: asyncio.Queue[dict] = asyncio.Queue()
-    task = asyncio.ensure_future(
-        scan_pack(staircase_bytes, code_bytes, capture_meta, progress=queue.put_nowait)
-    )
+
+    async def _runner():
+        try:
+            return await scan_pack(
+                staircase_bytes, code_bytes, capture_meta, progress=queue.put_nowait
+            )
+        finally:
+            # Always runs — whether scan_pack returned or raised (including
+            # before its first progress event) — so the consumer never blocks
+            # past this point waiting on queue.get().
+            queue.put_nowait(_SENTINEL)
+
+    task = asyncio.ensure_future(_runner())
 
     try:
-        while not task.done():
+        while True:
             try:
-                ev = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
+                item = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
             except asyncio.TimeoutError:
                 yield ": hb\n\n"
                 continue
-            yield _sse("progress", ev)
+            if item is _SENTINEL:
+                break
+            yield _sse("progress", item)
 
-        # The task may finish (put its final "done" progress event, then
-        # return) in the same scheduling slot we last checked task.done() in —
-        # drain anything left in the queue before emitting the terminal event
-        # so no progress frame is dropped or reordered after the result.
-        while not queue.empty():
-            yield _sse("progress", queue.get_nowait())
-
+        # _runner's finally already ran (it put the sentinel), so task is done.
         try:
             resp = task.result()
         except Exception as e:  # scan_pack failed — report, don't raise into ASGI

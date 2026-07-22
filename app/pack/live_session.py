@@ -81,7 +81,10 @@ class LiveSession:
         self.code: CodeCardResult | None = None
         self.frame_lock = asyncio.Lock()
         self.expires_at = time.time() + SESSION_TTL_S
-        self._pending: list[int] = []   # row_index of cards awaiting the VLM drain
+        self._pending: list[LiveCard] = []   # LiveCard refs awaiting the VLM drain (NOT
+                                              # row_index -- finish() renumbers rows, so
+                                              # holding the object keeps drain/fail correct
+                                              # across a mid-drain finish())
 
     # --- lifecycle -----------------------------------------------------------
     def touch(self) -> None:
@@ -257,7 +260,7 @@ class LiveSession:
             lc.state = "vlm_failed"
             return False
         lc.state = "pending_vlm"
-        self._pending.append(lc.card.row_index)
+        self._pending.append(lc)
         self._ensure_drain()
         return True
 
@@ -272,7 +275,15 @@ class LiveSession:
     async def _drain_vlm(self) -> None:
         """Single per-session loop: debounce, then send everything still pending in
         ONE identify() batch. Wrapped so one bad batch can't crash the loop or leak
-        the task; each card ends terminal (ok or vlm_failed) — never re-queued."""
+        the task; each card ends terminal (ok or vlm_failed) — never re-queued.
+
+        ``self._pending`` holds LiveCard object references, not row_index ints —
+        finish() may renumber row_index (and remap frame files) while a card is
+        still pending_vlm, so resolving via ``_at(row)`` here would race a stale
+        index. Reading ``lc.card.row_index`` fresh (right before decode/send) always
+        reflects finish()'s renumbering, and single-threaded asyncio makes finish()
+        atomic relative to this coroutine's ``await`` boundaries, so the read is
+        never torn."""
         try:
             table = load_denominator_table()
             while True:
@@ -285,13 +296,13 @@ class LiveSession:
                     continue
                 prior = self.prior()
                 payload, row_map = [], {}
-                for row in pending:
-                    lc = self._at(row)
-                    if lc is None or lc.state != "pending_vlm":
+                for lc in pending:
+                    if lc.state != "pending_vlm":
                         continue
+                    row = lc.card.row_index   # current index -- may have shifted via finish()
                     img = self._decode_frame(row)
                     if img is None:
-                        self._fail([row])
+                        self._fail([lc])
                         continue
                     payload.append({"row_index": row, "image": img,
                                     "hint_set": prior.set_name,
@@ -309,10 +320,9 @@ class LiveSession:
         except Exception as e:
             log.warning("live.vlm_drain_failed session=%s err=%r", self.id, e)
 
-    def _fail(self, rows: list[int]) -> None:
-        for row in rows:
-            lc = self._at(row)
-            if lc is not None and lc.state == "pending_vlm":
+    def _fail(self, cards: list[LiveCard]) -> None:
+        for lc in cards:
+            if lc.state == "pending_vlm":
                 lc.state = "vlm_failed"
 
     def _decode_frame(self, row_index: int) -> np.ndarray | None:

@@ -10,6 +10,7 @@ import {
 } from "./api";
 import StaircaseCapture from "./capture/StaircaseCapture";
 import CodeCardCapture from "./capture/CodeCardCapture";
+import LiveScanScreen from "./capture/LiveScanScreen";
 import ReviewScreen from "./review/ReviewScreen";
 import { useAuth } from "./auth/AuthContext";
 import AuthForms from "./auth/AuthForms";
@@ -20,17 +21,19 @@ import Battles from "./battles/Battles";
 import Landing from "./landing/Landing";
 
 type Step =
+  | { name: "mode" }
   | { name: "staircase" }
+  | { name: "live" }
   | { name: "code"; staircase: Blob; meta?: CaptureMeta }
   | { name: "submitting" }
-  | { name: "review"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta }
-  | { name: "saving"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta; cards: PackCard[] }
+  | { name: "review"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta; liveSessionId?: string }
+  | { name: "saving"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta; cards: PackCard[]; liveSessionId?: string }
   | { name: "summary"; verified: boolean; count: number; encounters: Encounter[]; pullId: string }
   | { name: "error"; message: string };
 
 export default function App() {
   const { trainer, loading, logout } = useAuth();
-  const [step, setStep] = useState<Step>({ name: "staircase" });
+  const [step, setStep] = useState<Step>({ name: "mode" });
   const [view, setView] = useState<"home" | "scan" | "pulls" | "dashboard" | "dex" | "battles">("home");
   const [battlePull, setBattlePull] = useState<string | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
@@ -51,13 +54,14 @@ export default function App() {
       setAuthOpen(true);
       return;
     }
-    setStep({ name: "saving", scan: s.scan, staircase: s.staircase, code: s.code, meta: s.meta, cards });
+    setStep({ name: "saving", scan: s.scan, staircase: s.staircase, code: s.code, meta: s.meta, cards, liveSessionId: s.liveSessionId });
     try {
       const saved = await savePull(s.staircase, s.code, cards, {
-        capture_path: s.meta ? "guided" : "upload",
+        capture_path: s.liveSessionId ? "live" : s.meta ? "guided" : "upload",
         pack_confidence: s.scan.pack_confidence,
         segmentation_warning: s.scan.segmentation_warning,
         capture_meta: s.meta ?? null,
+        live_session_id: s.liveSessionId,
       });
       setStep({ name: "summary", verified: saved.verified, count: saved.cards.length, encounters: saved.encounters ?? [], pullId: saved.id });
     } catch (e) {
@@ -74,7 +78,7 @@ export default function App() {
           </button>
         </h1>
         <nav>
-          <button type="button" onClick={() => setView("scan")}>Scan</button>
+          <button type="button" onClick={() => { setStep({ name: "mode" }); setView("scan"); }}>Scan</button>
           <button type="button" onClick={() => setView("pulls")} disabled={!trainer}>My Pulls</button>
           <button type="button" onClick={() => setView("dex")} disabled={!trainer}>Pokédex</button>
           <button type="button" onClick={() => setView("battles")} disabled={!trainer}>Battles</button>
@@ -95,7 +99,7 @@ export default function App() {
       )}
 
       {view === "home" && (
-        <Landing onStart={() => { setStep({ name: "staircase" }); setView("scan"); }} />
+        <Landing onStart={() => { setStep({ name: "mode" }); setView("scan"); }} />
       )}
 
       {view === "pulls" && trainer && <MyPulls />}
@@ -108,8 +112,27 @@ export default function App() {
 
       {view === "scan" && (
         <>
+          {step.name === "mode" && (
+            <section className="mode-choice">
+              <h2>How do you want to scan?</h2>
+              <button type="button" className="primary" onClick={() => setStep({ name: "staircase" })}>
+                One photo
+              </button>
+              <button type="button" onClick={() => setStep({ name: "live" })}>
+                Live
+              </button>
+            </section>
+          )}
           {step.name === "staircase" && (
             <StaircaseCapture onDone={(photo) => setStep({ name: "code", staircase: photo })} />
+          )}
+          {step.name === "live" && (
+            <LiveScanScreen
+              onDone={(scan, sid, composite, code) =>
+                setStep({ name: "review", scan, staircase: composite, code: code ?? composite, meta: undefined, liveSessionId: sid })
+              }
+              onCancel={() => setStep({ name: "mode" })}
+            />
           )}
           {step.name === "code" && (
             <CodeCardCapture onDone={(codePhoto) => submit(step.staircase, codePhoto, step.meta)} />
@@ -140,7 +163,7 @@ export default function App() {
                   ))}
                 </ul>
               )}
-              <button type="button" className="primary" onClick={() => setStep({ name: "staircase" })}>
+              <button type="button" className="primary" onClick={() => setStep({ name: "mode" })}>
                 Scan another pack
               </button>
               {step.verified && (
@@ -153,7 +176,7 @@ export default function App() {
           {step.name === "error" && (
             <section>
               <p className="camera-error">Something went wrong: {step.message}</p>
-              <button type="button" onClick={() => setStep({ name: "staircase" })}>Start over</button>
+              <button type="button" onClick={() => setStep({ name: "mode" })}>Start over</button>
             </section>
           )}
         </>

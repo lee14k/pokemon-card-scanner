@@ -46,6 +46,18 @@ export interface CaptureMeta {
   declared_count: number;
 }
 
+// Carries the HTTP status alongside the message so callers that need to branch
+// on it (e.g. live-scan session recovery on 404) don't have to string-match
+// error text. Still a plain Error for everyone else's `e instanceof Error`.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 async function parse<T>(res: Response): Promise<T> {
   const text = await res.text();
   let body: unknown = null;
@@ -59,7 +71,7 @@ async function parse<T>(res: Response): Promise<T> {
       typeof body === "object" && body !== null && "detail" in body
         ? JSON.stringify((body as { detail: unknown }).detail)
         : text || res.statusText;
-    throw new Error(msg || `Request failed (${res.status})`);
+    throw new ApiError(msg || `Request failed (${res.status})`, res.status);
   }
   return body as T;
 }
@@ -152,6 +164,7 @@ export async function savePull(
     pack_confidence: number;
     segmentation_warning: string | null;
     capture_meta?: CaptureMeta | null;
+    live_session_id?: string;
   }
 ): Promise<SavedPull> {
   const form = new FormData();
@@ -162,6 +175,7 @@ export async function savePull(
   form.append("pack_confidence", String(meta.pack_confidence));
   if (meta.segmentation_warning) form.append("segmentation_warning", meta.segmentation_warning);
   if (meta.capture_meta) form.append("capture_meta", JSON.stringify(meta.capture_meta));
+  if (meta.live_session_id) form.append("live_session_id", meta.live_session_id);
   return parse(
     await fetch(`${base}/pulls`, { method: "POST", credentials: "include", body: form })
   );

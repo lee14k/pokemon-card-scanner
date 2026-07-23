@@ -60,18 +60,31 @@ def collapse_duplicate_answers(answers: dict[int, dict]) -> dict[int, dict]:
 
 
 def _numerator_corroborated(num: str, ocr_texts: list[str]) -> bool:
-    """True when the VLM's claimed numerator ``num`` actually appears in the
-    cell's own OCR text. Non-alphanumerics are stripped from both sides before the
-    substring test (claim "126" needs "126" somewhere in a line; "TG22" needs
-    "TG22"). Guards against the VLM inventing the same plausible number for
-    unrelated garbage crops."""
+    """CONTRADICTION test, not a presence test. The VLM exists to read numbers
+    OCR could not, so silence in the cell's OCR must never block an answer —
+    demanding presence rejected correct reads on every foil/full-art cell
+    (production evidence). The claim is refused only when the cell's own OCR
+    READ a collector-number pattern (N/N) and the claimed numerator matches
+    none of them — that is real pixel evidence against the VLM (the garbage
+    fragments in the original hallucination case read "12/198" against a
+    claimed "126/167", so they still die here). A claim appearing verbatim in
+    any line also passes, covering partial strip reads."""
+    from app.pack.ocr import parse_number
+
     claim = re.sub(r"[^A-Za-z0-9]", "", num or "").upper()
     if not claim:
         return False
+    seen_numerators: set[str] = set()
     for t in ocr_texts:
-        if claim in re.sub(r"[^A-Za-z0-9]", "", str(t or "")).upper():
+        flat = re.sub(r"[^A-Za-z0-9]", "", str(t or "")).upper()
+        if claim in flat:
             return True
-    return False
+        r = parse_number(str(t or ""), 0.9)
+        if r is not None and r.pattern_ok and r.numerator:
+            seen_numerators.add(r.numerator.upper().lstrip("0") or "0")
+    if not seen_numerators:
+        return True                       # OCR was blind here: no contradiction
+    return (claim.lstrip("0") or "0") in seen_numerators
 
 
 async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,

@@ -48,9 +48,12 @@ def _get():
     return _engine
 
 
-def detect_lines(img_bgr: np.ndarray, cap: int = 2600) -> list[tuple[float, str, float]]:
-    """Run detection+recognition over the WHOLE photo; return (y_center, text,
-    conf) per detected line. PP-OCR's real-photo-trained detector localizes the
+def detect_lines_xy(
+    img_bgr: np.ndarray, cap: int = 2600
+) -> list[tuple[float, float, str, float, float, float]]:
+    """Run detection+recognition over the WHOLE photo; return (x_center,
+    y_center, text, conf, box_w, box_h) per detected line, all coords scaled
+    back to SOURCE pixels. PP-OCR's real-photo-trained detector localizes the
     number rows far better than geometric cropping. [] on failure."""
     eng = _get()
     if eng is None:
@@ -66,11 +69,24 @@ def detect_lines(img_bgr: np.ndarray, cap: int = 2600) -> list[tuple[float, str,
     except Exception as e:
         log.warning("rapidocr.detect_failed err=%r", e)
         return []
-    out: list[tuple[float, str, float]] = []
+    out: list[tuple[float, float, str, float, float, float]] = []
     for box, txt, conf in (res or []):
-        y = float(np.mean([p[1] for p in box])) / scale  # back to source coords
-        out.append((y, txt.upper(), float(conf)))
+        xs = [p[0] for p in box]
+        ys = [p[1] for p in box]
+        x = float(np.mean(xs)) / scale          # back to source coords
+        y = float(np.mean(ys)) / scale
+        bw = (float(max(xs)) - float(min(xs))) / scale
+        bh = (float(max(ys)) - float(min(ys))) / scale
+        out.append((x, y, txt.upper(), float(conf), bw, bh))
     return out
+
+
+def detect_lines(img_bgr: np.ndarray, cap: int = 2600) -> list[tuple[float, str, float]]:
+    """Run detection+recognition over the WHOLE photo; return (y_center, text,
+    conf) per detected line. PP-OCR's real-photo-trained detector localizes the
+    number rows far better than geometric cropping. [] on failure. Thin wrapper
+    over detect_lines_xy dropping the x/box-geometry fields."""
+    return [(y, t, c) for _x, y, t, c, _w, _h in detect_lines_xy(img_bgr, cap)]
 
 
 def read_text(strip_bgr: np.ndarray) -> tuple[str, float] | None:

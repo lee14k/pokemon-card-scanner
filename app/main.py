@@ -32,6 +32,7 @@ from app.db.users import (
 )
 from app.admin import router as admin_router
 from app.battles import router as battles_router
+from app.collection import router as collection_router
 from app.dex.routes import router as dex_router
 from app.pack.live_api import router as live_api_router
 from app.pulls import router as pulls_router
@@ -212,6 +213,7 @@ app.include_router(training_data_router)
 app.include_router(stats_router)
 app.include_router(dex_router)
 app.include_router(battles_router)
+app.include_router(collection_router)
 
 # Production (Railway): Railpack builds frontend/dist; same origin as API.
 # Mount last so /health, /docs, /scan/* stay on FastAPI routes.

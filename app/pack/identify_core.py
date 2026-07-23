@@ -103,8 +103,18 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
     if name_match and numerator and normalize_local_id(name_match.local_id) == numerator:
         confident = True                      # name + number agree
     elif name_match and not name_match.ambiguous:
-        confident = True                      # unique name (+denominator prior)
-        numerator = numerator or normalize_local_id(name_match.local_id)
+        # Veto: a unique-name fuzzy match must not defeat the card's own printed
+        # denominator — when that denominator is known to the catalog and names a
+        # DIFFERENT set than the match, the "unique" name was OCR garbage
+        # (production: "Pikachu on the Ball"/Futsal beat a /131 Ogerpon cell).
+        den_veto = False
+        if reading and reading.denominator and reading.denominator.isdigit():
+            sets_for_den = idx._official_to_sets.get(int(reading.denominator))
+            if sets_for_den and name_match.tcgdex_set_id not in sets_for_den:
+                den_veto = True
+        if not den_veto:
+            confident = True                  # unique name (+denominator prior)
+            numerator = numerator or normalize_local_id(name_match.local_id)
     if name_match and confident:
         set_name = name_match.set_name
         set_code = name_match.tcgdex_set_id

@@ -214,9 +214,14 @@ def _name_texts_from_band(name_xy: list) -> list[tuple[str, float]]:
     joined = []
     for row in rows:
         row.sort(key=lambda l: l[0])          # x-center: left-to-right
-        joined.append((min(l[1] for l in row),
-                       " ".join(l[2] for l in row),
-                       max(l[3] for l in row)))
+        text = " ".join(l[2] for l in row)
+        # An evolution note ("Evolves from Goomy") sits in the name band and its
+        # bare species name matched as the TITLE — a confident-wrong on real
+        # pages (Sliggoo cell -> "Goomy"). Row reconstruction makes the note one
+        # row, so it can be dropped wholesale.
+        if "EVOLVES" in text or "VOLVES" in text:
+            continue
+        joined.append((min(l[1] for l in row), text, max(l[3] for l in row)))
     joined.sort(key=lambda t: (t[0], -t[2]))   # topmost line first (the title)
     return [(t, c) for _y, t, c in joined]
 

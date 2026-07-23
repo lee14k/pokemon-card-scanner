@@ -1,0 +1,173 @@
+{
+  "_note": "Ground truth read by eye from the user's binder photos (2026-07-23). Gate rule: every listed card identified-or-flagged, ZERO confident-wrong; cell counts must match. number null = not confidently legible to the human either. REMAPPED 2026-07-23: labels corrected to actual file contents (agent-verified).",
+  "page_1.jpeg": {
+    "grid": [
+      2,
+      2
+    ],
+    "cards": [
+      {
+        "name": "Hydreigon ex",
+        "number": "240/191"
+      },
+      {
+        "name": "Raging Bolt ex",
+        "number": "166/131"
+      },
+      {
+        "name": "Mega Latias ex",
+        "number": "181/132"
+      },
+      {
+        "name": "Mega Greninja ex",
+        "number": "116/086"
+      }
+    ]
+  },
+  "page_2.jpeg": {
+    "grid": [
+      2,
+      2
+    ],
+    "cards": [
+      {
+        "name": "Mew",
+        "number": "GG10/GG70"
+      },
+      {
+        "name": "Alolan Exeggutor ex",
+        "number": "248/191"
+      },
+      {
+        "name": "Hearthflame Mask Ogerpon ex",
+        "number": "148/131"
+      },
+      {
+        "name": "Teal Mask Ogerpon ex",
+        "number": "145/131"
+      }
+    ]
+  },
+  "page_3.jpeg": {
+    "grid": [
+      3,
+      3
+    ],
+    "_note": "MEP promo cards - numerator only, no denominator printed",
+    "cards": [
+      {
+        "name": "Bulbasaur",
+        "number": "037"
+      },
+      {
+        "name": "Charmander",
+        "number": "038"
+      },
+      {
+        "name": "Squirtle",
+        "number": "039"
+      },
+      {
+        "name": "Turtwig",
+        "number": "040"
+      },
+      {
+        "name": "Chimchar",
+        "number": "041"
+      },
+      {
+        "name": "Piplup",
+        "number": "042"
+      },
+      {
+        "name": "Rowlet",
+        "number": "043"
+      },
+      {
+        "name": "Litten",
+        "number": "044"
+      },
+      {
+        "name": "Popplio",
+        "number": "045"
+      }
+    ]
+  },
+  "page_4.jpeg": {
+    "grid": [
+      3,
+      3
+    ],
+    "cards": [
+      {
+        "name": "Togedemaru",
+        "number": "104/094"
+      },
+      {
+        "name": "Sliggoo",
+        "number": "095/086"
+      },
+      {
+        "name": "Dustox",
+        "number": "220/217"
+      },
+      {
+        "name": "Swinub",
+        "number": "165/159"
+      },
+      {
+        "name": "Snorunt",
+        "number": "227/217"
+      },
+      {
+        "name": "Nymble",
+        "number": "096/094"
+      },
+      {
+        "name": "Scorbunny",
+        "number": "225/217"
+      },
+      {
+        "name": "Hop's Wooloo",
+        "number": "170/159"
+      },
+      {
+        "name": "Budew",
+        "number": "221/217"
+      }
+    ]
+  },
+  "page_5.jpeg": {
+    "grid": [
+      3,
+      3
+    ],
+    "_note": "3 empty pockets - exactly 6 cards",
+    "cards": [
+      {
+        "name": "Watchog",
+        "number": null
+      },
+      {
+        "name": "Drapion",
+        "number": "087/088"
+      },
+      {
+        "name": "Misdreavus",
+        "number": "233/217"
+      },
+      {
+        "name": "Banette",
+        "number": "234/217"
+      },
+      {
+        "name": "Blissey V",
+        "number": "TG22/TG30"
+      },
+      {
+        "name": "Aurorus",
+        "number": "092/088"
+      }
+    ]
+  }
+}

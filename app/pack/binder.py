@@ -271,7 +271,9 @@ async def _identify_quad_cell(img, box: tuple[int, int, int, int], W: int, H: in
 
     name_texts = _name_texts_from_band(name_xy)
     res = await resolve_identity(name_texts, reading, None)
-    return (x0, y0, x1 - x0, y1 - y0), crop, res
+    # The cell's raw OCR texts ride along so the VLM merge can demand pixel
+    # corroboration of a claimed number (hallucination guard).
+    return (x0, y0, x1 - x0, y1 - y0), crop, res, [l[2] for l in lines]
 
 
 def _is_stage_label(text: str) -> bool:
@@ -398,15 +400,20 @@ def _thumb(crop) -> str | None:
     return base64.b64encode(buf.tobytes()).decode() if ok else None
 
 
-async def _run_vlm(cells: list[BinderCell], crops: list) -> None:
+async def _run_vlm(cells: list[BinderCell], crops: list,
+                   texts_by_row: dict[int, list[str]]) -> None:
     """Best-effort VLM pass on the still-uncertain cells (off when VLM_ENDPOINT
-    unset). One batch, merged in place; any failure leaves Phase-1 cards intact."""
+    unset). One batch, merged in place; any failure leaves Phase-1 cards intact.
+    Hallucination guards: identical answers claimed for 3+ cells collapse, and a
+    claimed number must be corroborated by the cell's own OCR text to clear the
+    review flag (production evidence: garbage crops minted the same confident
+    identity three times on one page)."""
     from app.pack import vlm_client
     if not vlm_client.enabled() or not any(c.needs_vlm for c in cells):
         return
     try:
         from app.pack.set_resolution import load_denominator_table
-        from app.pack.vlm_merge import apply_vlm_answer
+        from app.pack.vlm_merge import apply_vlm_answer, collapse_duplicate_answers
         table = load_denominator_table()
         payload = [{"row_index": c.card.row_index, "image": crop,
                     "hint_set": None, "hint_denominator": None}
@@ -414,9 +421,12 @@ async def _run_vlm(cells: list[BinderCell], crops: list) -> None:
         result = await vlm_client.identify(payload)
         if not result:
             return
+        result = collapse_duplicate_answers(result)
         for c in cells:
             if c.needs_vlm:
-                await apply_vlm_answer(c.card, result.get(c.card.row_index) or {}, table)
+                await apply_vlm_answer(
+                    c.card, result.get(c.card.row_index) or {}, table,
+                    ocr_texts=texts_by_row.get(c.card.row_index) or None)
         log.info("binder.vlm applied cells=%s", len(payload))
     except Exception as e:
         log.warning("binder.vlm_failed err=%r", e)
@@ -442,8 +452,10 @@ async def _finish(cell_specs: list, rows: int, cols: int) -> dict:
     response. Row indices are (re)assigned in the given reading order."""
     cells: list[BinderCell] = []
     crops: list = []
-    for idx, (box, crop, res) in enumerate(cell_specs):
+    texts_by_row: dict[int, list[str]] = {}
+    for idx, (box, crop, res, texts) in enumerate(cell_specs):
         crops.append(crop)
+        texts_by_row[idx] = texts
         card = PackCard(
             row_index=idx, card_number=res.display_number,
             set_id=res.set_id, set_code=res.set_code, set_name=res.set_name,
@@ -453,7 +465,7 @@ async def _finish(cell_specs: list, rows: int, cols: int) -> dict:
         cells.append(BinderCell(cell=box, card=card,
                                 thumb_b64=_thumb(crop), needs_vlm=not res.confident))
 
-    await _run_vlm(cells, crops)
+    await _run_vlm(cells, crops, texts_by_row)
     await _attach_prices(cells)
 
     page_confidence = pack_confidence([c.card.confidence for c in cells])
@@ -512,7 +524,7 @@ async def _scan_text_clusters(img, W: int, H: int) -> dict:
         coarse = _coarse_box(cell, col_pitch, row_pitch, W, H)
         x, y, w, h = refine_card_box(img, coarse)
         crop = img[y:y + h, x:x + w]
-        cell_specs.append(((x, y, w, h), crop, res))
+        cell_specs.append(((x, y, w, h), crop, res, [line[2] for line in cell]))
     return await _finish(cell_specs, rows, cols)
 
 

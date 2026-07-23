@@ -405,6 +405,7 @@ class CollectionCard(Base):
     card_number: Mapped[str | None] = mapped_column(Text, nullable=True)
     numerator: Mapped[str | None] = mapped_column(Text, nullable=True)
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    species: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     match_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     identity_key: Mapped[str] = mapped_column(Text, nullable=False)

@@ -122,22 +122,23 @@ async def _collection_encounters(session, trainer_id,
                                  cards: list[PackCard]) -> list[EncounterOut]:
     """Wild-encounter callouts for a just-saved batch. count = total qty of that
     species now in the trainer's collection; new = the species only exists here
-    because of this save. Species derives from the card names via the shared
-    ``species_of`` normalizer (Collection has no species column)."""
+    because of this save. Species reads from the stored ``species`` column (set at
+    save time), summed by qty in SQL — mirrors ``_compute_encounters`` in pulls."""
     in_batch = Counter(sp for c in cards if (sp := species_of(c.name)))
     if not in_batch:
         return []
-    rows = (
-        await session.execute(
-            select(CollectionCard.name, CollectionCard.qty)
-            .where(CollectionCard.trainer_id == trainer_id)
-        )
-    ).all()
-    totals: Counter[str] = Counter()
-    for name, qty in rows:
-        sp = species_of(name)
-        if sp:
-            totals[sp] += qty
+    totals = dict(
+        (
+            await session.execute(
+                select(CollectionCard.species, func.sum(CollectionCard.qty))
+                .where(
+                    CollectionCard.trainer_id == trainer_id,
+                    CollectionCard.species.in_(in_batch.keys()),
+                )
+                .group_by(CollectionCard.species)
+            )
+        ).all()
+    )
     out = [
         EncounterOut(species=sp, count=totals.get(sp, n), new=totals.get(sp, n) == n)
         for sp, n in in_batch.items()
@@ -188,6 +189,7 @@ async def save_collection(
         for card in cards:
             numerator = _numerator(card.card_number)
             identity_key = _identity_key(card.set_code, card.set_name, numerator, card.name)
+            species = species_of(card.name) if card.name else None
             if identity_key in seen:
                 incremented += 1
             else:
@@ -204,14 +206,16 @@ async def save_collection(
                     card_number=card.card_number,
                     numerator=numerator,
                     name=card.name,
+                    species=species,
                     image_url=card.image_url,
                     match_id=card.match_id,
                     identity_key=identity_key,
                     qty=1,
                 )
                 .on_conflict_do_update(
+                    # A VLM/manual name fix can change species between saves.
                     constraint="uq_collection_trainer_identity",
-                    set_={"qty": CollectionCard.qty + 1, "updated_at": func.now()},
+                    set_={"qty": CollectionCard.qty + 1, "species": species, "updated_at": func.now()},
                 )
             )
             await session.execute(stmt)

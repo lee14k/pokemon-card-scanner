@@ -188,6 +188,12 @@ async def save_collection(
         added = incremented = 0
         for card in cards:
             numerator = _numerator(card.card_number)
+            # A cell with NO resolved identity at all (no set, no number, no name)
+            # carries zero information — skipping beats collapsing every such
+            # unknown into one shared "?:" row via the degenerate identity_key.
+            # The cell was visibly flagged in review; fixing it there is the path.
+            if not (card.set_code or card.set_name) and numerator is None and not card.name:
+                continue
             identity_key = _identity_key(card.set_code, card.set_name, numerator, card.name)
             species = species_of(card.name) if card.name else None
             if identity_key in seen:

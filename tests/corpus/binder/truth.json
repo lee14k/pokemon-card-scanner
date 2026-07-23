@@ -1,0 +1,40 @@
+{
+  "cards": [
+    {
+      "set": "sv06",
+      "local_id": "126"
+    },
+    {
+      "set": "sv06",
+      "local_id": "101"
+    },
+    {
+      "set": "me05",
+      "local_id": "004"
+    },
+    {
+      "set": "me05",
+      "local_id": "010"
+    },
+    {
+      "set": "me02.5",
+      "local_id": "001"
+    },
+    {
+      "set": "me02.5",
+      "local_id": "003"
+    },
+    {
+      "set": "sv03.5",
+      "local_id": "025"
+    },
+    {
+      "set": "swsh12",
+      "local_id": "040"
+    },
+    {
+      "set": "me01",
+      "local_id": "020"
+    }
+  ]
+}

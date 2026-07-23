@@ -159,11 +159,21 @@ async def identify_frame(card_bgr: np.ndarray, strip_bgr: np.ndarray | None,
             (prior.denominator if prior else None)
         display_number = f"{numerator.zfill(3)}/{den}" if den else numerator
 
+    # Reason must name the stage that actually failed — a read number with an
+    # unresolved set is NOT "couldn't read the number" (misleading in the tray).
+    if confident:
+        reason = None
+    elif reading is None:
+        reason = "number_ambiguous"
+    elif set_id is None and set_name is None:
+        reason = "set_ambiguous"
+    else:
+        reason = "no_db_match"
     card = PackCard(
         row_index=-1,  # assigned by the session store
         card_number=display_number, set_id=set_id, set_code=set_code,
         set_name=set_name, confidence=0.9 if confident else 0.3,
-        low_confidence_reason=None if confident else "number_ambiguous",
+        low_confidence_reason=reason,
         needs_review=not confident, **fields)
     key = f"{set_code or set_name or '?'}:{numerator or normalize_key(fields.get('name'))}"
     return FrameResult("card", card, None, key, needs_vlm=not confident)

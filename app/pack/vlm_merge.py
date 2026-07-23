@@ -17,7 +17,7 @@ from app.cards import cached_lookup_card
 from app.db.models import TcgdexCard
 from app.db.session import async_session_maker
 from app.pack.matching import card_fields_from_match
-from app.pack.name_index import normalize_name
+from app.pack.name_index import get_name_index, normalize_name
 from app.pack.set_resolution import DenominatorTable
 from app.pokewallet import get_api_key
 from app.schemas import PackCard
@@ -105,13 +105,100 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
     caller that can't supply it) the corroboration check is skipped — behavior is
     unchanged. ``ans`` may carry a "name" (newer worker); when absent the name
     cross-check is skipped."""
-    if not ans or not ans.get("number"):
+    if not ans or not (ans.get("number") or ans.get("name")):
         return False
-    num = str(ans["number"]).split("/")[0].strip()
+    num = str(ans.get("number") or "").split("/")[0].strip()
     den = ans.get("denominator")
-    card.card_number = f"{num}/{den}" if den else num
+    vlm_name = str(ans.get("name") or "").strip()
+
+    # NAME-FIRST resolution. Production logs: on full-art cards the VLM reads the
+    # large printed NAME near-verbatim but fabricates the tiny gold collector
+    # number ('Mega Latias ex' claimed with a number resolving to Skitty). So when
+    # the worker supplies a name, identity comes from OUR name index — the VLM
+    # denominator narrows, the same denominator-contradiction veto as the local
+    # ladder guards it, and the CATALOG supplies the true number. The number-first
+    # path below remains for nameless (older-worker) answers.
+    name_resolved = False
+    name_display_only = False
+    if vlm_name:
+        try:
+            idx = await get_name_index()
+            # Candidates for the claimed name: exact normalized key first, fuzzy
+            # (unambiguous only) as fallback for near-miss reads.
+            cands = list(idx._entries.get(normalize_name(vlm_name)) or [])
+            if not cands:
+                fz = idx.match(vlm_name, denominator=str(den) if den else None)
+                if fz is not None and not fz.ambiguous:
+                    cands = list(idx._entries.get(normalize_name(fz.card_name)) or [])
+            # Denominator filter/veto: keep candidates whose set official count
+            # matches the claimed denominator; if it contradicts EVERY candidate
+            # the name hit is garbage-adjacent — drop the name path entirely.
+            if cands and den is not None and str(den).isdigit():
+                den_i = int(str(den))
+                with_den = [c for c in cands if c[4] == den_i]
+                if with_den:
+                    cands = with_den
+                elif all(c[4] is not None and c[4] != den_i for c in cands):
+                    cands = []
+            m = None
+            display_only = None
+            if len(cands) == 1:
+                m = cands[0]
+            elif cands and len({c[0] for c in cands}) == 1:
+                # Same-set variants (regular vs secret print share the name):
+                # the claimed numerator picks the variant — that agreement is
+                # real corroboration. No match -> set+name shown, stays flagged.
+                claim_n = (num.lstrip("0") or num).upper() if num else ""
+                hits = [c for c in cands
+                        if (str(c[2]).lstrip("0") or str(c[2])).upper() == claim_n]
+                m = hits[0] if len(hits) == 1 else None
+                display_only = cands[0] if m is None else None
+            if m is None and display_only is not None:
+                name_display_only = True
+                s_id, s_name, lid, cname, _o = display_only
+                entry = next((s for s in table.sets
+                              if (s.tcgdex_id or s.set_code) == s_id), None)
+                card.set_id = entry.set_id if entry else None
+                card.set_code = entry.set_code if entry else s_id
+                card.set_name = s_name
+                card.name = cname
+            if m is not None:
+                m_set_id, m_set_name, m_local, m_card_name, _official = m
+                entry = next((s for s in table.sets
+                              if (s.tcgdex_id or s.set_code) == m_set_id), None)
+                card.set_id = entry.set_id if entry else None
+                card.set_code = entry.set_code if entry else m_set_id
+                card.set_name = m_set_name
+                card.name = m_card_name
+                num = str(m_local).lstrip("0") or str(m_local)  # catalog truth
+                # Display the catalog set's printed denominator, not the
+                # (possibly fabricated) claimed one.
+                disp_den = (entry.denominators[0] if entry and entry.denominators
+                            else (str(den) if den else None))
+                card.card_number = f"{m_local}/{disp_den}" if disp_den else str(m_local)
+                name_resolved = True
+                # Catalog image straight from TCGdex (PokéWallet may not
+                # carry the set; the keyed lookup below fills the rest).
+                if card.image_url is None:
+                    try:
+                        async with async_session_maker() as session:
+                            row = (await session.execute(
+                                select(TcgdexCard.image_base)
+                                .where(TcgdexCard.set_id == m_set_id,
+                                       TcgdexCard.local_id == str(m_local)))).first()
+                        if row and row.image_base:
+                            card.image_url = row.image_base + "/high.png"
+                    except Exception:
+                            pass
+        except Exception as e:
+            log.warning("vlm.name_first_failed err=%r", e)
+
+    if not name_resolved:
+        if not num:
+            return False
+        card.card_number = f"{num}/{den}" if den else num
     set_id = card.set_id
-    if ans.get("set_name"):
+    if not name_resolved and ans.get("set_name"):
         sn = str(ans["set_name"]).casefold()
         match = next((s for s in table.sets if s.set_name.casefold() == sn), None) or \
             next((s for s in table.sets
@@ -122,7 +209,8 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
             set_id = match.set_id
     # The VLM can't name sets released after its training cutoff (set_name=null),
     # so fall back to a unique denominator to pin the set. Keys are stored stripped.
-    if (set_id is None or card.set_name is None) and den is not None:
+    # (Never overrides a name-resolved identity — the claimed den may be fabricated.)
+    if not name_resolved and (set_id is None or card.set_name is None) and den is not None:
         entries = table.by_denominator.get(str(den).lstrip("0") or "0", ())
         if len(entries) == 1:
             e = entries[0]
@@ -154,10 +242,11 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
                         card.image_url = row.image_base + "/high.png"
             except Exception as e:
                 log.warning("vlm.tcgdex_fallback_failed err=%r", e)
-    # Pixel corroboration: the claimed numerator must actually appear in the
-    # cell's own OCR text. Only enforced when the caller supplies OCR lines.
+    # Pixel corroboration applies to NUMBER-claimed identities only. A
+    # name-resolved identity is anchored on the catalog name + denominator veto;
+    # its number came from the catalog, so OCR misreads must not block it.
     corroborated = True
-    if ocr_texts:
+    if ocr_texts and not name_resolved:
         corroborated = _numerator_corroborated(num, ocr_texts)
         if not corroborated:
             log.info("vlm.uncorroborated num=%s row=%s (kept flagged)",
@@ -175,8 +264,9 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
                      vlm_name, card.name, getattr(card, "row_index", None))
 
     if float(ans.get("confidence") or 0) >= VLM_ACCEPT \
-            and card.set_id is not None and card.name is not None \
-            and corroborated and name_ok:
+            and (card.set_id is not None or (name_resolved and card.set_code)) \
+            and card.name is not None and corroborated and name_ok \
+            and not name_display_only:
         card.needs_review = False
         card.low_confidence_reason = None
         card.confidence = max(card.confidence, float(ans["confidence"]))

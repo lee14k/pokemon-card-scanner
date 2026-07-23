@@ -7,7 +7,7 @@ import enum
 import uuid
 
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID
-from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import CITEXT, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -384,3 +384,36 @@ class Battle(Base):
     winner: Mapped[str | None] = mapped_column(String(12), nullable=True)  # challenger|opponent|tie
     created_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
     resolved_at: Mapped[datetime.datetime | None] = mapped_column(nullable=True)
+
+
+class CollectionCard(Base):
+    """A card in a trainer's personal Collection (binder scans → qty-aware upserts).
+    Distinct from Pull/PullCard: Collection is not pull history and does not feed
+    training harvest or pull stats. One row per (trainer, identity_key); qty bumps
+    on re-save."""
+
+    __tablename__ = "collection_card"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    trainer_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("trainer.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    tcgdex_card_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    set_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    set_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    set_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_number: Mapped[str | None] = mapped_column(Text, nullable=True)
+    numerator: Mapped[str | None] = mapped_column(Text, nullable=True)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    match_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    identity_key: Mapped[str] = mapped_column(Text, nullable=False)
+    qty: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    created_at: Mapped[datetime.datetime] = mapped_column(server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("trainer_id", "identity_key", name="uq_collection_trainer_identity"),
+    )

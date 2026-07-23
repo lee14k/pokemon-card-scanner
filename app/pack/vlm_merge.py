@@ -9,7 +9,11 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy import select
+
 from app.cards import cached_lookup_card
+from app.db.models import TcgdexCard
+from app.db.session import async_session_maker
 from app.pack.matching import card_fields_from_match
 from app.pack.set_resolution import DenominatorTable
 from app.pokewallet import get_api_key
@@ -22,8 +26,10 @@ VLM_ACCEPT = 0.7
 
 async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable) -> bool:
     """Merge one VLM answer into ``card`` in place (number, set, re-lookup name/
-    rarity/image/match_id). Returns True when accepted (confidence >= VLM_ACCEPT —
-    also clears needs_review/low_confidence_reason and raises confidence). A
+    rarity/image/match_id). Returns True only when an identity was actually
+    produced — confidence >= VLM_ACCEPT AND both set_id and name are populated —
+    in which case it also clears needs_review/low_confidence_reason and raises
+    confidence; otherwise it returns False without touching needs_review. A
     missing or number-less answer is a no-op returning False, so the card keeps
     its Phase-1 identity."""
     if not ans or not ans.get("number"):
@@ -41,6 +47,14 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable) -
             card.set_id, card.set_code, card.set_name = \
                 match.set_id, match.set_code, match.set_name
             set_id = match.set_id
+    # The VLM can't name sets released after its training cutoff (set_name=null),
+    # so fall back to a unique denominator to pin the set. Keys are stored stripped.
+    if (set_id is None or card.set_name is None) and den is not None:
+        entries = table.by_denominator.get(str(den).lstrip("0") or "0", ())
+        if len(entries) == 1:
+            e = entries[0]
+            card.set_id, card.set_code, card.set_name = e.set_id, e.set_code, e.set_name
+            set_id = e.set_id
     if set_id and num.isdigit():
         try:
             m = await cached_lookup_card(set_id, num, api_key=get_api_key())
@@ -49,7 +63,26 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable) -
                     setattr(card, k, v)
         except Exception as e:
             log.warning("vlm.relookup_failed err=%r", e)
-    if float(ans.get("confidence") or 0) >= VLM_ACCEPT:
+    # me-era sets aren't in PokéWallet, so the re-lookup above finds nothing; pull
+    # name/image straight from the TCGdex catalog keyed by the resolved set.
+    if card.name is None and set_id is not None and num.isdigit():
+        entry = next((s for s in table.sets if s.set_id == set_id), None)
+        tdx = (entry.tcgdex_id or entry.set_code) if entry else None
+        if tdx:
+            try:
+                async with async_session_maker() as session:
+                    row = (await session.execute(
+                        select(TcgdexCard.name, TcgdexCard.image_base)
+                        .where(TcgdexCard.set_id == tdx,
+                               TcgdexCard.local_id.in_((num, num.zfill(3)))))).first()
+                if row and row.name:
+                    card.name = row.name
+                    if card.image_url is None and row.image_base:
+                        card.image_url = row.image_base + "/high.png"
+            except Exception as e:
+                log.warning("vlm.tcgdex_fallback_failed err=%r", e)
+    if float(ans.get("confidence") or 0) >= VLM_ACCEPT \
+            and card.set_id is not None and card.name is not None:
         card.needs_review = False
         card.low_confidence_reason = None
         card.confidence = max(card.confidence, float(ans["confidence"]))

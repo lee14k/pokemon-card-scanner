@@ -22,6 +22,7 @@ class SetEntry:
     era: str
     denominators: tuple[str, ...]
     promo_prefix: str | None
+    tcgdex_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ def _build_denominator_table(path: Path | None) -> DenominatorTable:
                 era=r["era"],
                 denominators=tuple(r.get("denominators") or ()),
                 promo_prefix=(r.get("promo_prefix") or None),
+                tcgdex_id=r.get("tcgdex_id"),
             )
             for r in raw["sets"]
         )

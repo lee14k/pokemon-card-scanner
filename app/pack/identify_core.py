@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
-from app.cards import cached_lookup_card, get_set_numerators
+from app.cards import cached_lookup_card, get_set_numerators, normalize_local_id
 from app.db.models import SetIdMap
 from app.db.session import async_session_maker
 from app.pack.matching import card_fields_from_match
@@ -93,16 +93,18 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
 
     numerator = None
     if reading is not None and reading.numerator:
-        numerator = reading.numerator.lstrip("0") or "0"
+        # Tail-normalized so a gallery numerator ("TG22"/"GG7") compares equal to
+        # its catalog local_id ("TG22"/"GG07") and validates against the set.
+        numerator = normalize_local_id(reading.numerator)
 
     set_id = set_code = set_name = None
     confident = False
 
-    if name_match and numerator and name_match.local_id.lstrip("0") == numerator:
+    if name_match and numerator and normalize_local_id(name_match.local_id) == numerator:
         confident = True                      # name + number agree
     elif name_match and not name_match.ambiguous:
         confident = True                      # unique name (+denominator prior)
-        numerator = numerator or (name_match.local_id.lstrip("0") or "0")
+        numerator = numerator or normalize_local_id(name_match.local_id)
     if name_match and confident:
         set_name = name_match.set_name
         set_code = name_match.tcgdex_set_id

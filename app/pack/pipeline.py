@@ -246,7 +246,7 @@ async def _apply_constraints(readings, resolutions) -> None:
     return set()
 
 
-async def _vlm_fallback(cards, strips, resolutions) -> None:
+async def _vlm_fallback(cards, strips, resolutions, readings) -> None:
     """Send still-uncertain cards to the RunPod VLM worker; merge definitive IDs
     back in (number, set, re-lookup name/price). Best-effort — any failure or a
     disabled worker leaves the Phase-1 cards untouched."""
@@ -274,11 +274,20 @@ async def _vlm_fallback(cards, strips, resolutions) -> None:
         if not result:
             return
 
-        from app.pack.vlm_merge import apply_vlm_answer
+        from app.pack.vlm_merge import apply_vlm_answer, collapse_duplicate_answers
+
+        # Zero out 3+ identical (number, den) claims before merge — a page-wide
+        # hallucination signature (e.g. "126/167" answered for unrelated crops).
+        result = collapse_duplicate_answers(result)
 
         for i in idx:
             card = cards[i]
-            await apply_vlm_answer(card, result.get(card.row_index) or {}, table)
+            # Corroborate the claimed number against this strip's own OCR text
+            # (NumberReading.raw). Empty when OCR read nothing -> pass None so the
+            # corroboration check is skipped for that card (unchanged behavior).
+            ocr_texts = [readings[i].raw] if readings[i].raw else None
+            await apply_vlm_answer(card, result.get(card.row_index) or {}, table,
+                                   ocr_texts=ocr_texts)
         log.info("vlm.fallback applied cards=%s", len(idx))
     except Exception as e:
         log.warning("pipeline.vlm_fallback_failed err=%r", e)
@@ -420,7 +429,7 @@ async def scan_pack(
 
     # Confidence-gated VLM fallback: send only the still-uncertain cards to the
     # RunPod worker for definitive ID. Off when VLM_ENDPOINT unset; never blocks.
-    await _vlm_fallback(cards, strips, resolutions)
+    await _vlm_fallback(cards, strips, resolutions, readings)
 
     code_img = _decode(code_bytes)
     if code_img is None:

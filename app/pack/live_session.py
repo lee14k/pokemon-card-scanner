@@ -35,7 +35,7 @@ from app.db.config import db_settings
 from app.pack import vlm_client
 from app.pack.live_identify import FrameResult, SessionPrior
 from app.pack.set_resolution import load_denominator_table
-from app.pack.vlm_merge import apply_vlm_answer
+from app.pack.vlm_merge import apply_vlm_answer, collapse_duplicate_answers
 from app.schemas import CodeCardResult, PackCard
 
 log = logging.getLogger("pokemon_scanner.pack.live_session")
@@ -311,6 +311,9 @@ class LiveSession:
                 if not payload:
                     continue
                 result = await vlm_client.identify(payload, timeout=90)
+                if result:
+                    # Zero 3+ identical claims before merge (hallucination guard).
+                    result = collapse_duplicate_answers(result)
                 for row, lc in row_map.items():
                     if lc.state != "pending_vlm":
                         continue  # resolved/overwritten while identify() was in flight

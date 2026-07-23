@@ -6,7 +6,7 @@ Contract (matches app/pack/vlm_client.py):
                       "hint_set": str|null, "hint_denominator": str|null}]}
   output: {"cards": [{"row_index": int, "number": str|null,
                       "denominator": str|null, "set_name": str|null,
-                      "confidence": float}]}
+                      "name": str|null, "confidence": float}]}
 
 Deploy: build this dir as a RunPod Serverless endpoint (see Dockerfile header),
 GPU >= 24GB (7B in bf16). MODEL overridable via env VLM_MODEL.
@@ -41,9 +41,11 @@ _PROMPT = (
     "This image is the bottom strip of a Pokemon trading card. Read the collector "
     "number exactly as printed (formats like 126/167, 12/198, or TG12/TG30). "
     "If the set symbol or name is legible, identify the set. "
+    "If the card's printed name is legible, read it. "
     'Reply with ONLY a JSON object: '
     '{{"number": "<numerator>", "denominator": "<denominator or null>", '
-    '"set_name": "<set or null>", "confidence": <0..1>}}. {hint}'
+    '"set_name": "<set or null>", "name": "<the card\'s printed name or null>", '
+    '"confidence": <0..1>}}. {hint}'
 )
 
 
@@ -70,13 +72,15 @@ def _identify(model, processor, img: Image.Image, hint_set, hint_den) -> dict:
         skip_special_tokens=True)[0]
     m = re.search(r"\{.*\}", reply, re.S)
     if not m:
-        return {"number": None, "denominator": None, "set_name": None, "confidence": 0.0}
+        return {"number": None, "denominator": None, "set_name": None,
+                "name": None, "confidence": 0.0}
     try:
         d = json.loads(m.group(0))
     except json.JSONDecodeError:
-        return {"number": None, "denominator": None, "set_name": None, "confidence": 0.0}
+        return {"number": None, "denominator": None, "set_name": None,
+                "name": None, "confidence": 0.0}
     return {"number": d.get("number"), "denominator": d.get("denominator"),
-            "set_name": d.get("set_name"),
+            "set_name": d.get("set_name"), "name": d.get("name"),
             "confidence": float(d.get("confidence") or 0.0)}
 
 
@@ -89,7 +93,7 @@ def handler(job):
             res = _identify(model, processor, img, c.get("hint_set"), c.get("hint_denominator"))
         except Exception as e:  # one bad card never fails the batch
             res = {"number": None, "denominator": None, "set_name": None,
-                   "confidence": 0.0, "error": str(e)}
+                   "name": None, "confidence": 0.0, "error": str(e)}
         res["row_index"] = c.get("row_index")
         out.append(res)
     return {"cards": out}

@@ -21,11 +21,25 @@ from app.pokewallet import lookup_card_exact, pokewallet_image_url
 log = logging.getLogger("pokemon_scanner.cards")
 
 
+def normalize_local_id(lid: str) -> str:
+    """Uppercase a local_id / OCR numerator with leading zeros stripped from its
+    numeric tail while any alpha (gallery/promo) prefix is preserved:
+    "012"->"12", "TG22"->"TG22", "GG07"->"GG7", "SWSH009"->"SWSH9". A form that
+    doesn't split cleanly into <alpha?><digits> is returned uppercased unchanged.
+    Used on BOTH sides wherever an OCR numerator is compared against a catalog
+    local_id, so gallery-prefixed numbers compare equal despite tail zeros."""
+    s = (lid or "").strip().upper()
+    m = re.fullmatch(r"([A-Z]*)0*(\d+)", s)
+    return f"{m.group(1)}{m.group(2)}" if m else s
+
+
 async def get_set_numerators(set_id: str) -> set[str]:
-    """Normalized (no leading zero) numeric card numbers of a set, via
-    set_id_map -> tcgdex_card. Feeds OCR constraint repair. {} on any failure
-    or when the set isn't mapped/ingested — the caller then simply skips
-    catalog correction."""
+    """Normalized card numbers of a set, via set_id_map -> tcgdex_card. Numeric
+    ids lose leading zeros ("012" -> "12"); gallery/promo ids keep their alpha
+    prefix and lose only their tail zeros ("TG22" -> "TG22", "GG07" -> "GG7") so
+    a printed "TG22"/"GG7" numerator validates against the catalog. Feeds OCR
+    constraint repair. {} on any failure or when the set isn't mapped/ingested —
+    the caller then simply skips catalog correction."""
     try:
         async with async_session_maker() as session:
             tdx = (await session.execute(
@@ -39,8 +53,12 @@ async def get_set_numerators(set_id: str) -> set[str]:
             )).scalars().all()
         out: set[str] = set()
         for lid in rows:
-            if re.fullmatch(r"\d+", lid or ""):
+            if not lid:
+                continue
+            if re.fullmatch(r"\d+", lid):
                 out.add(str(int(lid)))  # "012" -> "12"
+            elif re.match(r"[A-Za-z]", lid):  # gallery/promo, e.g. "TG22", "GG07"
+                out.add(normalize_local_id(lid))
         return out
     except Exception as e:
         log.warning("cards.set_numerators_failed set=%s err=%r", set_id, e)

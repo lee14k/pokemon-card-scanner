@@ -25,6 +25,13 @@ def normalize_name(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
+def _alpha_prefix(s: str) -> str:
+    """Leading alpha run of a denominator/local_id, uppercased ("TG30"->"TG",
+    "GG07"->"GG", "126"->""). Empty when there is no alpha prefix."""
+    m = re.match(r"[A-Za-z]+", s or "")
+    return m.group(0).upper() if m else ""
+
+
 def _is_token_subsequence(short: str, long: str) -> bool:
     """True if `short`'s space-separated tokens appear as a contiguous run
     inside `long`'s tokens (whole-word containment), e.g. 'pikachu' in
@@ -66,11 +73,20 @@ class NameIndex:
         # set uniquely identifies it).
         self._by_set: dict[str, list[tuple[str, tuple]]] = {}
         self._official_to_sets: dict[int, set[str]] = {}
+        # Gallery/promo denominators are non-numeric (e.g. "TG30", "GG70"); they
+        # can't key _official_to_sets. Map the local_id's alpha prefix -> the set
+        # ids that use it, so an alpha denominator scopes match_in_set only when a
+        # single set owns that prefix. ("TG" spans several swsh sets, so it won't
+        # scope — that is correct; "GG" is Crown Zenith-only and will.)
+        self._alpha_den_to_sets: dict[str, set[str]] = {}
         for key, entries in self._entries.items():
             for e in entries:
                 self._by_set.setdefault(e[0], []).append((key, e))
                 if e[4] is not None:
                     self._official_to_sets.setdefault(int(e[4]), set()).add(e[0])
+                prefix = _alpha_prefix(e[2])   # e[2] is the local_id
+                if prefix:
+                    self._alpha_den_to_sets.setdefault(prefix, set()).add(e[0])
 
     def match(self, ocr_text: str, *, denominator: str | None = None,
               min_score: int = 82) -> NameMatch | None:
@@ -94,6 +110,18 @@ class NameIndex:
             if len(narrowed) == 1:
                 s, sn, lid, cn, _o = narrowed[0]
                 return NameMatch(s, sn, lid, cn, score, ambiguous=substr)
+        elif denominator is not None:
+            # Non-numeric denominator (e.g. "TG30", "GG70"): the printed
+            # denominator carries the gallery prefix, so narrow to printings whose
+            # local_id shares that prefix. A unique survivor is confident, exactly
+            # like the numeric-denominator narrowing above.
+            prefix = _alpha_prefix(denominator)
+            if prefix:
+                narrowed = [c for c in cands
+                            if str(c[2]).upper().startswith(prefix)]
+                if len(narrowed) == 1:
+                    s, sn, lid, cn, _o = narrowed[0]
+                    return NameMatch(s, sn, lid, cn, score, ambiguous=substr)
         if len(cands) == 1:
             s, sn, lid, cn, _o = cands[0]
             return NameMatch(s, sn, lid, cn, score, ambiguous=substr)
@@ -112,8 +140,11 @@ class NameIndex:
         q = normalize_name(ocr_text)
         if len(q) < 3 or not any(c.isalpha() for c in q):
             return None
-        if set_id is None and denominator is not None and denominator.isdigit():
-            sets = self._official_to_sets.get(int(denominator))
+        if set_id is None and denominator is not None:
+            if denominator.isdigit():
+                sets = self._official_to_sets.get(int(denominator))
+            else:
+                sets = self._alpha_den_to_sets.get(_alpha_prefix(denominator))
             if sets and len(sets) == 1:
                 set_id = next(iter(sets))
         if set_id is None:

@@ -8,13 +8,16 @@ image. One implementation so the two paths can never drift."""
 from __future__ import annotations
 
 import logging
+import re
 
+from rapidfuzz import fuzz
 from sqlalchemy import select
 
 from app.cards import cached_lookup_card
 from app.db.models import TcgdexCard
 from app.db.session import async_session_maker
 from app.pack.matching import card_fields_from_match
+from app.pack.name_index import normalize_name
 from app.pack.set_resolution import DenominatorTable
 from app.pokewallet import get_api_key
 from app.schemas import PackCard
@@ -22,16 +25,73 @@ from app.schemas import PackCard
 log = logging.getLogger("pokemon_scanner.pack.vlm_merge")
 
 VLM_ACCEPT = 0.7
+NAME_MATCH_MIN = 75  # rapidfuzz WRatio floor for VLM-name vs catalog-name agreement
 
 
-async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable) -> bool:
+def _num_den_key(ans: dict) -> tuple[str, str | None] | None:
+    """(numerator, denominator) identity of one answer, or None when it has no
+    number. Numerator is stripped of any "/den" tail exactly like apply's merge."""
+    if not ans or not ans.get("number"):
+        return None
+    num = str(ans["number"]).split("/")[0].strip()
+    den = ans.get("denominator")
+    return (num, str(den) if den is not None else None)
+
+
+def collapse_duplicate_answers(answers: dict[int, dict]) -> dict[int, dict]:
+    """Hallucination guard applied to one VLM batch BEFORE merge: when the SAME
+    (number, denominator) pair is claimed for 3+ distinct rows, the VLM is almost
+    certainly repeating one plausible number across unrelated crops (a real binder
+    page rarely holds 3+ identical cards). Zero the ``confidence`` on every one of
+    those answers so the confidence gate in ``apply_vlm_answer`` refuses to clear
+    needs_review. Mutates and returns the same dict; a batch with no 3+ duplicate
+    is returned untouched."""
+    counts: dict[tuple[str, str | None], int] = {}
+    for ans in answers.values():
+        k = _num_den_key(ans)
+        if k is not None:
+            counts[k] = counts.get(k, 0) + 1
+    dup = {k for k, n in counts.items() if n >= 3}
+    if dup:
+        for ans in answers.values():
+            if _num_den_key(ans) in dup:
+                ans["confidence"] = 0.0
+    return answers
+
+
+def _numerator_corroborated(num: str, ocr_texts: list[str]) -> bool:
+    """True when the VLM's claimed numerator ``num`` actually appears in the
+    cell's own OCR text. Non-alphanumerics are stripped from both sides before the
+    substring test (claim "126" needs "126" somewhere in a line; "TG22" needs
+    "TG22"). Guards against the VLM inventing the same plausible number for
+    unrelated garbage crops."""
+    claim = re.sub(r"[^A-Za-z0-9]", "", num or "").upper()
+    if not claim:
+        return False
+    for t in ocr_texts:
+        if claim in re.sub(r"[^A-Za-z0-9]", "", str(t or "")).upper():
+            return True
+    return False
+
+
+async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
+                           *, ocr_texts: list[str] | None = None) -> bool:
     """Merge one VLM answer into ``card`` in place (number, set, re-lookup name/
     rarity/image/match_id). Returns True only when an identity was actually
-    produced — confidence >= VLM_ACCEPT AND both set_id and name are populated —
+    produced AND survived the corroboration guards — confidence >= VLM_ACCEPT,
+    both set_id and name populated, the claimed numerator corroborated by the
+    cell's own OCR text (when ``ocr_texts`` is supplied and non-empty), and the
+    VLM's printed name (when present) agreeing with the resolved catalog name —
     in which case it also clears needs_review/low_confidence_reason and raises
-    confidence; otherwise it returns False without touching needs_review. A
-    missing or number-less answer is a no-op returning False, so the card keeps
-    its Phase-1 identity."""
+    confidence. Otherwise it returns False WITHOUT touching needs_review: the
+    best-effort number/set/name is still merged for review display, but the card
+    stays flagged. A missing or number-less answer is a no-op returning False, so
+    the card keeps its Phase-1 identity.
+
+    ``ocr_texts`` is the cell/card's own OCR'd lines (uppercase). When None (a
+    caller that can't supply it) the corroboration check is skipped — behavior is
+    unchanged. ``ans`` may carry a "name" (newer worker); when absent the name
+    cross-check is skipped."""
     if not ans or not ans.get("number"):
         return False
     num = str(ans["number"]).split("/")[0].strip()
@@ -81,8 +141,29 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable) -
                         card.image_url = row.image_base + "/high.png"
             except Exception as e:
                 log.warning("vlm.tcgdex_fallback_failed err=%r", e)
+    # Pixel corroboration: the claimed numerator must actually appear in the
+    # cell's own OCR text. Only enforced when the caller supplies OCR lines.
+    corroborated = True
+    if ocr_texts:
+        corroborated = _numerator_corroborated(num, ocr_texts)
+        if not corroborated:
+            log.info("vlm.uncorroborated num=%s row=%s (kept flagged)",
+                     num, getattr(card, "row_index", None))
+
+    # Name cross-check: when the worker returns a printed name and we resolved a
+    # catalog name, they must agree (fuzzy). Old workers omit "name" -> skipped.
+    name_ok = True
+    vlm_name = str(ans.get("name") or "").strip()
+    if vlm_name and card.name:
+        name_ok = fuzz.WRatio(normalize_name(vlm_name),
+                              normalize_name(card.name)) >= NAME_MATCH_MIN
+        if not name_ok:
+            log.info("vlm.name_mismatch vlm=%r catalog=%r row=%s (kept flagged)",
+                     vlm_name, card.name, getattr(card, "row_index", None))
+
     if float(ans.get("confidence") or 0) >= VLM_ACCEPT \
-            and card.set_id is not None and card.name is not None:
+            and card.set_id is not None and card.name is not None \
+            and corroborated and name_ok:
         card.needs_review = False
         card.low_confidence_reason = None
         card.confidence = max(card.confidence, float(ans["confidence"]))

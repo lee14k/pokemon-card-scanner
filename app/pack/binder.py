@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import bisect
 import logging
 import re
 from dataclasses import dataclass
@@ -33,7 +34,9 @@ Line = tuple[float, float, str, float, float, float]
 
 _CAP = 2800            # whole-photo detection cap (binder pages are large)
 _COL_GAP = 0.08        # new column when x-gap exceeds this fraction of img width
-_ROW_GAP = 0.12        # new cell when y-gap exceeds this fraction of img height
+_ROW_GAP = 0.12        # numberless fallback: new cell when y-gap exceeds this * H
+_FOOTER_TOL = 0.04     # a number's footer (lines just below it) within this * H
+                       # of the number snaps up to that number's card
 _CELL_W_FRAC = 0.92    # coarse cell box = this fraction of the median grid pitch
 _THUMB_W = 240
 _CARD_ASPECT = 88 / 63  # height / width of a Pokemon card
@@ -60,21 +63,64 @@ def _diffs(vals: list[float]) -> list[float]:
     return [b - a for a, b in zip(vals, vals[1:])]
 
 
-def _cluster(items: list[Line], key: int, gap: float) -> list[list[Line]]:
-    """Split lines into groups: a new group starts when the sorted ``key`` coord
-    jumps by more than ``gap`` pixels (columns on x, cells on y within a column)."""
-    groups: list[list[Line]] = []
+def _columns(lines: list[Line], gap: float) -> list[list[Line]]:
+    """Split lines into columns: a new column starts when the sorted x-center
+    jumps by more than ``gap`` pixels."""
+    cols: list[list[Line]] = []
     cur: list[Line] = []
     prev: float | None = None
-    for line in sorted(items, key=lambda t: t[key]):
-        if prev is not None and line[key] - prev > gap:
-            groups.append(cur)
+    for line in sorted(lines, key=lambda t: t[0]):
+        if prev is not None and line[0] - prev > gap:
+            cols.append(cur)
             cur = []
         cur.append(line)
-        prev = line[key]
+        prev = line[0]
     if cur:
-        groups.append(cur)
-    return groups
+        cols.append(cur)
+    return cols
+
+
+def _gap_split(seg: list[Line], gap: float) -> list[list[Line]]:
+    """Split an (already y-sorted) segment on y-gaps over ``gap``."""
+    out: list[list[Line]] = []
+    cur: list[Line] = []
+    prev_y: float | None = None
+    for line in seg:
+        if prev_y is not None and line[1] - prev_y > gap and cur:
+            out.append(cur)
+            cur = []
+        cur.append(line)
+        prev_y = line[1]
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _cells(column: list[Line], H: int) -> list[list[Line]]:
+    """Split a column's lines (top->bottom) into per-card cells.
+
+    PRIMARY: the printed collector number anchors a card's BOTTOM edge — assign
+    every line to its nearest number-anchor. This is immune to a card's interior
+    artwork band, whose vertical text gap EXCEEDS the inter-card gutter gap, so no
+    y-gap threshold can separate cards (the gutter is the smaller gap — a pure gap
+    rule splits real cards in two and merges neighbors). A card's content sits above
+    its number and its footer (copyright/illustrator) a hair below, so a line joins
+    the first anchor at or above ``line_y - _FOOTER_TOL*H`` (the tolerance snaps the
+    footer up to its own card instead of leaking into the next one's name band).
+
+    FALLBACK (0.12*H y-gap): a column whose numbers all went unread has no anchors,
+    so split it on the row-gap instead."""
+    ordered = sorted(column, key=lambda t: t[1])
+    anchors = [line[1] for line in ordered
+               if (r := parse_number(line[2], line[3])) is not None and r.pattern_ok]
+    if not anchors:
+        return _gap_split(ordered, _ROW_GAP * H)
+    tol = _FOOTER_TOL * H
+    cells: list[list[Line]] = [[] for _ in anchors]
+    for line in ordered:
+        k = bisect.bisect_left(anchors, line[1] - tol)
+        cells[min(k, len(anchors) - 1)].append(line)
+    return [c for c in cells if c]
 
 
 def _number_and_names(cell: list[Line]):
@@ -179,9 +225,10 @@ async def scan_binder_page(page_bytes: bytes) -> dict:
     if not lines:
         raise ValueError("no_cards_found")
 
-    # Columns on x, then cells on y within each column (source-pixel gaps).
-    columns = _cluster(lines, key=0, gap=_COL_GAP * W)
-    col_cells = [_cluster(col, key=1, gap=_ROW_GAP * H) for col in columns]
+    # Columns on x (source-pixel gap), then per-card cells on y within each column
+    # (anchored on the collector number, with a y-gap fallback for numberless cols).
+    columns = _columns(lines, gap=_COL_GAP * W)
+    col_cells = [_cells(col, H) for col in columns]
     cols = len(columns)
     rows = max(len(cc) for cc in col_cells)
 

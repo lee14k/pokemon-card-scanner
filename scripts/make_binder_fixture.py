@@ -38,20 +38,13 @@ CANVAS_W, CANVAS_H = 2400, 3200
 GUTTER = 60
 COLS = ROWS = 3
 CANVAS_BG = (48, 48, 48)
-# Cards are pasted centered at a FIXED size, NOT scaled to fill the cell, and are
-# deliberately wider-than-tall relative to a real card's 63:88 aspect. Two forces
-# pull the size in opposite directions and this shape satisfies both:
-#   * HEIGHT stays small (620 << the 986 cell) so the card's interior artwork band
-#     (a ~0.5*card_height vertical text gap) never exceeds binder's 0.12*H row-gap
-#     threshold — the inter-card gutter (cell gap + centering padding) stays the
-#     dominant vertical gap, so clustering cleanly yields 3 rows. Full-cell cards
-#     make the artwork gap (~510px) dwarf the gutter and split each card in two.
-#   * WIDTH stays near the source's native 600px so the card's printed number
-#     (horizontal text at the bottom edge, ~11px tall when the card is squeezed to
-#     fit height) keeps enough pixels to OCR. The ambiguous-name cards (Milotic,
-#     Ninetales, Lurantis, Pikachu) can only be resolved by their number, so number
-#     legibility is what carries the gate past 7/9. Narrower cards lose those reads.
-CARD_W, CARD_H = 540, 620
+# Cards are pasted centered at a fixed REALISTIC card aspect (63:88 = 600x838), NOT
+# scaled to fill the cell. Real card geometry is deliberate: a card's interior
+# artwork band is a ~0.5*card_height vertical text gap that exceeds the inter-card
+# gutter gap, so a pure y-gap rule would split each card in two. That failure mode
+# must stay exercised by the fixture — binder's number-anchored cell clustering
+# (break AFTER the bottom-edge collector number) is what handles it, not squat cards.
+CARD_W, CARD_H = 600, 838
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "tests" / "corpus" / "binder"
 

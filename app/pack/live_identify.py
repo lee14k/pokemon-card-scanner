@@ -1,8 +1,11 @@
 """Single-card identification for the live scan mode.
 
 Two SMALL OCR passes (name band of the card crop + the native-res number
-strip) instead of whole-card OCR — that is the latency win. Decision ladder:
-name+number agree > name+denominator-unique > number+catalog-valid > VLM."""
+strip) instead of whole-card OCR — that is the latency win. The decision ladder
+itself (name+number agree > name+denominator-unique > number+catalog-valid >
+VLM) lives in ``identify_core.resolve_identity`` so the binder page flow can
+share it; this module owns the live-only framing (QR gate, the two band passes,
+FrameResult kinds)."""
 from __future__ import annotations
 
 import asyncio
@@ -11,26 +14,17 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
-from sqlalchemy import select
 
-from app.cards import cached_lookup_card, get_set_numerators
-from app.db.models import SetIdMap
-from app.db.session import async_session_maker
-from app.pack.matching import card_fields_from_match
-from app.pack.name_index import get_name_index
+from app.pack.identify_core import SessionPrior, resolve_identity
 from app.pack.ocr import CodeReading, is_code_card, parse_number, read_code_card
 from app.pack.rapidocr_reader import detect_lines
-from app.pokewallet import get_api_key
 from app.schemas import CodeCardResult, PackCard
 
+# Re-exported so app.pack.live_api / app.pack.live_session keep importing
+# SessionPrior from here unchanged (it now lives in identify_core).
+__all__ = ["SessionPrior", "FrameResult", "identify_frame"]
+
 log = logging.getLogger("pokemon_scanner.pack.live")
-
-
-@dataclass
-class SessionPrior:
-    set_id: str | None
-    set_name: str | None
-    denominator: str | None
 
 
 @dataclass
@@ -45,17 +39,6 @@ class FrameResult:
 def _name_band(card_bgr: np.ndarray) -> np.ndarray:
     h = card_bgr.shape[0]
     return card_bgr[: max(1, int(h * 0.25))]
-
-
-async def _pw_set_id_for(tcgdex_set_id: str) -> str | None:
-    """tcgdex set -> PokéWallet set_id via the set_id_map bridge table (built
-    by scripts/build_id_maps.py). me-era sets are self-referential (e.g.
-    "me05" -> "me05"); sets that haven't been mapped yet yield None, and the
-    card's identity still comes from the name index (price/image stay None)."""
-    async with async_session_maker() as session:
-        return (await session.execute(
-            select(SetIdMap.pokewallet_set_id)
-            .where(SetIdMap.tcgdex_set_id == tcgdex_set_id))).scalars().first()
 
 
 async def identify_frame(card_bgr: np.ndarray, strip_bgr: np.ndarray | None,
@@ -90,95 +73,22 @@ async def identify_frame(card_bgr: np.ndarray, strip_bgr: np.ndarray | None,
             reading = r
             break
 
-    # name: highest-confidence line in the TITLE band only (hard filter)
-    idx = await get_name_index()
-    den = reading.denominator if (reading and reading.denominator) \
-        else (prior.denominator if prior else None)
-    name_match = None
-    top_name_text = None
-    for _y, text, conf in sorted(name_lines, key=lambda t: -t[2]):
-        if top_name_text is None:
-            top_name_text = text
-        m = idx.match(text, denominator=den)
-        if m is not None:
-            name_match = m
-            break
-    # Fallback for prefixed "Trainer's Pokemon" names (e.g. Ascended Heroes): OCR
-    # frequently drops the "Erika's"/"Sabrina's" prefix, so the bare Pokemon name
-    # matches a commoner printing in another set ambiguously. If the session already
-    # knows the set, or the denominator uniquely identifies one, re-match scoped to
-    # that set's cards.
-    if (name_match is None or name_match.ambiguous) and top_name_text:
-        scoped = idx.match_in_set(
-            top_name_text,
-            set_id=(prior.set_id if prior and prior.set_id else None),
-            denominator=den)
-        if scoped is not None and not scoped.ambiguous:
-            name_match = scoped
+    # name candidates: title-band lines highest-confidence first (the y sort stays
+    # here; resolve_identity consumes them as (text, conf) best-first).
+    name_texts = [(t, c) for _y, t, c in sorted(name_lines, key=lambda t: -t[2])]
+    res = await resolve_identity(name_texts, reading, prior)
 
-    numerator = None
-    if reading is not None and reading.numerator:
-        numerator = reading.numerator.lstrip("0") or "0"
-
-    set_id = set_code = set_name = None
-    confident = False
-
-    if name_match and numerator and name_match.local_id.lstrip("0") == numerator:
-        confident = True                      # name + number agree
-    elif name_match and not name_match.ambiguous:
-        confident = True                      # unique name (+denominator prior)
-        numerator = numerator or (name_match.local_id.lstrip("0") or "0")
-    if name_match and confident:
-        set_name = name_match.set_name
-        set_code = name_match.tcgdex_set_id
-        set_id = await _pw_set_id_for(name_match.tcgdex_set_id)
-
-    if not confident and reading is not None and prior and prior.set_id:
-        valid = await get_set_numerators(prior.set_id)
-        if numerator and (not valid or numerator in valid):
-            confident = True                  # number valid in session's set
-            set_id, set_name = prior.set_id, prior.set_name
-
-    if not confident and (reading is None and name_match is None):
+    # Unreadable: nothing to go on — no number read AND no name match (name_match
+    # is None iff its score is None). Same short-circuit as before, mapped from the
+    # core's result rather than returned by it.
+    if not res.confident and reading is None and res.name_match_score is None:
         return FrameResult("unreadable", None, None, None, needs_vlm=True)
 
-    fields: dict = {"name": None, "rarity": None, "image_url": None, "match_id": None}
-    if set_id and numerator:
-        try:
-            match = await cached_lookup_card(set_id, numerator,
-                                             set_name=set_name, api_key=get_api_key())
-            fields = card_fields_from_match(match)
-        except Exception as e:
-            log.warning("live.lookup_failed err=%r", e)
-    if fields.get("name") is None and name_match is not None:
-        fields["name"] = name_match.card_name
-
-    display_number = None
-    if numerator:
-        den = reading.denominator if reading and reading.denominator else \
-            (prior.denominator if prior else None)
-        display_number = f"{numerator.zfill(3)}/{den}" if den else numerator
-
-    # Reason must name the stage that actually failed — a read number with an
-    # unresolved set is NOT "couldn't read the number" (misleading in the tray).
-    if confident:
-        reason = None
-    elif reading is None:
-        reason = "number_ambiguous"
-    elif set_id is None and set_name is None:
-        reason = "set_ambiguous"
-    else:
-        reason = "no_db_match"
     card = PackCard(
         row_index=-1,  # assigned by the session store
-        card_number=display_number, set_id=set_id, set_code=set_code,
-        set_name=set_name, confidence=0.9 if confident else 0.3,
-        low_confidence_reason=reason,
-        needs_review=not confident, **fields)
-    key = f"{set_code or set_name or '?'}:{numerator or normalize_key(fields.get('name'))}"
-    return FrameResult("card", card, None, key, needs_vlm=not confident)
-
-
-def normalize_key(name: str | None) -> str:
-    from app.pack.name_index import normalize_name
-    return normalize_name(name or "unknown")
+        card_number=res.display_number, set_id=res.set_id, set_code=res.set_code,
+        set_name=res.set_name, confidence=0.9 if res.confident else 0.3,
+        low_confidence_reason=res.low_confidence_reason,
+        needs_review=not res.confident, **res.fields)
+    return FrameResult("card", card, None, res.identity_key,
+                       needs_vlm=not res.confident)

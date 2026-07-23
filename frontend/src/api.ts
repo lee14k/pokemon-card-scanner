@@ -406,6 +406,52 @@ export async function getDex(): Promise<DexOut> {
   return parse(await fetch(`${base}/dex`, { credentials: "include" }));
 }
 
+// ── Binder scan → Collection ──────────────────────────────────────────────────
+export interface BinderCard extends PackCard {
+  cell: [number, number, number, number];
+  thumb_b64: string | null;
+  price_usd_low?: number | null;
+  price_usd_high?: number | null;
+}
+export interface BinderScan {
+  cards: BinderCard[];
+  grid: { rows: number; cols: number };
+  page_confidence: number;
+}
+export interface CollectionSaveOut {
+  added: number;
+  incremented: number;
+  total_cards: number;
+  encounters: Encounter[];
+}
+
+// Scan one binder page into a grid of PackCard-shaped cells (with thumbnails).
+// A decode failure or a page with no readable cards comes back as 422 — that
+// case rejects with `{ code: "no_cards_found" }` so the caller can show the
+// retake state without string-matching the error body.
+export async function scanBinder(page: Blob): Promise<BinderScan> {
+  const form = new FormData();
+  form.append("page", page, "page.jpg");
+  const res = await fetch(`${base}/scan/binder`, {
+    method: "POST",
+    credentials: "include",
+    body: form,
+  });
+  if (res.status === 422) throw { code: "no_cards_found" };
+  return parse<BinderScan>(res);
+}
+
+export async function saveToCollection(cards: BinderCard[]): Promise<CollectionSaveOut> {
+  return parse(
+    await fetch(`${base}/collection`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cards }),
+    })
+  );
+}
+
 export interface BattleCard { name: string | null; price: number | null; }
 export interface BattleSide { label: string; score: number | null; cards: BattleCard[]; }
 export interface Battle {

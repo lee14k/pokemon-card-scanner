@@ -2,18 +2,25 @@ import { useState } from "react";
 import "./App.css";
 import {
   savePull,
+  scanBinder,
+  saveToCollection,
   scanPack,
   scanPackStream,
+  type BinderCard,
+  type BinderScan,
   type CaptureMeta,
+  type CollectionSaveOut,
   type Encounter,
   type PackCard,
   type PackScanResponse,
   type ScanProgressEvent,
 } from "./api";
 import StaircaseCapture from "./capture/StaircaseCapture";
+import BinderCapture from "./capture/BinderCapture";
 import CodeCardCapture from "./capture/CodeCardCapture";
 import LiveScanScreen, { SESSION_STORAGE_KEY as LIVE_SESSION_STORAGE_KEY } from "./capture/LiveScanScreen";
 import ReviewScreen from "./review/ReviewScreen";
+import BinderReview from "./review/BinderReview";
 import { useAuth } from "./auth/AuthContext";
 import AuthForms from "./auth/AuthForms";
 import MyPulls from "./pulls/MyPulls";
@@ -31,6 +38,9 @@ type Step =
   | { name: "review"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta; liveSessionId?: string }
   | { name: "saving"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta; cards: PackCard[]; liveSessionId?: string }
   | { name: "summary"; verified: boolean; count: number; encounters: Encounter[]; pullId: string }
+  | { name: "binder_capture" }
+  | { name: "binder_review"; scan: BinderScan }
+  | { name: "binder_summary"; out: CollectionSaveOut }
   | { name: "error"; message: string };
 
 function submittingStageText(step: Extract<Step, { name: "submitting" }>): string {
@@ -109,6 +119,39 @@ export default function App() {
     }
   };
 
+  const submitBinder = async (page: Blob) => {
+    setStep({ name: "submitting" });
+    try {
+      const scan = await scanBinder(page);
+      setStep({ name: "binder_review", scan });
+    } catch (e) {
+      // scanBinder rejects with `{ code: "no_cards_found" }` for a decode
+      // failure or an unreadable page — route that to an empty-cards review so
+      // BinderReview shows its retake state; anything else is a real error.
+      if (e && typeof e === "object" && "code" in e && (e as { code: unknown }).code === "no_cards_found") {
+        setStep({ name: "binder_review", scan: { cards: [], grid: { rows: 0, cols: 0 }, page_confidence: 0 } });
+      } else {
+        setStep({ name: "error", message: e instanceof Error ? e.message : String(e) });
+      }
+    }
+  };
+
+  const doSaveCollection = async (cards: BinderCard[]) => {
+    // Auth gate mirrors doSave: open the login modal and bail; BinderReview
+    // keeps the (possibly edited) cards, so re-clicking Save after login saves.
+    if (!trainer) {
+      setAuthOpen(true);
+      return;
+    }
+    setStep({ name: "submitting" });
+    try {
+      const out = await saveToCollection(cards);
+      setStep({ name: "binder_summary", out });
+    } catch (e) {
+      setStep({ name: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
   return (
     <main className="app">
       <header className="app-header">
@@ -160,6 +203,48 @@ export default function App() {
               </button>
               <button type="button" onClick={() => setStep({ name: "live" })}>
                 Live
+              </button>
+              <button type="button" onClick={() => setStep({ name: "binder_capture" })}>
+                Binder page
+              </button>
+            </section>
+          )}
+          {step.name === "binder_capture" && (
+            <BinderCapture onDone={(photo) => submitBinder(photo)} />
+          )}
+          {step.name === "binder_review" && (
+            <BinderReview
+              scan={step.scan}
+              onConfirm={(cards) => doSaveCollection(cards)}
+              onRetake={() => setStep({ name: "binder_capture" })}
+            />
+          )}
+          {step.name === "binder_summary" && (
+            <section>
+              <h2>Saved to your Collection</h2>
+              <p>
+                {step.out.added} new card{step.out.added === 1 ? "" : "s"} added
+                {step.out.incremented > 0
+                  ? ` · ${step.out.incremented} already had (qty bumped)`
+                  : ""}
+                {" · "}
+                {step.out.total_cards} cards total.
+              </p>
+              {step.out.encounters.length > 0 && (
+                <ul className="card-rows">
+                  {step.out.encounters.map((e) => (
+                    <li key={e.species} className="card-row">
+                      <div className="card-row-body">
+                        {e.new
+                          ? <strong>✨ NEW! {e.species} registered to your Pokédex!</strong>
+                          : <span>You saw a wild {e.species} again (×{e.count})</span>}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <button type="button" className="primary" onClick={() => setStep({ name: "binder_capture" })}>
+                Scan another page
               </button>
             </section>
           )}

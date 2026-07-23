@@ -452,6 +452,45 @@ export async function saveToCollection(cards: BinderCard[]): Promise<CollectionS
   );
 }
 
+export interface CollectionCardOut {
+  id: string;
+  set_code: string | null;
+  set_name: string | null;
+  card_number: string | null;
+  name: string | null;
+  image_url: string | null;
+  qty: number;
+  price_usd_low?: number | null;
+  price_usd_high?: number | null;
+}
+export interface CollectionOut {
+  cards: CollectionCardOut[];
+  total_qty: number;
+  estimated_value: number | null;
+  priced_as_of: string | null;
+}
+
+export async function getCollection(): Promise<CollectionOut> {
+  return parse(await fetch(`${base}/collection`, { credentials: "include" }));
+}
+
+export async function patchCollectionQty(id: string, qty: number): Promise<void> {
+  await parse(
+    await fetch(`${base}/collection/${id}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ qty }),
+    })
+  );
+}
+
+export async function deleteCollectionCard(id: string): Promise<void> {
+  await parse(
+    await fetch(`${base}/collection/${id}`, { method: "DELETE", credentials: "include" })
+  );
+}
+
 export interface BattleCard { name: string | null; price: number | null; }
 export interface BattleSide { label: string; score: number | null; cards: BattleCard[]; }
 export interface Battle {

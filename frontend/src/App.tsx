@@ -24,6 +24,7 @@ import BinderReview from "./review/BinderReview";
 import { useAuth } from "./auth/AuthContext";
 import AuthForms from "./auth/AuthForms";
 import MyPulls from "./pulls/MyPulls";
+import Collection from "./collection/Collection";
 import Dashboard from "./dashboard/Dashboard";
 import Dex from "./dex/Dex";
 import Battles from "./battles/Battles";
@@ -68,7 +69,7 @@ function supportsScanStream(): boolean {
 export default function App() {
   const { trainer, loading, logout } = useAuth();
   const [step, setStep] = useState<Step>({ name: "mode" });
-  const [view, setView] = useState<"home" | "scan" | "pulls" | "dashboard" | "dex" | "battles">("home");
+  const [view, setView] = useState<"home" | "scan" | "pulls" | "collection" | "dashboard" | "dex" | "battles">("home");
   const [battlePull, setBattlePull] = useState<string | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const canViewStats = trainer?.role === "analyst" || trainer?.role === "admin";
@@ -164,6 +165,7 @@ export default function App() {
           <button type="button" onClick={() => { setStep({ name: "mode" }); setView("scan"); }}>Scan</button>
           <button type="button" onClick={() => setView("pulls")} disabled={!trainer}>My Pulls</button>
           <button type="button" onClick={() => setView("dex")} disabled={!trainer}>Pokédex</button>
+          <button type="button" onClick={() => setView("collection")} disabled={!trainer}>Collection</button>
           <button type="button" onClick={() => setView("battles")} disabled={!trainer}>Battles</button>
           {canViewStats && (
             <button type="button" onClick={() => setView("dashboard")}>Dashboard</button>
@@ -186,6 +188,8 @@ export default function App() {
       )}
 
       {view === "pulls" && trainer && <MyPulls />}
+
+      {view === "collection" && trainer && <Collection />}
 
       {view === "dashboard" && canViewStats && <Dashboard />}
 
@@ -245,6 +249,9 @@ export default function App() {
               )}
               <button type="button" className="primary" onClick={() => setStep({ name: "binder_capture" })}>
                 Scan another page
+              </button>
+              <button type="button" onClick={() => setView("collection")}>
+                View Collection
               </button>
             </section>
           )}

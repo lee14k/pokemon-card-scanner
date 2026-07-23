@@ -40,7 +40,7 @@ type Step =
   | { name: "saving"; scan: PackScanResponse; staircase: Blob; code: Blob; meta?: CaptureMeta; cards: PackCard[]; liveSessionId?: string }
   | { name: "summary"; verified: boolean; count: number; encounters: Encounter[]; pullId: string }
   | { name: "binder_capture" }
-  | { name: "binder_review"; scan: BinderScan }
+  | { name: "binder_review"; scan: BinderScan; photo: Blob }
   | { name: "binder_summary"; out: CollectionSaveOut }
   | { name: "error"; message: string };
 
@@ -124,13 +124,13 @@ export default function App() {
     setStep({ name: "submitting" });
     try {
       const scan = await scanBinder(page);
-      setStep({ name: "binder_review", scan });
+      setStep({ name: "binder_review", scan, photo: page });
     } catch (e) {
       // scanBinder rejects with `{ code: "no_cards_found" }` for a decode
       // failure or an unreadable page — route that to an empty-cards review so
       // BinderReview shows its retake state; anything else is a real error.
       if (e && typeof e === "object" && "code" in e && (e as { code: unknown }).code === "no_cards_found") {
-        setStep({ name: "binder_review", scan: { cards: [], grid: { rows: 0, cols: 0 }, page_confidence: 0 } });
+        setStep({ name: "binder_review", scan: { cards: [], grid: { rows: 0, cols: 0 }, page_confidence: 0 }, photo: page });
       } else {
         setStep({ name: "error", message: e instanceof Error ? e.message : String(e) });
       }
@@ -219,6 +219,7 @@ export default function App() {
           {step.name === "binder_review" && (
             <BinderReview
               scan={step.scan}
+              photo={step.photo}
               onConfirm={(cards) => doSaveCollection(cards)}
               onRetake={() => setStep({ name: "binder_capture" })}
             />

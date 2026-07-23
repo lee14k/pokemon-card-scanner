@@ -52,6 +52,10 @@ def species_of(card_name: str | None) -> str | None:
         tokens.pop()
     while tokens and tokens[0].lower() in _PREFIX_TOKENS:
         tokens.pop(0)
+    # Trainer's Pokemon ("Erika's Oddish", "Sabrina's ..."): the species is what
+    # follows a leading possessive token.
+    if len(tokens) > 1 and re.search(r"[’']s$", tokens[0].lower()):
+        tokens.pop(0)
     if not tokens:
         return None
     return _species_map().get(_alnum_key(" ".join(tokens)))

@@ -122,13 +122,16 @@ async def scan_pack_endpoint(
         None, description='Guided-capture metadata JSON: {"guide_positions":[y...],"image_dims":[w,h],"declared_count":n}'
     ),
 ) -> PackScanResponse:
-    # Warm the RunPod worker FIRST, so its ~16GB cold load overlaps the upload read
-    # + segmentation + OCR instead of landing inside the background VLM call.
-    # Debounced + fire-and-forget inside kick() (app/pack/vlm_client.py).
-    vlm_client.kick()
     stair_bytes = await _read_image(staircase, "staircase")
     code_bytes = await _read_image(code_card, "code_card")
     meta = _parse_capture_meta(capture_meta)
+    # Warm the RunPod worker only AFTER the request has proven itself. This route
+    # is UNAUTHENTICATED, and each ping is a billable serverless job that also
+    # holds the endpoint above zero workers — so a junk/0-byte upload, or a bot
+    # polling this path every 5 minutes, must not be able to spend GPU time.
+    # Everything below is still ahead of the VLM call, so the load overlaps
+    # segmentation + OCR. Debounced + fire-and-forget (app/pack/vlm_client.py).
+    vlm_client.kick()
 
     try:
         return await scan_pack(stair_bytes, code_bytes, meta)
@@ -147,10 +150,11 @@ async def scan_pack_stream_endpoint(
     """SSE variant of /scan/pack: streams {stage} progress events while the
     scan runs, then a terminal `result` (or `error`) event. Purely additive —
     /scan/pack above is untouched and remains the non-streaming fallback."""
-    vlm_client.kick()   # same warm-up as /scan/pack (debounced, fire-and-forget)
     stair_bytes = await _read_image(staircase, "staircase")
     code_bytes = await _read_image(code_card, "code_card")
     meta = _parse_capture_meta(capture_meta)
+    vlm_client.kick()   # after validation, exactly as /scan/pack above — same
+                        # unauthenticated route, same billable-ping reasoning
 
     return StreamingResponse(
         scan_pack_sse(stair_bytes, code_bytes, meta),

@@ -70,11 +70,19 @@ async def warmup() -> None:
         async with httpx.AsyncClient(timeout=WARMUP_TIMEOUT_S) as client:
             r = await client.post(f"{base}/runsync", json={"input": {"cards": []}},
                                   headers=_auth())
-        log.info("vlm.warmup ok status=%s ms=%.0f", r.status_code,
-                 (time.perf_counter() - t0) * 1000)
+        ms = (time.perf_counter() - t0) * 1000
+        if r.status_code >= 400:
+            # This ping is the ONLY thing that validates VLM_ENDPOINT/VLM_API_KEY
+            # before a card depends on them, so a 401/404 must read as a
+            # misconfiguration and not as "warmup ok status=401". identify() logs
+            # the same 401 case, but only once a scan has already flagged a card.
+            log.error("vlm.warmup_rejected status=%s ms=%.0f "
+                      "(check VLM_ENDPOINT / VLM_API_KEY)", r.status_code, ms)
+        else:
+            log.info("vlm.warmup ok status=%s ms=%.0f", r.status_code, ms)
     except Exception as e:
         # Never load-bearing: a warm-up that fails costs nothing but a log line.
-        log.info("vlm.warmup err=%r ms=%.0f", e, (time.perf_counter() - t0) * 1000)
+        log.warning("vlm.warmup err=%r ms=%.0f", e, (time.perf_counter() - t0) * 1000)
 
 
 def kick() -> None:

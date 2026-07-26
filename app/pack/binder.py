@@ -413,8 +413,11 @@ def _thumb(crop) -> str | None:
 
 def _page_modal(cells: list[BinderCell]) -> SessionPrior | None:
     """The page's own modal set as a prior, or None when the page hasn't earned
-    one. PURE: reads only ``cell.card.set_id``/``needs_review`` and the memoized
-    denominator table — no I/O, no request state, no mutation.
+    one. Pure in the sense that matters for reuse: reads only
+    ``cell.card.set_id``/``needs_review`` plus the denominator table, mutates
+    nothing, and is deterministic on its input. Not I/O-free on the very first
+    call in a process — ``entry_for_set_id`` loads the (memoized) table, which
+    reads a JSON file; every later call is pure computation.
 
     Mirrors the pack's modal-hint derivation (pipeline._vlm_payload +
     _apply_constraints): vote among the CONFIDENT cells only, and require
@@ -423,6 +426,13 @@ def _page_modal(cells: list[BinderCell]) -> SessionPrior | None:
     scrapbook. The denominator comes from the elected set's catalog row and only
     when that row has exactly ONE denominator: a set with reprint denominators
     (or none recorded) has no single right answer to offer.
+
+    The winner must be the STRICT maximum. A tie means the page has no dominant
+    set, and breaking it on ``Counter`` insertion order would hand the worker a
+    coin-flip set plus a coin-flip denominator — which is not harmless (see
+    ``_vlm_payload``: a hint CAN reach an identity). The synthetic 3x3 fixture is
+    exactly this case (me05 x2 vs me02.5 x2, and neither is the set of either
+    flagged cell), so it correctly yields no hint.
 
     ``needs_review`` rather than the frozen ``needs_vlm`` flag, so a caller that
     runs this AFTER a VLM merge sees the cells that are confident NOW — which is
@@ -436,8 +446,9 @@ def _page_modal(cells: list[BinderCell]) -> SessionPrior | None:
                     if not c.card.needs_review and c.card.set_id)
     if not votes:
         return None
-    set_id, n = votes.most_common(1)[0]
-    if n < _MODAL_MIN_SUPPORT:
+    top = votes.most_common(2)
+    set_id, n = top[0]
+    if n < _MODAL_MIN_SUPPORT or (len(top) > 1 and top[1][1] == n):
         return None
     entry = entry_for_set_id(set_id)
     if entry is None:
@@ -458,10 +469,25 @@ def _vlm_payload(cells: list[BinderCell], crops: list) -> list[dict]:
 
     The page's modal set rides along as a HINT (``_page_modal``) — the pack flow
     has always sent one and the binder sent nulls, so the worker got no context
-    at all for exactly the cells that read worst. It is only ever prompt context:
-    every vlm_merge guard (accept threshold, duplicate collapse, OCR
-    corroboration, denominator contradiction) still judges the answer on its own,
-    so a wrong hint cannot promote a wrong identity."""
+    at all for exactly the cells that read worst.
+
+    A hint is NOT harmless, which is why ``_page_modal`` demands a strict
+    majority-of-one before offering it. The guards in ``apply_vlm_answer`` do not
+    contain a hint the model has echoed back:
+      * a NAMELESS answer skips the name cross-check entirely (it only runs when
+        the worker returned a name), and
+      * ``_numerator_corroborated`` deliberately passes when the cell's own OCR
+        read no N/N pattern at all ("OCR was blind here: no contradiction") —
+        which is precisely the state of the cells we send, and
+      * the echoed set_name/denominator is what pins ``set_id``, which then fills
+        ``name`` via the keyed re-lookup,
+    so on an OCR-blind cell a hint-consistent nameless answer clears
+    needs_review on the strength of the hint alone. In the other direction an
+    echoed denominator can empty the name-first candidate list (the
+    denominator-contradiction veto) and kill a CORRECT name resolution.
+
+    Hence: hint only when the page really has one dominant set, and never
+    override a guard to make room for one."""
     prior = _page_modal(cells)
     payload: list[dict] = []
     for c, crop in zip(cells, crops):

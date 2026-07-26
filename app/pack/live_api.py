@@ -22,6 +22,7 @@ from app.pack.live_identify import identify_frame
 from app.pack.pipeline import OCR_GATE, _decode
 from app.prices import latest_price_map
 from app.schemas import CodeCardResult, PackCard, PackScanResponse
+from app.timing import new_scan_id, stage
 
 log = logging.getLogger("pokemon_scanner.pack.live_api")
 router = APIRouter(prefix="/scan/live", tags=["live-scan"])
@@ -68,32 +69,46 @@ async def frame(
     card: UploadFile = File(...),
     strip: UploadFile | None = File(None),
 ) -> dict:
-    s = await _sess(sid, trainer)
-    if s.frame_lock.locked():
-        raise HTTPException(409, "busy")
-    async with s.frame_lock:
-        card_bytes = await card.read()
-        img = _decode(card_bytes)
-        if img is None:
-            raise HTTPException(422, "unreadable image")
-        strip_img = None
-        if strip is not None:
-            strip_img = _decode(await strip.read())
+    scan_id = new_scan_id()
+    with stage("live", "total", scan_id):
+        s = await _sess(sid, trainer)
+        if s.frame_lock.locked():
+            raise HTTPException(409, "busy")
+        async with s.frame_lock:
+            card_bytes = await card.read()
+            with stage("live", "decode", scan_id):
+                img = _decode(card_bytes)
+                if img is None:
+                    raise HTTPException(422, "unreadable image")
+                strip_img = None
+                if strip is not None:
+                    strip_img = _decode(await strip.read())
 
-        async with OCR_GATE:
-            res = await identify_frame(img, strip_img, s.prior())
+            # `async with OCR_GATE` expanded so the queueing delay (how long this
+            # frame waited for an OCR slot) is measured separately from the work —
+            # under concurrent scanners the wait IS the latency. acquire()/release()
+            # in a finally is exactly what the async-with does, so behavior is
+            # unchanged.
+            with stage("live", "gate_wait", scan_id):
+                await OCR_GATE.acquire()
+            try:
+                with stage("live", "identify", scan_id):
+                    res = await identify_frame(img, strip_img, s.prior())
+            finally:
+                OCR_GATE.release()
 
-        if res.card is not None:
-            await _attach_price(res.card)
+            if res.card is not None:
+                with stage("live", "prices", scan_id):
+                    await _attach_price(res.card)
 
-        event = s.add_frame_result(res, card_bytes)
-        return {
-            "event": event.event,
-            "card": event.card,
-            "pending_vlm": event.pending_vlm,
-            "code_card": s.code,
-            "cards_count": len(s.cards),
-        }
+            event = s.add_frame_result(res, card_bytes)
+            return {
+                "event": event.event,
+                "card": event.card,
+                "pending_vlm": event.pending_vlm,
+                "code_card": s.code,
+                "cards_count": len(s.cards),
+            }
 
 
 @router.get("/{sid}")

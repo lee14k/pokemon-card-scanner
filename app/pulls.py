@@ -25,6 +25,7 @@ from app.dex.species import species_of
 from app.prices import latest_price_map
 from app.pack.ocr import read_code_card
 from app.storage import move_session_frames, open_photo, save_code_photo, save_pull_photos
+from app.timing import new_scan_id, stage
 
 log = logging.getLogger("pokemon_scanner.pulls")
 
@@ -140,88 +141,94 @@ async def save_pull(
     capture_meta: str | None = Form(None, description="Guided-capture metadata JSON"),
     live_session_id: str | None = Form(None, description="Live-scan session id (frames to adopt)"),
 ) -> PullOut:
-    stair_bytes = await _read_image(staircase, "staircase")
-    code_bytes = await _read_image(code_card, "code_card")
-    try:
-        card_list = json.loads(cards)
-        assert isinstance(card_list, list)
-        # Coerce/validate numeric fields up front so a malformed entry is a clean 400,
-        # not a 500 deep in the insert loop (after photos are already on disk).
-        for i, c in enumerate(card_list):
-            assert isinstance(c, dict)
-            c["row_index"] = int(c.get("row_index", i))
-            c["confidence"] = float(c.get("confidence", 0.0))
-    except (json.JSONDecodeError, AssertionError, ValueError, TypeError):
-        raise HTTPException(400, "cards: must be a JSON array of card objects")
-
-    meta_obj: dict | None = None
-    if capture_meta:
+    scan_id = new_scan_id()
+    with stage("pull", "total", scan_id):
+        stair_bytes = await _read_image(staircase, "staircase")
+        code_bytes = await _read_image(code_card, "code_card")
         try:
-            meta_obj = json.loads(capture_meta)
-            assert isinstance(meta_obj, dict)
-        except (json.JSONDecodeError, AssertionError):
-            raise HTTPException(400, "capture_meta: must be a JSON object")
-
-    pull_id = uuid.uuid4()
-    staircase_path, code_path = save_pull_photos(trainer.id, pull_id, stair_bytes, code_bytes)
-
-    # Server re-OCRs the code (authoritative — clients cannot spoof the verified flag).
-    code_img = cv2.imdecode(np.frombuffer(code_bytes, np.uint8), cv2.IMREAD_COLOR)
-    cr = read_code_card(code_img) if code_img is not None else None
-    code = cr.code if cr else None
-    code_norm = _normalize_code(code)
-    code_ok = bool(cr and cr.format_ok)
-    code_conf = float(cr.confidence) if cr else 0.0
-
-    want_verified = bool(code_norm) and code_ok
-
-    async with async_session_maker() as session:
-        saved = await _insert_pull(
-            session, trainer_id=trainer.id, pull_id=pull_id, capture_path=capture_path,
-            pack_confidence=pack_confidence, segmentation_warning=segmentation_warning,
-            code=code, code_norm=code_norm, code_conf=code_conf, code_ok=code_ok,
-            want_verified=want_verified, staircase_path=staircase_path, code_path=code_path,
-            card_list=card_list, capture_meta=meta_obj,
-        )
-
-        # Live pulls: their staircase is a SYNTHETIC contact-sheet, so rederive can't
-        # re-OCR them. Instead the client-confirmed cards ARE the server's own /finish
-        # output (server-OCR'd, authoritative) — write them straight to the derived
-        # table and mark the pull done so stats aggregation reads them and rederive
-        # skips it. Runs once here on the committed pull (kept out of _insert_pull's
-        # verified-retry loop) and regardless of verified state. Non-live pulls are
-        # completely unchanged by this block.
-        if capture_path == "live":
+            card_list = json.loads(cards)
+            assert isinstance(card_list, list)
+            # Coerce/validate numeric fields up front so a malformed entry is a clean 400,
+            # not a 500 deep in the insert loop (after photos are already on disk).
             for i, c in enumerate(card_list):
-                session.add(PullCardDerived(
-                    pull_id=saved.id, row_index=int(c.get("row_index", i)),
-                    card_number=c.get("card_number"), set_id=c.get("set_id"),
-                    set_code=c.get("set_code"), set_name=c.get("set_name"),
-                    name=c.get("name"), rarity=c.get("rarity"),
-                    match_id=c.get("match_id"), confidence=float(c.get("confidence", 0.0)),
-                ))
-            saved.derive_status = DeriveStatus.done
-            saved.derived_at = datetime.datetime.now(datetime.timezone.utc)
-            await session.commit()
-            # Adopt the live session's per-card frames into the pull dir. Purely a
-            # bonus (training data / review thumbnails) — a swept session or any
-            # filesystem hiccup must never fail an otherwise-saved pull.
-            if live_session_id:
-                try:
-                    moved = move_session_frames(live_session_id, trainer.id, saved.id)
-                    log.info("live_save.frames_moved pull=%s session=%s count=%s",
-                             saved.id, live_session_id, moved)
-                except Exception as e:  # pragma: no cover - defensive
-                    log.warning("live_save.frame_move_failed pull=%s session=%s err=%r",
-                                saved.id, live_session_id, e)
+                assert isinstance(c, dict)
+                c["row_index"] = int(c.get("row_index", i))
+                c["confidence"] = float(c.get("confidence", 0.0))
+        except (json.JSONDecodeError, AssertionError, ValueError, TypeError):
+            raise HTTPException(400, "cards: must be a JSON array of card objects")
 
-        out = _pull_to_out(saved)
-        try:
-            out.encounters = await _compute_encounters(session, trainer.id, saved)
-        except Exception:  # the dex moment must never break persistence
-            out.encounters = []
-        prices, as_of = await latest_price_map(session)
-        return _enrich_prices(out, prices, as_of)
+        meta_obj: dict | None = None
+        if capture_meta:
+            try:
+                meta_obj = json.loads(capture_meta)
+                assert isinstance(meta_obj, dict)
+            except (json.JSONDecodeError, AssertionError):
+                raise HTTPException(400, "capture_meta: must be a JSON object")
+
+        pull_id = uuid.uuid4()
+        with stage("pull", "photos", scan_id):
+            staircase_path, code_path = save_pull_photos(
+                trainer.id, pull_id, stair_bytes, code_bytes)
+
+        # Server re-OCRs the code (authoritative — clients cannot spoof the verified flag).
+        with stage("pull", "code_ocr", scan_id):
+            code_img = cv2.imdecode(np.frombuffer(code_bytes, np.uint8), cv2.IMREAD_COLOR)
+            cr = read_code_card(code_img) if code_img is not None else None
+        code = cr.code if cr else None
+        code_norm = _normalize_code(code)
+        code_ok = bool(cr and cr.format_ok)
+        code_conf = float(cr.confidence) if cr else 0.0
+
+        want_verified = bool(code_norm) and code_ok
+
+        async with async_session_maker() as session:
+            with stage("pull", "insert", scan_id):
+                saved = await _insert_pull(
+                    session, trainer_id=trainer.id, pull_id=pull_id, capture_path=capture_path,
+                    pack_confidence=pack_confidence, segmentation_warning=segmentation_warning,
+                    code=code, code_norm=code_norm, code_conf=code_conf, code_ok=code_ok,
+                    want_verified=want_verified, staircase_path=staircase_path,
+                    code_path=code_path, card_list=card_list, capture_meta=meta_obj,
+                )
+
+            # Live pulls: their staircase is a SYNTHETIC contact-sheet, so rederive can't
+            # re-OCR them. Instead the client-confirmed cards ARE the server's own /finish
+            # output (server-OCR'd, authoritative) — write them straight to the derived
+            # table and mark the pull done so stats aggregation reads them and rederive
+            # skips it. Runs once here on the committed pull (kept out of _insert_pull's
+            # verified-retry loop) and regardless of verified state. Non-live pulls are
+            # completely unchanged by this block.
+            if capture_path == "live":
+                for i, c in enumerate(card_list):
+                    session.add(PullCardDerived(
+                        pull_id=saved.id, row_index=int(c.get("row_index", i)),
+                        card_number=c.get("card_number"), set_id=c.get("set_id"),
+                        set_code=c.get("set_code"), set_name=c.get("set_name"),
+                        name=c.get("name"), rarity=c.get("rarity"),
+                        match_id=c.get("match_id"), confidence=float(c.get("confidence", 0.0)),
+                    ))
+                saved.derive_status = DeriveStatus.done
+                saved.derived_at = datetime.datetime.now(datetime.timezone.utc)
+                await session.commit()
+                # Adopt the live session's per-card frames into the pull dir. Purely a
+                # bonus (training data / review thumbnails) — a swept session or any
+                # filesystem hiccup must never fail an otherwise-saved pull.
+                if live_session_id:
+                    try:
+                        moved = move_session_frames(live_session_id, trainer.id, saved.id)
+                        log.info("live_save.frames_moved pull=%s session=%s count=%s",
+                                 saved.id, live_session_id, moved)
+                    except Exception as e:  # pragma: no cover - defensive
+                        log.warning("live_save.frame_move_failed pull=%s session=%s err=%r",
+                                    saved.id, live_session_id, e)
+
+            out = _pull_to_out(saved)
+            try:
+                out.encounters = await _compute_encounters(session, trainer.id, saved)
+            except Exception:  # the dex moment must never break persistence
+                out.encounters = []
+            prices, as_of = await latest_price_map(session)
+            return _enrich_prices(out, prices, as_of)
 
 
 async def _insert_pull(session: AsyncSession, *, trainer_id, pull_id, capture_path,

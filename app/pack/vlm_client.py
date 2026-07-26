@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import time
 
 import cv2
 import httpx
@@ -48,6 +49,11 @@ async def identify(cards: list[dict], timeout: float = 90.0) -> dict[int, dict] 
         })
     if not payload_cards:
         return None
+    # Round-trip cost of the remote worker, with the request weight that drives it
+    # (serverless cold start + b64 upload dominate this call). Logged in a `finally`
+    # so a timeout/error records its wall time too — the slow cases matter most.
+    payload_bytes = sum(len(c["image_b64"]) for c in payload_cards)
+    t0 = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             r = await client.post(
@@ -64,3 +70,6 @@ async def identify(cards: list[dict], timeout: float = 90.0) -> dict[int, dict] 
     except (httpx.HTTPError, ValueError) as e:
         log.warning("vlm.identify_failed err=%r", e)
         return None
+    finally:
+        log.info("timing.vlm.identify cards=%s bytes=%s ms=%.1f",
+                 len(payload_cards), payload_bytes, (time.perf_counter() - t0) * 1000)

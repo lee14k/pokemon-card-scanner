@@ -16,6 +16,7 @@ import io
 import json
 import os
 import re
+import time
 
 import runpod
 import torch
@@ -66,7 +67,12 @@ def _identify(model, processor, img: Image.Image, hint_set, hint_den) -> dict:
     image_inputs, _ = process_vision_info(messages)
     inputs = processor(text=[text], images=image_inputs, padding=True,
                        return_tensors="pt").to(model.device)
+    # Per-card generate seconds — the single dominant cost of a VLM batch, and the
+    # number that decides whether batching or a smaller model is worth it. RunPod
+    # captures stdout, so a plain print is the log here.
+    _t0 = time.perf_counter()
     gen = model.generate(**inputs, max_new_tokens=128, do_sample=False)
+    print(f"timing.worker.generate s={time.perf_counter() - _t0:.2f}", flush=True)
     reply = processor.batch_decode(
         [g[len(i):] for i, g in zip(inputs.input_ids, gen)],
         skip_special_tokens=True)[0]
@@ -85,9 +91,14 @@ def _identify(model, processor, img: Image.Image, hint_set, hint_den) -> dict:
 
 
 def handler(job):
+    # Batch wall clock includes the cold-start model load, which is exactly what the
+    # caller's timeout has to cover — so it is timed from the very first statement.
+    t_batch = time.perf_counter()
     model, processor = _load()
+    print(f"timing.worker.load s={time.perf_counter() - t_batch:.2f}", flush=True)
     out = []
     for c in (job.get("input") or {}).get("cards") or []:
+        t_card = time.perf_counter()
         try:
             img = Image.open(io.BytesIO(base64.b64decode(c["image_b64"]))).convert("RGB")
             res = _identify(model, processor, img, c.get("hint_set"), c.get("hint_denominator"))
@@ -96,6 +107,10 @@ def handler(job):
                    "name": None, "confidence": 0.0, "error": str(e)}
         res["row_index"] = c.get("row_index")
         out.append(res)
+        print(f"timing.worker.card row={res['row_index']} "
+              f"s={time.perf_counter() - t_card:.2f}", flush=True)
+    print(f"timing.worker.batch cards={len(out)} "
+          f"s={time.perf_counter() - t_batch:.2f}", flush=True)
     return {"cards": out}
 
 

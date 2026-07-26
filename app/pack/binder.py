@@ -34,6 +34,7 @@ from app.pack.ocr import parse_number
 from app.pack.pipeline import OCR_GATE, _decode
 from app.pack.rapidocr_reader import detect_lines_xy
 from app.schemas import PackCard
+from app.timing import new_scan_id, stage
 
 log = logging.getLogger("pokemon_scanner.pack.binder")
 
@@ -450,11 +451,15 @@ async def _attach_prices(cells: list[BinderCell]) -> None:
         log.warning("binder.price_failed err=%r", e)
 
 
-async def _finish(cell_specs: list, rows: int, cols: int) -> dict:
+async def _finish(cell_specs: list, rows: int, cols: int,
+                  scan_id: str | None = None) -> dict:
     """Shared tail for both cell finders. ``cell_specs`` is an ordered list of
     (cell_box, crop, IdentityResult); builds the PackCards, thumbs, runs the VLM
     batch on the flagged cells (with their crops) and prices, and assembles the
-    response. Row indices are (re)assigned in the given reading order."""
+    response. Row indices are (re)assigned in the given reading order.
+
+    ``scan_id`` is carried purely so the VLM/price timing lines correlate with the
+    rest of this page's ``timing.binder.*`` lines."""
     cells: list[BinderCell] = []
     crops: list = []
     texts_by_row: dict[int, list[str]] = {}
@@ -470,8 +475,10 @@ async def _finish(cell_specs: list, rows: int, cols: int) -> dict:
         cells.append(BinderCell(cell=box, card=card,
                                 thumb_b64=_thumb(crop), needs_vlm=not res.confident))
 
-    await _run_vlm(cells, crops, texts_by_row)
-    await _attach_prices(cells)
+    with stage("binder", "vlm", scan_id):
+        await _run_vlm(cells, crops, texts_by_row)
+    with stage("binder", "prices", scan_id):
+        await _attach_prices(cells)
 
     page_confidence = pack_confidence([c.card.confidence for c in cells])
     log.info("binder.done grid=%sx%s cells=%s flagged=%s page_conf=%.3f",
@@ -487,14 +494,17 @@ async def _finish(cell_specs: list, rows: int, cols: int) -> dict:
             "page_confidence": page_confidence}
 
 
-async def _scan_text_clusters(img, W: int, H: int) -> dict:
+async def _scan_text_clusters(img, W: int, H: int, scan_id: str | None = None) -> dict:
     """FALLBACK cell finder: whole-photo OCR + geometric gap-clustering.
 
     Kept unchanged as the fallback for borderless/edge-case photos where quad
     detection finds fewer than two cards. Columns split on x-gaps; per-card
     cells split on the collector-number anchor (with a y-gap fallback for
     numberless columns), then contour-refined crops feed the shared tail."""
-    lines = await asyncio.to_thread(detect_lines_xy, img, _CAP)
+    # Same stage name as the quad path's per-cell burst: this whole-photo pass is
+    # the fallback's equivalent OCR step, so one grep covers both cell finders.
+    with stage("binder", "ocr_cells", scan_id):
+        lines = await asyncio.to_thread(detect_lines_xy, img, _CAP)
     lines = [line for line in lines if line[3] >= 0.5 and len(line[2].strip()) >= 2]
     if not lines:
         raise ValueError("no_cards_found")
@@ -530,7 +540,7 @@ async def _scan_text_clusters(img, W: int, H: int) -> dict:
         x, y, w, h = refine_card_box(img, coarse)
         crop = img[y:y + h, x:x + w]
         cell_specs.append(((x, y, w, h), crop, res, [line[2] for line in cell]))
-    return await _finish(cell_specs, rows, cols)
+    return await _finish(cell_specs, rows, cols, scan_id)
 
 
 async def scan_binder_page(page_bytes: bytes) -> dict:
@@ -540,22 +550,27 @@ async def scan_binder_page(page_bytes: bytes) -> dict:
 
     PRIMARY path: structure-first card-quad detection (survives full-art faces).
     FALLBACK path: whole-photo text clustering (borderless/edge-case photos)."""
-    img = await asyncio.to_thread(_decode, page_bytes)
-    if img is None:
-        raise ValueError("no_cards_found")
-    H, W = img.shape[:2]
+    scan_id = new_scan_id()
+    with stage("binder", "total", scan_id):
+        with stage("binder", "decode", scan_id):
+            img = await asyncio.to_thread(_decode, page_bytes)
+        if img is None:
+            raise ValueError("no_cards_found")
+        H, W = img.shape[:2]
 
-    quads = await asyncio.to_thread(_find_card_quads, img)
-    if len(quads) >= 2:
-        log.info("binder.quads found=%s fallback=%s", len(quads), False)
-        ordered, rows, cols = _quad_reading_order(quads)
-        # Warm the lazily-loaded RapidOCR engine single-threaded BEFORE the
-        # concurrent per-cell burst: several cells' first OCR calls would
-        # otherwise race the engine init and some return empty (dropped reads).
-        await asyncio.to_thread(detect_lines_xy, img[:64, :64], 64)
-        specs = await asyncio.gather(
-            *(_identify_quad_cell(img, box, W, H) for box in ordered))
-        return await _finish(list(specs), rows, cols)
+        with stage("binder", "quad_find", scan_id):
+            quads = await asyncio.to_thread(_find_card_quads, img)
+        if len(quads) >= 2:
+            log.info("binder.quads found=%s fallback=%s", len(quads), False)
+            ordered, rows, cols = _quad_reading_order(quads)
+            with stage("binder", "ocr_cells", scan_id):
+                # Warm the lazily-loaded RapidOCR engine single-threaded BEFORE the
+                # concurrent per-cell burst: several cells' first OCR calls would
+                # otherwise race the engine init and some return empty (dropped reads).
+                await asyncio.to_thread(detect_lines_xy, img[:64, :64], 64)
+                specs = await asyncio.gather(
+                    *(_identify_quad_cell(img, box, W, H) for box in ordered))
+            return await _finish(list(specs), rows, cols, scan_id)
 
-    log.info("binder.quads found=%s fallback=%s", len(quads), True)
-    return await _scan_text_clusters(img, W, H)
+        log.info("binder.quads found=%s fallback=%s", len(quads), True)
+        return await _scan_text_clusters(img, W, H, scan_id)

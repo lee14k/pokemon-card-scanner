@@ -3,9 +3,12 @@ Tesseract variant-sweep fallback; Tesseract for code cards."""
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
-from dataclasses import dataclass, field
+import threading
+from collections import OrderedDict
+from dataclasses import dataclass, field, replace
 
 import cv2
 import numpy as np
@@ -355,3 +358,61 @@ def read_code_card(image_bgr: np.ndarray) -> CodeReading:
         log.info("ocr.code tokens_present_but_no_code_matched")
     log.info("ocr.code code=%s conf=%.2f format_ok=%s", best.code, best.confidence, best.format_ok)
     return best
+
+
+# ── Code-card reading memo ───────────────────────────────────────────────────
+# read_code_card is the most expensive single call in the app (up to ~6 serial
+# Tesseract subprocesses + a QR pass). The same code-card photo is read twice per
+# pull — once at scan time (/scan/pack) and again at save time (POST /pulls,
+# which re-OCRs server-side so a client cannot spoof `verified`). Both reads are
+# the server's own, over byte-identical input, so the second is pure waste.
+#
+# This memo lets the save path reuse the scan-time reading: keyed by the sha256
+# of the uploaded bytes, so a hit means literally the same photo. Tiny and
+# bounded (LRU, _CODE_CACHE_MAX entries) — it is a within-a-few-minutes dedup,
+# not a durable cache; a miss simply recomputes, and the recomputed value is
+# equally authoritative (the server computed both).
+_CODE_CACHE_MAX = 32
+# Touched from asyncio.to_thread workers on several endpoints, so every access is
+# under the lock (OrderedDict mutation is not atomic across the get+move_to_end).
+_code_cache: "OrderedDict[str, CodeReading]" = OrderedDict()
+_code_cache_lock = threading.Lock()
+
+
+def code_cache_key(code_bytes: bytes) -> str:
+    return hashlib.sha256(code_bytes).hexdigest()
+
+
+def code_cache_get(code_bytes: bytes) -> CodeReading | None:
+    """The memoized reading for these exact bytes, or None. Cheap (a hash) — the
+    save path calls this BEFORE decoding, so a hit skips the decode too.
+
+    Returns a copy: CodeReading is a mutable dataclass and callers must not be
+    able to mutate the cached entry (or each other's return value)."""
+    key = code_cache_key(code_bytes)
+    with _code_cache_lock:
+        hit = _code_cache.get(key)
+        if hit is not None:
+            _code_cache.move_to_end(key)
+    log.info("ocr.code_cache hit=%s key=%s", hit is not None, key[:12])
+    return replace(hit) if hit is not None else None
+
+
+def cached_read_code_card(code_bytes: bytes, code_img: np.ndarray) -> CodeReading:
+    """read_code_card(code_img), memoized on ``code_bytes``. Sync — call it in a
+    thread. ``code_img`` must be the decode of ``code_bytes``.
+
+    Every computed reading is stored, whatever it contains (a legitimate "no code
+    found" read is a result, not a failure); nothing else is ever stored, so a
+    miss always means "recompute", never "trust a placeholder"."""
+    hit = code_cache_get(code_bytes)
+    if hit is not None:
+        return hit
+    reading = read_code_card(code_img)
+    key = code_cache_key(code_bytes)
+    with _code_cache_lock:
+        _code_cache[key] = replace(reading)
+        _code_cache.move_to_end(key)
+        while len(_code_cache) > _CODE_CACHE_MAX:
+            _code_cache.popitem(last=False)
+    return reading

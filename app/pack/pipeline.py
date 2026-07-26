@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover - dependency ships in requirements
 from app.matcher_client import enabled as matcher_enabled, kick_index_build, match_strips
 from app.pack.confidence import pack_confidence, score_card
 from app.pack.matching import card_fields_from_match, lookup_resolved_cards
-from app.pack.ocr import read_card_number, read_code_card
+from app.pack.ocr import cached_read_code_card, read_card_number
 from app.pack.segmentation import find_strips
 from app.pack.set_resolution import catalog_local_id, entry_for_set_id, resolve_set
 from app.pokewallet import get_api_key
@@ -365,7 +365,10 @@ async def scan_pack(
 
     with stage("pack", "total", scan_id):
         with stage("pack", "decode", scan_id):
-            stair = _decode(staircase_bytes)
+            # A 12MP HEIC decode is 100s of ms of pure CPU; on the loop it stalls
+            # every other request in the process (see the thread offload rationale
+            # below, which applies just as much to decoding as to OCR).
+            stair = await asyncio.to_thread(_decode, staircase_bytes)
         if stair is None:
             raise ValueError("staircase image could not be decoded")
         _emit({"stage": "decoded"})
@@ -483,11 +486,15 @@ async def scan_pack(
             await _vlm_fallback(cards, strips, resolutions, readings)
 
         with stage("pack", "code_ocr", scan_id):
-            code_img = _decode(code_bytes)
+            # The single heaviest blocking call in a scan (QR pass + up to ~6 serial
+            # Tesseract subprocesses), so it belongs in a thread. Reading through the
+            # memo also lets the save path (POST /pulls) reuse this exact reading
+            # instead of OCR'ing the same photo a second time.
+            code_img = await asyncio.to_thread(_decode, code_bytes)
             if code_img is None:
                 code_result = CodeCardResult(code=None, confidence=0.0, format_ok=False)
             else:
-                cr = read_code_card(code_img)
+                cr = await asyncio.to_thread(cached_read_code_card, code_bytes, code_img)
                 code_result = CodeCardResult(code=cr.code, confidence=round(cr.confidence, 3),
                                              format_ok=cr.format_ok)
 

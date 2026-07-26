@@ -7,6 +7,7 @@ lifecycle and app/pack/live_identify.py for the identification ladder.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -77,12 +78,17 @@ async def frame(
         async with s.frame_lock:
             card_bytes = await card.read()
             with stage("live", "decode", scan_id):
-                img = _decode(card_bytes)
+                # Threaded: a phone frame is a 12MP HEIC/JPEG, 100s of ms of
+                # blocking CPU that would otherwise stall every concurrent
+                # scanner's requests (the whole point of the per-session lock is
+                # to serialize ONE session, not the whole process).
+                img = await asyncio.to_thread(_decode, card_bytes)
                 if img is None:
                     raise HTTPException(422, "unreadable image")
                 strip_img = None
                 if strip is not None:
-                    strip_img = _decode(await strip.read())
+                    strip_bytes = await strip.read()
+                    strip_img = await asyncio.to_thread(_decode, strip_bytes)
 
             # `async with OCR_GATE` expanded so the queueing delay (how long this
             # frame waited for an OCR slot) is measured separately from the work —

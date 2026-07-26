@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import logging
@@ -23,7 +24,7 @@ from app.db.session import async_session_maker
 from app.db.users import CurrentTrainer
 from app.dex.species import species_of
 from app.prices import latest_price_map
-from app.pack.ocr import read_code_card
+from app.pack.ocr import CodeReading, cached_read_code_card, code_cache_get
 from app.storage import move_session_frames, open_photo, save_code_photo, save_pull_photos
 from app.timing import new_scan_id, stage
 
@@ -32,6 +33,31 @@ log = logging.getLogger("pokemon_scanner.pulls")
 router = APIRouter(prefix="/pulls", tags=["pulls"])
 
 _MAX_UPLOAD = 15 * 1024 * 1024
+
+
+def _ocr_code_bytes(code_bytes: bytes) -> CodeReading | None:
+    """Decode + OCR a code-card photo. Sync and blocking (decode + up to ~6 serial
+    Tesseract subprocesses) — always call it via asyncio.to_thread. None when the
+    bytes don't decode, exactly as before. Reads through the ocr module's memo so
+    a re-submit of the same photo is free as well."""
+    code_img = cv2.imdecode(np.frombuffer(code_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if code_img is None:
+        return None
+    return cached_read_code_card(code_bytes, code_img)
+
+
+async def _server_code_reading(code_bytes: bytes) -> CodeReading | None:
+    """The server's authoritative reading of a code-card photo (clients cannot
+    spoof `verified`, so this never trusts client input).
+
+    Almost always a memo hit: /scan/pack just OCR'd these exact bytes server-side
+    a moment ago, and re-reading them is the single most expensive thing the app
+    does. A miss (direct save, restarted process, evicted entry) does the full
+    read in a thread — equally authoritative, just slower."""
+    cr = code_cache_get(code_bytes)
+    if cr is not None:
+        return cr
+    return await asyncio.to_thread(_ocr_code_bytes, code_bytes)
 
 
 def _normalize_code(code: str | None) -> str | None:
@@ -170,10 +196,10 @@ async def save_pull(
             staircase_path, code_path = save_pull_photos(
                 trainer.id, pull_id, stair_bytes, code_bytes)
 
-        # Server re-OCRs the code (authoritative — clients cannot spoof the verified flag).
+        # Server-side code reading (authoritative — clients cannot spoof the verified
+        # flag). Reuses the scan-time read of these exact bytes when we still have it.
         with stage("pull", "code_ocr", scan_id):
-            code_img = cv2.imdecode(np.frombuffer(code_bytes, np.uint8), cv2.IMREAD_COLOR)
-            cr = read_code_card(code_img) if code_img is not None else None
+            cr = await _server_code_reading(code_bytes)
         code = cr.code if cr else None
         code_norm = _normalize_code(code)
         code_ok = bool(cr and cr.format_ok)
@@ -339,9 +365,8 @@ async def rescue_pull_code(
     """
     code_bytes = await _read_image(code_card, "code_card")
 
-    # Server re-OCRs the code (authoritative — same block as save_pull).
-    code_img = cv2.imdecode(np.frombuffer(code_bytes, np.uint8), cv2.IMREAD_COLOR)
-    cr = read_code_card(code_img) if code_img is not None else None
+    # Server-side code reading (authoritative — same helper as save_pull).
+    cr = await _server_code_reading(code_bytes)
     code = cr.code if cr else None
     code_norm = _normalize_code(code)
     code_ok = bool(cr and cr.format_ok)

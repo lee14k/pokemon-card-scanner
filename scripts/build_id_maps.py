@@ -11,6 +11,12 @@ Card-level: each cached `card` row maps through set_id_map, then by numerator
 
 Run scripts/ingest_tcgdex.py first. Idempotent: re-runs upsert.
 Usage: DATABASE_URL=... .venv/bin/python scripts/build_id_maps.py
+
+RE-RUN THIS WHENEVER app/pack/data/set_denominators.json GAINS A ROW. Rows whose
+set_id already IS the TCGdex id (the me-era sets, the promo sets, every row with no
+PokéWallet id) map to themselves here, and that self-map is what makes
+app.cards.get_set_numerators return a catalog for them — without it the pack flow has
+no numerators to validate against and says so (`pipeline.modal_set_no_catalog`).
 """
 
 from __future__ import annotations

@@ -24,7 +24,7 @@ from app.db.users import CurrentTrainer
 from app.dex.species import species_of
 from app.pack.binder import scan_binder_page
 from app.pack.name_index import normalize_name
-from app.pack.set_resolution import load_denominator_table
+from app.pack.set_resolution import catalog_local_id, load_denominator_table
 from app.prices import latest_price_map, midpoint
 from app.pulls import EncounterOut  # reuse the pulls encounter shape (species/count/new)
 from app.schemas import PackCard
@@ -99,9 +99,15 @@ def _identity_key(set_code: str | None, set_name: str | None,
 
 
 def _tcgdex_card_id(card: PackCard, numerator: str | None) -> str | None:
-    """`<tdx>-<numerator zero-padded to 3>` where tdx is the denominator-table
-    entry's tcgdex_id (else its set_code). None when the set is unresolvable or
-    there is no numerator."""
+    """`<tdx>-<local_id>` where tdx is the denominator-table entry's tcgdex_id
+    (else its set_code) and local_id is the numerator in the form that set's
+    catalog rows actually use. None when the set is unresolvable or there is no
+    numerator.
+
+    The local_id form is NOT just a zero-pad: a promo numerator arrives glued to
+    its printed prefix ("MEP37"), and only swshp keeps that prefix in its
+    local_ids. Padding blindly produced "mep-MEP037", a card id that does not
+    exist, so the form conversion lives in catalog_local_id()."""
     if not numerator:
         return None
     table = load_denominator_table()
@@ -115,7 +121,7 @@ def _tcgdex_card_id(card: PackCard, numerator: str | None) -> str | None:
     tdx = entry.tcgdex_id or entry.set_code
     if not tdx:
         return None
-    return f"{tdx}-{numerator.zfill(3)}"
+    return f"{tdx}-{catalog_local_id(entry, numerator)}"
 
 
 async def _collection_encounters(session, trainer_id,

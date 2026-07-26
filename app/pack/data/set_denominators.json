@@ -434,7 +434,8 @@
       "era": "swsh",
       "denominators": [],
       "promo_prefix": "SWSH",
-      "tcgdex_id": "swshp"
+      "tcgdex_id": "swshp",
+      "local_id_prefixed": true
     },
     {
       "set_id": "cel25cc",

@@ -25,7 +25,7 @@ from app.pack.confidence import pack_confidence, score_card
 from app.pack.matching import card_fields_from_match, lookup_resolved_cards
 from app.pack.ocr import read_card_number, read_code_card
 from app.pack.segmentation import find_strips
-from app.pack.set_resolution import resolve_set
+from app.pack.set_resolution import catalog_local_id, entry_for_set_id, resolve_set
 from app.pokewallet import get_api_key
 from app.schemas import CodeCardResult, PackCard, PackScanResponse
 from app.timing import new_scan_id, stage
@@ -218,9 +218,11 @@ async def _read_numbers(img, strips, bounded, use_wholephoto: bool):
     return readings
 
 
-async def _apply_constraints(readings, resolutions) -> None:
+async def _apply_constraints(readings, resolutions):
     """Snap denominators to the pack's canonical value and correct numerators
-    against the resolved set's catalog. Best-effort: any failure is a no-op."""
+    against the resolved set's catalog. Best-effort: any failure is a no-op.
+    Returns ``(valid_numerators, modal_set_entry)`` — the entry is needed to
+    compare a numerator in that set's own local_id form (see _needs_review)."""
     from collections import Counter
 
     from app.pack.constraints import (correct_numerators, modal_denominator,
@@ -235,16 +237,60 @@ async def _apply_constraints(readings, resolutions) -> None:
         # Numerator catalog correction against the pack's modal (dominant) set.
         set_ids = [r.set_id for r in resolutions if r.set_id]
         if set_ids:
-            modal_set, n = Counter(set_ids).most_common(1)[0]
-            if n >= max(2, (len(set_ids) + 1) // 2):  # dominant set only
-                from app.cards import get_set_numerators
+            from app.cards import get_set_numerators
 
-                valid = await get_set_numerators(modal_set)
-                correct_numerators(readings, valid)
-                return valid
+            # A set we hold no numerator catalog for (not in set_id_map, or not
+            # ingested — a promo set before scripts/build_id_maps.py has run) must
+            # NOT win this vote: an empty result silently disables numerator
+            # correction AND the _needs_review catalog check for EVERY card in the
+            # pack, so one such cell would un-review the whole page. Walk the
+            # candidates in count order and take the first DOMINANT set that
+            # actually has a catalog. most_common() is descending, so once a
+            # candidate misses the dominance bar nothing after it can clear it.
+            # The bar is still measured against ALL votes on purpose: it is what
+            # stops correct_numerators from snapping a mixed pack's readings onto a
+            # minority set's catalog. If no dominant set has a catalog we validate
+            # nothing — the same outcome as before, never a wrong correction.
+            for candidate, n in Counter(set_ids).most_common():
+                if n < max(2, (len(set_ids) + 1) // 2):
+                    break
+                valid = await get_set_numerators(candidate)
+                if valid:
+                    correct_numerators(readings, valid)
+                    return valid, entry_for_set_id(candidate)
+                log.warning("pipeline.modal_set_no_catalog set=%s cards=%s "
+                            "(no numerator catalog — skipped for the vote)",
+                            candidate, n)
     except Exception as e:
         log.warning("pipeline.constraints_failed err=%r", e)
-    return set()
+    return set(), None
+
+
+def _needs_review(reading, res, valid_nums: set[str], modal_entry) -> bool:
+    """A card is confidently identified when its number reads cleanly, its set
+    resolves, and (when we have the set catalog) its numerator is a real card in
+    that set. Independent of the DB lookup, which only adds name/price — a clean
+    number IS the identity. ``valid_nums``/``modal_entry`` come from
+    _apply_constraints; an empty ``valid_nums`` means "no catalog to check
+    against", which is why the modal-set vote refuses to elect such a set."""
+    if not reading.pattern_ok or reading.blank or not res.set_id:
+        return True
+    if valid_nums and reading.numerator and reading.numerator.isdigit():
+        # Compare in the modal set's OWN local_id form. A promo number is read as a
+        # prefix plus digits, and swshp's catalog keeps the prefix ("SWSH123") while
+        # svp/mep drop it ("037") — comparing bare digits against swshp's catalog
+        # would reject every genuine swshp card. Only convert when the read prefix
+        # and the modal set agree: a promo read in a different set's pack (or a
+        # normal read in a promo pack) must NOT be re-shaped into a form that
+        # accidentally matches, so it keeps the plain numerator and fails as before.
+        from app.cards import normalize_local_id   # deferred: pulls in the DB layer
+
+        read_prefix = (reading.prefix or "").upper()
+        modal_prefix = (modal_entry.promo_prefix or "").upper() if modal_entry else ""
+        entry = modal_entry if read_prefix == modal_prefix else None
+        lid = catalog_local_id(entry, f"{read_prefix}{reading.numerator}")
+        return normalize_local_id(lid) not in valid_nums
+    return False
 
 
 async def _vlm_fallback(cards, strips, resolutions, readings) -> None:
@@ -380,18 +426,7 @@ async def scan_pack(
         # their numerators exist in the set catalog — priors that fix OCR glyph
         # confusions the reader can't. Corrects readings in place before lookup.
         with stage("pack", "constraints", scan_id):
-            valid_nums = await _apply_constraints(readings, resolutions)
-
-        def _needs_review(reading, res) -> bool:
-            # A card is confidently identified when its number reads cleanly, its set
-            # resolves, and (when we have the set catalog) its numerator is a real
-            # card in that set. Independent of the DB lookup, which only adds name/
-            # price — a clean number IS the identity.
-            if not reading.pattern_ok or reading.blank or not res.set_id:
-                return True
-            if valid_nums and reading.numerator and reading.numerator.isdigit():
-                return (reading.numerator.lstrip("0") or "0") not in valid_nums
-            return False
+            valid_nums, modal_entry = await _apply_constraints(readings, resolutions)
 
         with stage("pack", "art_match", scan_id):
             art = await _match_art(strips, resolutions)  # None when disabled/unavailable
@@ -438,7 +473,7 @@ async def scan_pack(
                 set_name=res.set_name,
                 confidence=conf,
                 low_confidence_reason=reason,
-                needs_review=_needs_review(reading, res),
+                needs_review=_needs_review(reading, res, valid_nums, modal_entry),
                 **card_fields_from_match(match),
             ))
 

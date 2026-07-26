@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,11 @@ class SetEntry:
     denominators: tuple[str, ...]
     promo_prefix: str | None
     tcgdex_id: str | None = None
+    # Promo sets only: does tcgdex_card.local_id CARRY the printed prefix?
+    # swshp stores "SWSH001" (True); svp and mep store the digits alone, "001"
+    # (False). A promo read arrives split ("SWSH"+"123"), so the two forms must
+    # not be conflated — see catalog_local_id().
+    local_id_prefixed: bool = False
 
 
 @dataclass(frozen=True)
@@ -59,6 +65,7 @@ def _build_denominator_table(path: Path | None) -> DenominatorTable:
                 denominators=tuple(r.get("denominators") or ()),
                 promo_prefix=(r.get("promo_prefix") or None),
                 tcgdex_id=r.get("tcgdex_id"),
+                local_id_prefixed=bool(r.get("local_id_prefixed")),
             )
             for r in raw["sets"]
         )
@@ -82,6 +89,38 @@ def _build_denominator_table(path: Path | None) -> DenominatorTable:
     )
     log.info("denominator_table.loaded sets=%s denominators=%s", len(sets), len(by_denom))
     return table
+
+
+def entry_for_set_id(set_id: str | None) -> SetEntry | None:
+    """The table row a resolved ``set_id`` came from, or None."""
+    if not set_id:
+        return None
+    return next((s for s in load_denominator_table().sets if s.set_id == set_id), None)
+
+
+def catalog_local_id(entry: SetEntry | None, value: str | None) -> str | None:
+    """``value`` re-expressed in the form ``tcgdex_card.local_id`` uses for
+    ``entry``'s set — the ONLY form that validates against get_set_numerators()
+    or keys a tcgdex card id.
+
+    Promo numbers are read as a prefix plus digits ("MEP" + "37") and the catalog
+    is not consistent about which half it keeps: swshp stores "SWSH001", while svp
+    and mep store "001". Comparing the wrong form silently fails: it would flag
+    every swshp card as "not in its own set" and would mint the nonexistent card id
+    "mep-MEP037". So for a promo set the prefix is stripped off whatever came in and
+    re-applied only when that set's local_ids carry it, with the digits padded to
+    the catalog's 3 places. Non-promo sets keep the previous behaviour exactly
+    (zero-pad to 3: "12" -> "012", "TG22" -> "TG22")."""
+    if value is None:
+        return None
+    s = value.strip().upper()
+    if entry is None or not entry.promo_prefix:
+        return s.zfill(3)
+    m = re.fullmatch(rf"(?:{re.escape(entry.promo_prefix)})?0*(\d+)", s)
+    if m is None:              # not this set's promo form — leave it alone
+        return s.zfill(3)
+    digits = m.group(1).zfill(3)
+    return f"{entry.promo_prefix}{digits}" if entry.local_id_prefixed else digits
 
 
 import cv2  # noqa: E402

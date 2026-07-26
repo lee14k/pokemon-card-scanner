@@ -1,8 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { getBinderFollowup, type BinderCard, type BinderScan } from "../api";
+import { ApiError, getBinderFollowup, type BinderCard, type BinderScan } from "../api";
 import FixCardForm from "./FixCardForm";
 
 const POLL_MS = 2000; // mirrors ReviewScreen / LiveScanScreen's pending_vlm poll
+
+// Force every still-pending row terminal, for the cases where no answer can ever
+// arrive: the follow-up 404s (its 30-min TTL expired, or the single-process store
+// died with a server restart), or the server reports `done` with a row somehow
+// still pending. Leaving those rows `pending_vlm` would spin the "identifying…"
+// badge forever AND hide the cell's real flag reason, which is strictly worse
+// than admitting the VLM never answered.
+function settlePending(prev: BinderCard[]): BinderCard[] {
+  let changed = false;
+  const next = prev.map((c) => {
+    if (c.state !== "pending_vlm") return c;
+    changed = true;
+    return { ...c, state: "vlm_failed" as const };
+  });
+  return changed ? next : prev;
+}
 
 // Same machine-reason → friendly-copy map CardRow uses, so a flagged binder
 // cell reads identically to a flagged pack row.
@@ -67,15 +83,28 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
   useEffect(() => {
     if (!scanId) return;
     let cancelled = false;
-    const id = window.setInterval(async () => {
+    let id = 0;
+    const stop = () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+    id = window.setInterval(async () => {
       if (cancelled) return;
       if (!cardsRef.current.some((c) => c.state === "pending_vlm")) return;
       let st;
       try {
         st = await getBinderFollowup(scanId);
-      } catch {
-        return; // best effort: expired entry or a network blip — try again, or
-                // never resolve, which just leaves the cells flagged as found
+      } catch (e) {
+        if (cancelled) return;
+        // 404 is TERMINAL, not transient: the follow-up entry is gone for good
+        // (expired, or the process that held it restarted), so no answer is
+        // coming. Settle the rows and stop. Any other failure — offline, 5xx,
+        // a proxy hiccup — is retried on the next tick.
+        if (e instanceof ApiError && e.status === 404) {
+          setCards(settlePending);
+          stop();
+        }
+        return;
       }
       if (cancelled) return;
       setCards((prev) => {
@@ -86,14 +115,7 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
           // fix (which sets state "ok" below) permanently authoritative.
           if (c.state !== "pending_vlm" || fixedRef.current.has(c.row_index)) return c;
           const match = st.cards.find((m) => m.row_index === c.row_index);
-          // `done` with a row still pending shouldn't happen (the drain patches
-          // every flagged row before finishing) — but if it ever did, the badge
-          // would spin forever, so settle it terminally instead.
-          if (!match || match.state === "pending_vlm") {
-            if (!st.done) return c;
-            changed = true;
-            return { ...c, state: "vlm_failed" as const };
-          }
+          if (!match || match.state === "pending_vlm") return c;
           changed = true;
           // Keep the locally-drawn geometry + thumbnail, exactly like the fix
           // apply below: they describe THIS photo, not the identity.
@@ -101,11 +123,16 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
         });
         return changed ? next : prev;
       });
+      if (st.done) {
+        // The drain is finished, so this is the last useful poll: settle anything
+        // it somehow left pending (it shouldn't) and drop the interval instead of
+        // idling on it. React applies this after the merge above, so it only ever
+        // sees rows the merge could not resolve.
+        setCards(settlePending);
+        stop();
+      }
     }, POLL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
+    return stop;
   }, [scanId]);
 
   // ── Card-finder overlay ──────────────────────────────────────────────────

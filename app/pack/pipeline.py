@@ -372,13 +372,18 @@ async def _vlm_followup(followup_id: str, cards: list[PackCard], payload: list[d
             await _merge_vlm(cards, payload, texts_by_row)
     finally:
         resolved = 0
-        for card in cards:
-            card.state = "vlm_failed" if card.needs_review else "ok"
-            resolved += card.state == "ok"
-            scan_followup.patch(followup_id, card.row_index, card.model_dump())
-        scan_followup.finish(followup_id)
-        log.info("pipeline.followup_done id=%s scan=%s cards=%s resolved=%s",
-                 followup_id, scan_id, len(cards), resolved)
+        # finish() is itself in a finally: a patch that raises (a card that won't
+        # serialize, say) must not be able to strand the client's poll on a
+        # forever-pending row.
+        try:
+            for card in cards:
+                card.state = "vlm_failed" if card.needs_review else "ok"
+                resolved += card.state == "ok"
+                scan_followup.patch(followup_id, card.row_index, card.model_dump())
+        finally:
+            scan_followup.finish(followup_id)
+            log.info("pipeline.followup_done id=%s scan=%s cards=%s resolved=%s",
+                     followup_id, scan_id, len(cards), resolved)
 
 
 async def _start_vlm_followup(cards: list[PackCard], strips, resolutions, readings,

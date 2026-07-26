@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ApiError,
   getPackFollowup,
   liveState,
   type LiveCard,
@@ -38,6 +39,23 @@ function mergeLate(
     if (!match || match.state === "pending_vlm") return c;
     changed = true;
     return { ...match };
+  });
+  return changed ? next : prev;
+}
+
+// Force every still-pending row terminal, for the cases where no answer can ever
+// arrive: the source of late identities 404s (a pack follow-up whose 30-min TTL
+// expired or whose single-process store died with a restart; a live session that
+// was swept), or the follow-up reports `done` with a row somehow still pending.
+// Leaving those rows `pending_vlm` would spin CardRow's "still identifying"
+// spinner forever AND suppress the row's real flag reason and its Fix/Keep
+// buttons — strictly worse than admitting the VLM never answered.
+function settlePending(prev: LiveCard[]): LiveCard[] {
+  let changed = false;
+  const next = prev.map((c) => {
+    if (c.state !== "pending_vlm") return c;
+    changed = true;
+    return { ...c, state: "vlm_failed" as const };
   });
   return changed ? next : prev;
 }
@@ -83,14 +101,16 @@ export default function ReviewScreen({ scan, liveSessionId, onConfirm, onRetake 
 
   // Bootstrap once on mount: seed real per-row `state` (and any VLM-refreshed
   // identity fields) from the live session. `scan.cards` is a PackScanResponse
-  // from liveFinish, and PackCard has no `state` field -- only
-  // GET /scan/live/{sid} injects it per row. Without this, every card.state is
-  // undefined at mount, the poll gate below never sees "pending_vlm", and a
-  // still-identifying row never shows the spinner or gets patched. This is a
-  // one-shot effect, separate from the recurring poll effect, so it can't
-  // restart or duplicate the poll's interval. Defensive: if the session is
-  // already gone (e.g. expired), swallow the error and leave scan.cards as-is
-  // -- the feature just no-ops rather than crashing the review screen.
+  // from liveFinish, which never sets `state` (the field is serialized only when
+  // a follow-up owns the card, and the live flow's late identities live in the
+  // session store instead) -- only GET /scan/live/{sid} injects it per row.
+  // Without this, every card.state is undefined at mount, the poll gate below
+  // never sees "pending_vlm", and a still-identifying row never shows the spinner
+  // or gets patched. This is a one-shot effect, separate from the recurring poll
+  // effect, so it can't restart or duplicate the poll's interval. Defensive: if
+  // the session is already gone (e.g. expired), swallow the error and leave
+  // scan.cards as-is -- the feature just no-ops rather than crashing the review
+  // screen.
   useEffect(() => {
     if (!liveSessionId) return;
     let cancelled = false;
@@ -143,25 +163,49 @@ export default function ReviewScreen({ scan, liveSessionId, onConfirm, onRetake 
   useEffect(() => {
     if (!liveSessionId && !scanId) return;
     let cancelled = false;
-    const id = window.setInterval(async () => {
-      if (cancelled) return;
-      const anyPending = cardsRef.current.some((c) => c.state === "pending_vlm");
-      if (!anyPending) return;
-      try {
-        const late = liveSessionId
-          ? (await liveState(liveSessionId)).cards
-          : (await getPackFollowup(scanId as string)).cards;
-        if (cancelled) return;
-        setCards((prev) => mergeLate(prev, late, resolvedRef.current));
-      } catch {
-        // best effort -- the session may be mid-recovery elsewhere, or the
-        // follow-up entry may have expired; try again next tick
-      }
-    }, POLL_MS);
-    return () => {
+    let id = 0;
+    const stop = () => {
       cancelled = true;
       window.clearInterval(id);
     };
+    id = window.setInterval(async () => {
+      if (cancelled) return;
+      const anyPending = cardsRef.current.some((c) => c.state === "pending_vlm");
+      if (!anyPending) return;
+      let late: LiveCard[];
+      let done = false;   // only the pack follow-up has a terminal flag
+      try {
+        if (liveSessionId) {
+          late = (await liveState(liveSessionId)).cards;
+        } else {
+          const st = await getPackFollowup(scanId as string);
+          late = st.cards;
+          done = st.done;
+        }
+      } catch (e) {
+        if (cancelled) return;
+        // 404 is TERMINAL, not transient: the follow-up entry (or live session)
+        // is gone for good, so no answer is coming. Settle the rows and stop, or
+        // they spin forever. Any other failure -- offline, 5xx, a proxy hiccup --
+        // is retried on the next tick.
+        if (e instanceof ApiError && e.status === 404) {
+          setCards(settlePending);
+          stop();
+        }
+        return;
+      }
+      if (cancelled) return;
+      setCards((prev) => mergeLate(prev, late, resolvedRef.current));
+      if (done) {
+        // Last useful poll: settle anything the drain somehow left pending (it
+        // shouldn't) and drop the interval instead of idling on it. React applies
+        // this after the merge above, so it only sees rows the merge couldn't
+        // resolve.
+        setCards(settlePending);
+        stop();
+      }
+    }, POLL_MS);
+    return stop;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveSessionId, scanId]);
 

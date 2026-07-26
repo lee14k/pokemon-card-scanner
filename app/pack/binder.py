@@ -502,15 +502,20 @@ async def _vlm_followup(followup_id: str, cells: list[BinderCell],
             await _attach_prices([c for c in cells if c.needs_vlm])
     finally:
         resolved = 0
-        for c in cells:
-            if not c.needs_vlm:
-                continue
-            state = "vlm_failed" if c.card.needs_review else "ok"
-            resolved += state == "ok"
-            followup.patch(followup_id, c.card.row_index, _cell_dict(c, state))
-        followup.finish(followup_id)
-        log.info("binder.followup_done id=%s scan=%s cells=%s resolved=%s",
-                 followup_id, scan_id, len(payload), resolved)
+        # finish() is itself in a finally: a patch that raises (a card that won't
+        # serialize, say) must not be able to strand the client's poll on a
+        # forever-pending row.
+        try:
+            for c in cells:
+                if not c.needs_vlm:
+                    continue
+                state = "vlm_failed" if c.card.needs_review else "ok"
+                resolved += state == "ok"
+                followup.patch(followup_id, c.card.row_index, _cell_dict(c, state))
+        finally:
+            followup.finish(followup_id)
+            log.info("binder.followup_done id=%s scan=%s cells=%s resolved=%s",
+                     followup_id, scan_id, len(payload), resolved)
 
 
 async def _vlm_prepare(cells: list[BinderCell], crops: list) -> list[dict]:

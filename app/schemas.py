@@ -60,6 +60,17 @@ class PackScanResponse(BaseModel):
     # ignore it just keep the flagged Phase-1 cards.
     scan_id: str | None = None
 
+    @model_serializer(mode="wrap")
+    def _drop_unset_scan_id(self, handler: SerializerFunctionWrapHandler) -> dict:
+        """Omit ``scan_id`` when there is no follow-up — same reasoning as
+        PackCard._drop_unset_state: every VLM-disabled scan, every SSE `result`
+        frame and every live /finish would otherwise carry a meaningless
+        ``"scan_id": null`` that was not in the pre-follow-up response."""
+        dumped = handler(self)
+        if dumped.get("scan_id") is None:
+            dumped.pop("scan_id", None)
+        return dumped
+
 
 class SetInfo(BaseModel):
     set_id: str

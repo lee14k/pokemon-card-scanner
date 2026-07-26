@@ -304,9 +304,12 @@ class LiveSession:
                     if img is None:
                         self._fail([lc])
                         continue
+                    # kind="full_card": the persisted frame is the WHOLE card
+                    # photo the client posted, not a bottom strip.
                     payload.append({"row_index": row, "image": img,
                                     "hint_set": prior.set_name,
-                                    "hint_denominator": prior.denominator})
+                                    "hint_denominator": prior.denominator,
+                                    "kind": "full_card"})
                     row_map[row] = lc
                 if not payload:
                     continue

@@ -1,12 +1,24 @@
-"""RunPod serverless handler: Qwen2.5-VL-7B identifies Pokemon card bottom
-strips. Loaded once at cold start; one generate() per card.
+"""RunPod serverless handler: Qwen2.5-VL-7B identifies Pokemon cards from either
+a bottom number strip or a whole-card photo (see ``kind``). Loaded once at cold
+start; one generate() per card.
 
 Contract (matches app/pack/vlm_client.py):
   input:  {"cards": [{"row_index": int, "image_b64": str,
-                      "hint_set": str|null, "hint_denominator": str|null}]}
+                      "hint_set": str|null, "hint_denominator": str|null,
+                      "kind": "strip"|"full_card"|null}]}
   output: {"cards": [{"row_index": int, "number": str|null,
                       "denominator": str|null, "set_name": str|null,
                       "name": str|null, "confidence": float}]}
+
+``kind`` says what the image actually IS, so the prompt can stop claiming every
+image is a bottom strip (binder cells and live frames are whole cards). It is
+OPTIONAL in both directions: absent/unknown ⇒ "strip", today's prompt, so an old
+app driving this worker is unchanged. The prompt text itself lives in the
+dependency-free ``prompts`` module so it is reviewable/testable without a GPU.
+
+An empty ``cards`` list is a legitimate request: the app's warm-up ping
+(vlm_client.warmup) sends one to trigger the ``_load()`` below and nothing else.
+Keep that load unconditional and ahead of the loop or the ping stops working.
 
 Deploy: build this dir as a RunPod Serverless endpoint (see Dockerfile header),
 GPU >= 24GB (7B in bf16). MODEL overridable via env VLM_MODEL.
@@ -21,6 +33,7 @@ import time
 import runpod
 import torch
 from PIL import Image
+from prompts import build_prompt   # /prompts.py — copied by the Dockerfile
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
 MODEL = os.environ.get("VLM_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")
@@ -38,27 +51,11 @@ def _load():
     return _model, _processor
 
 
-_PROMPT = (
-    "This image is the bottom strip of a Pokemon trading card. Read the collector "
-    "number exactly as printed (formats like 126/167, 12/198, or TG12/TG30). "
-    "If the set symbol or name is legible, identify the set. "
-    "If the card's printed name is legible, read it. "
-    'Reply with ONLY a JSON object: '
-    '{{"number": "<numerator>", "denominator": "<denominator or null>", '
-    '"set_name": "<set or null>", "name": "<the card\'s printed name or null>", '
-    '"confidence": <0..1>}}. {hint}'
-)
-
-
-def _identify(model, processor, img: Image.Image, hint_set, hint_den) -> dict:
-    hint = ""
-    if hint_set or hint_den:
-        hint = "Context: this pack is likely " + \
-            (f"the set '{hint_set}'. " if hint_set else "") + \
-            (f"denominator {hint_den}. " if hint_den else "")
+def _identify(model, processor, img: Image.Image, hint_set, hint_den,
+              kind=None) -> dict:
     messages = [{"role": "user", "content": [
         {"type": "image", "image": img},
-        {"type": "text", "text": _PROMPT.format(hint=hint)},
+        {"type": "text", "text": build_prompt(kind, hint_set, hint_den)},
     ]}]
     text = processor.apply_chat_template(messages, tokenize=False,
                                          add_generation_prompt=True)
@@ -101,7 +98,8 @@ def handler(job):
         t_card = time.perf_counter()
         try:
             img = Image.open(io.BytesIO(base64.b64decode(c["image_b64"]))).convert("RGB")
-            res = _identify(model, processor, img, c.get("hint_set"), c.get("hint_denominator"))
+            res = _identify(model, processor, img, c.get("hint_set"),
+                            c.get("hint_denominator"), c.get("kind"))
         except Exception as e:  # one bad card never fails the batch
             res = {"number": None, "denominator": None, "set_name": None,
                    "name": None, "confidence": 0.0, "error": str(e)}

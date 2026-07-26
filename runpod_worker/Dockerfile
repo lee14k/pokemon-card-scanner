@@ -26,5 +26,9 @@ RUN pip install --no-cache-dir \
 COPY requirements.txt /req.txt
 RUN pip install --no-cache-dir -r /req.txt
 
+# BOTH files are required: handler.py does `from prompts import build_prompt`,
+# so a build that copies only the handler starts and immediately dies with
+# "No module named prompts" (RunPod surfaces that as unhealthy workers).
 COPY handler.py /handler.py
+COPY prompts.py /prompts.py
 CMD ["python3.11", "-u", "/handler.py"]

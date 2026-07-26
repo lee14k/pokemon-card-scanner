@@ -321,8 +321,12 @@ def _vlm_payload(cards, strips, resolutions) -> list[dict]:
         b64 = vlm_client.jpeg_b64(strips[i].image)
         if b64 is None:
             continue
+        # kind="strip": these ARE bottom number-row bands (segmentation.find_strips
+        # / detect_first crop a band around the printed number), which is what the
+        # worker's default prompt describes.
         payload.append({"row_index": cards[i].row_index, "image_b64": b64,
-                        "hint_set": hint_set, "hint_denominator": hint_den})
+                        "hint_set": hint_set, "hint_denominator": hint_den,
+                        "kind": "strip"})
     return payload
 
 

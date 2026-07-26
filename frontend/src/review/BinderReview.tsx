@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { BinderCard, BinderScan } from "../api";
+import { getBinderFollowup, type BinderCard, type BinderScan } from "../api";
 import FixCardForm from "./FixCardForm";
+
+const POLL_MS = 2000; // mirrors ReviewScreen / LiveScanScreen's pending_vlm poll
 
 // Same machine-reason → friendly-copy map CardRow uses, so a flagged binder
 // cell reads identically to a flagged pack row.
@@ -46,6 +48,65 @@ function priceText(c: BinderCard): string | null {
 export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props) {
   const [cards, setCards] = useState<BinderCard[]>(scan.cards);
   const [fixing, setFixing] = useState<number | null>(null);
+  // Rows the USER has settled by applying a fix. A late VLM answer must never
+  // overwrite one — the human looked at the card, the model didn't.
+  const [fixedRows, setFixedRows] = useState<Set<number>>(new Set());
+
+  // ── Background-VLM follow-up poll ────────────────────────────────────────
+  // The scan answered before the VLM did (see binder._finish); the flagged
+  // cells came back `pending_vlm` and resolve here. Mirrors the interval shape
+  // ReviewScreen/LiveScanScreen use: ONE interval for the whole review, keyed
+  // only on the scan id so a poll-driven patch can't restart (and starve) it —
+  // pending-ness and the user's fixes are read from refs inside the tick.
+  const scanId = scan.scan_id ?? null;
+  const cardsRef = useRef<BinderCard[]>(cards);
+  cardsRef.current = cards;
+  const fixedRef = useRef<Set<number>>(fixedRows);
+  fixedRef.current = fixedRows;
+
+  useEffect(() => {
+    if (!scanId) return;
+    let cancelled = false;
+    const id = window.setInterval(async () => {
+      if (cancelled) return;
+      if (!cardsRef.current.some((c) => c.state === "pending_vlm")) return;
+      let st;
+      try {
+        st = await getBinderFollowup(scanId);
+      } catch {
+        return; // best effort: expired entry or a network blip — try again, or
+                // never resolve, which just leaves the cells flagged as found
+      }
+      if (cancelled) return;
+      setCards((prev) => {
+        let changed = false;
+        const next = prev.map((c) => {
+          // Eligible ONLY while this row is still locally pending and the user
+          // hasn't fixed it: that makes the merge idempotent and makes a manual
+          // fix (which sets state "ok" below) permanently authoritative.
+          if (c.state !== "pending_vlm" || fixedRef.current.has(c.row_index)) return c;
+          const match = st.cards.find((m) => m.row_index === c.row_index);
+          // `done` with a row still pending shouldn't happen (the drain patches
+          // every flagged row before finishing) — but if it ever did, the badge
+          // would spin forever, so settle it terminally instead.
+          if (!match || match.state === "pending_vlm") {
+            if (!st.done) return c;
+            changed = true;
+            return { ...c, state: "vlm_failed" as const };
+          }
+          changed = true;
+          // Keep the locally-drawn geometry + thumbnail, exactly like the fix
+          // apply below: they describe THIS photo, not the identity.
+          return { ...match, cell: c.cell, thumb_b64: c.thumb_b64 };
+        });
+        return changed ? next : prev;
+      });
+    }, POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [scanId]);
 
   // ── Card-finder overlay ──────────────────────────────────────────────────
   // Draw the captured page photo with each detected cell outlined so a bad
@@ -263,6 +324,10 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
       >
         {cards.map((c) => {
           const flagged = c.needs_review ?? c.low_confidence_reason !== null;
+          // Still being identified in the background: the cell stays outlined as
+          // flagged (it IS unconfirmed, and the overlay/count must agree with
+          // that), but "needs review" would be the wrong ask — nothing to do yet.
+          const pending = c.state === "pending_vlm";
           const price = priceText(c);
           const highlighted = highlight === c.row_index;
           return (
@@ -326,10 +391,16 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
                 {c.card_number ?? "—"} · {c.set_name ?? "Unknown set"}
               </span>
               {price && <span style={{ fontSize: "0.85rem" }}>{price}</span>}
-              {flagged && (
-                <em style={{ color: "var(--danger)", fontSize: "0.8rem" }}>
-                  {REASON_TEXT[c.low_confidence_reason!] ?? "Needs review"}
+              {pending ? (
+                <em className="live-chip-status" style={{ fontSize: "0.8rem" }}>
+                  <span className="spinner" /> identifying…
                 </em>
+              ) : (
+                flagged && (
+                  <em style={{ color: "var(--danger)", fontSize: "0.8rem" }}>
+                    {REASON_TEXT[c.low_confidence_reason!] ?? "Needs review"}
+                  </em>
+                )
               )}
             </div>
           );
@@ -342,13 +413,22 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
           onApply={(fixed) => {
             // Reuse the pack FixCardForm, but keep the binder-only fields it
             // doesn't know about (cell geometry + thumbnail) and the row_index.
+            // state "ok" + fixedRows both retire the row from the VLM poll: the
+            // user's answer is final, whatever the worker eventually says.
             setCards((prev) =>
               prev.map((c) =>
                 c.row_index === fixing
-                  ? { ...fixed, row_index: c.row_index, cell: c.cell, thumb_b64: c.thumb_b64 }
+                  ? {
+                      ...fixed,
+                      row_index: c.row_index,
+                      cell: c.cell,
+                      thumb_b64: c.thumb_b64,
+                      state: "ok",
+                    }
                   : c
               )
             );
+            setFixedRows((prev) => new Set(prev).add(fixing));
             setFixing(null);
           }}
           onCancel={() => setFixing(null)}

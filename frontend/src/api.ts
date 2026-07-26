@@ -2,6 +2,11 @@ const base =
   import.meta.env.VITE_API_BASE?.replace(/\/$/, "") ||
   (import.meta.env.DEV ? "/api" : "");
 
+// Per-card background-identification state, shared by the live flow and the
+// batch (pack/binder) VLM follow-up. Absent means "no follow-up applies to this
+// card" — treat it exactly like "ok". "dup_prompt" is live-only.
+export type CardState = "ok" | "pending_vlm" | "vlm_failed" | "dup_prompt";
+
 export interface PackCard {
   row_index: number;
   card_number: string | null;
@@ -17,6 +22,7 @@ export interface PackCard {
   needs_review?: boolean;
   price_usd_low?: number | null;
   price_usd_high?: number | null;
+  state?: CardState;
 }
 
 export interface CodeCardResult {
@@ -30,6 +36,9 @@ export interface PackScanResponse {
   code_card: CodeCardResult;
   pack_confidence: number;
   segmentation_warning: string | null;
+  // Present only while a background VLM pass is still identifying the flagged
+  // rows (which carry state: "pending_vlm"). Poll it with getPackFollowup().
+  scan_id?: string | null;
 }
 
 export interface SetInfo {
@@ -281,7 +290,7 @@ export async function patchPullCode(
   );
 }
 
-export type LiveCardState = "ok" | "pending_vlm" | "vlm_failed" | "dup_prompt";
+export type LiveCardState = CardState;
 export type LiveEventKind = "card" | "code_card" | "duplicate_prompt" | "no_card" | "unreadable";
 export interface LiveCard extends PackCard {
   state?: LiveCardState;
@@ -417,7 +426,37 @@ export interface BinderScan {
   cards: BinderCard[];
   grid: { rows: number; cols: number };
   page_confidence: number;
+  // Same contract as PackScanResponse.scan_id — poll it with getBinderFollowup().
+  scan_id?: string | null;
 }
+
+// ── Background-VLM follow-up poll (pack + binder) ─────────────────────────────
+// Both batch scans answer immediately and finish identifying their flagged rows
+// in the background; the scan response's `scan_id` addresses that work. Poll
+// until `done` (or until no card is `pending_vlm` any more) and merge the
+// patched rows in. A 404 means the entry expired (30 min TTL) or never existed —
+// the cards on screen are then final as far as the client is concerned.
+export interface ScanFollowup<C extends PackCard = PackCard> {
+  cards: C[];
+  any_pending: boolean;
+  done: boolean;
+}
+
+export async function getScanFollowup<C extends PackCard = PackCard>(
+  kind: "pack" | "binder",
+  scanId: string
+): Promise<ScanFollowup<C>> {
+  return parse(
+    await fetch(`${base}/scan/${kind}/${encodeURIComponent(scanId)}`, {
+      credentials: "include",
+    })
+  );
+}
+
+export const getPackFollowup = (scanId: string) =>
+  getScanFollowup<PackCard>("pack", scanId);
+export const getBinderFollowup = (scanId: string) =>
+  getScanFollowup<BinderCard>("binder", scanId);
 export interface CollectionSaveOut {
   added: number;
   incremented: number;

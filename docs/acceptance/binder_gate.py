@@ -17,14 +17,17 @@ committed binder fixture and scores each page against its ground truth:
 Scoring per cell: a cell is FLAGGED when the scan set ``needs_review``; otherwise
 it is confident and is CORRECT when it matches a not-yet-consumed truth entry,
 else confident-WRONG. Real pages additionally separate NUMDIFF — right card name,
-wrong printed numerator (see ``_score_real``) — which is reported and tracked but
-is not an identity contradiction. Matching is against the page's truth as a
-multiset rather than positionally: the gate's claim is "never confidently wrong",
-which must not turn red merely because two cells swapped reading order.
+wrong printed numerator (see ``_score_real``) — which is a real defect but not an
+identity contradiction, so it is gated against a pinned per-page baseline rather
+than against zero (see ``NUMDIFF_BASELINE``). Matching is against the page's truth
+as a multiset rather than positionally: the gate's claim is "never confidently
+wrong", which must not turn red merely because two cells swapped reading order.
 
 Gate (non-zero exit):
   * any confident-WRONG cell on a real page,
   * a real page's cell count != its truth card count,
+  * a real page's NUMDIFF count ABOVE its pinned baseline (a decrease is an
+    improvement — it is printed and passes),
   * synthetic confident-correct < 7 of 9.
 
 Exit codes: 0 = PASS, 1 = gate failure, 2 = BLOCKED (env/DB not usable — a
@@ -60,6 +63,28 @@ REAL_DIR = REPO / "tests" / "corpus" / "binder" / "real"
 REAL_TRUTH = REAL_DIR / "truth.json"
 
 SYNTH_MIN_CORRECT = 7        # of 9 — the binder plan's shipped gate
+
+# Pinned per-page NUMDIFF baseline (right card, wrong printed numerator). A numdiff
+# is a genuine defect, so it cannot be gated against zero without failing the gate on
+# the day it was written — but leaving it ungated would let a regression silently turn
+# good numerators into malformed ones. So the count is RATCHETED: above the pin fails,
+# at the pin passes, below the pin passes AND is reported as an improvement.
+#
+# Baseline measured 2026-07-26 (Phase 0). The single entry is page_2 cell 0, where OCR
+# reads "EGG10/GG70" for Mew's printed "GG10/GG70" — the right card in the right set
+# with a stray leading "E" on the numerator.
+#
+# WHEN YOU IMPROVE THE SCANNER: lower the pin to the new count in the same commit.
+# The gate prints the exact line to change.
+NUMDIFF_BASELINE: dict[str, int] = {
+    "page_1.jpeg": 0,
+    "page_2.jpeg": 1,
+    "page_3.jpeg": 0,
+    "page_4.jpeg": 0,
+    "page_5.jpeg": 0,
+}
+_NUMDIFF_DEFAULT = 0         # a page with no pin must have zero numdiffs
+
 EXIT_PASS, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 2
 
 _ENV_HINT = (
@@ -156,8 +181,9 @@ def _score_real(cards: list[dict], page_truth: dict) -> tuple[int, int, int, int
       numdiff  the name matches a truth entry but the printed numerator does not,
                e.g. OCR reading "EGG10/GG70" for "GG10/GG70". The card the user
                gets IS the right card, so this is NOT an identity contradiction —
-               it is a printed-number defect, counted and reported on its own so a
-               later task can drive it to zero,
+               it is a printed-number defect, counted separately and RATCHETED
+               against ``NUMDIFF_BASELINE`` so it can neither regress unnoticed nor
+               fail the gate at its already-measured level,
       WRONG    the cell confidently names a card that is not on the page at all.
                This is the gate: a confident-wrong identity is the one failure the
                binder flow must never produce.
@@ -269,8 +295,9 @@ async def main(argv: list[str] | None = None) -> int:
 
     synth_truth: dict = json.loads(SYNTH_TRUTH.read_text()) if SYNTH_TRUTH.exists() else {}
     failures: list[str] = []
+    improvements: list[str] = []
     summaries: list[str] = []
-    tot_correct = tot_numdiff = tot_wrong = tot_flagged = 0
+    tot_correct = tot_numdiff = tot_pin = tot_wrong = tot_flagged = 0
     tot_ms = 0.0
 
     for name, path, kind in fixtures:
@@ -290,7 +317,7 @@ async def main(argv: list[str] | None = None) -> int:
             # strict (set_code, numerator) pair — no numdiff bucket applies.
             correct, wrong, flagged, lines = _score(
                 cards, _synthetic_keys(synth_truth), _synthetic_key)
-            numdiff = 0
+            numdiff, pin = 0, None
             page_fail = [] if correct >= SYNTH_MIN_CORRECT else [
                 f"{name}: confident-correct {correct}/{expected_n} "
                 f"< required {SYNTH_MIN_CORRECT}"]
@@ -304,6 +331,16 @@ async def main(argv: list[str] | None = None) -> int:
             if len(cards) != expected_n:
                 page_fail.append(
                     f"{name}: found {len(cards)} cells, truth has {expected_n}")
+            # Ratchet the numdiff count against its pin (see NUMDIFF_BASELINE).
+            pin = NUMDIFF_BASELINE.get(name, _NUMDIFF_DEFAULT)
+            if numdiff > pin:
+                page_fail.append(
+                    f"{name}: {numdiff} numdiff cell(s) exceeds the pinned baseline "
+                    f"{pin} — a printed numerator regressed")
+            elif numdiff < pin:
+                improvements.append(
+                    f"{name}: numdiff {pin} -> {numdiff}; lower its pin in "
+                    f"NUMDIFF_BASELINE (docs/acceptance/binder_gate.py)")
 
         print(f"  grid={grid['rows']}x{grid['cols']} cells={len(cards)}/{expected_n} "
               f"page_conf={res['page_confidence']:.3f} wall={wall_ms:.0f}ms")
@@ -312,22 +349,30 @@ async def main(argv: list[str] | None = None) -> int:
         failures += page_fail
         tot_correct += correct
         tot_numdiff += numdiff
+        tot_pin += pin or 0
         tot_wrong += wrong
         tot_flagged += flagged
         summaries.append(
             f"{'PASS' if not page_fail else 'FAIL'} {name:18s} "
-            f"cells={len(cards)}/{expected_n} correct={correct} numdiff={numdiff} "
+            f"cells={len(cards)}/{expected_n} correct={correct} "
+            f"numdiff={numdiff}/{'-' if pin is None else pin} "
             f"wrong={wrong} flagged={flagged} wall={wall_ms:8.0f}ms")
 
     print("\n=== summary ===")
+    print("  (numdiff=<found>/<pinned baseline>; above the pin fails, below improves)")
     for s in summaries:
         print("  " + s)
-    print(f"  TOTAL correct={tot_correct} numdiff={tot_numdiff} "
+    print(f"  TOTAL correct={tot_correct} numdiff={tot_numdiff}/{tot_pin} "
           f"confident-wrong={tot_wrong} flagged={tot_flagged} wall={tot_ms:.0f}ms "
           f"({tot_ms / max(1, len(fixtures)):.0f}ms/page avg)")
     if tot_numdiff:
-        print(f"  NOTE {tot_numdiff} numdiff cell(s): right card, wrong printed "
-              f"numerator — tracked defect, not a gate failure.")
+        print(f"  NOTE {tot_numdiff} numdiff cell(s) at/below the pinned baseline: "
+              f"right card, wrong printed numerator — a tracked defect held flat by "
+              f"the ratchet, not yet fixed.")
+    if improvements:
+        print("\nIMPROVED (passes — pin is now stale):")
+        for i in improvements:
+            print(f"  - {i}")
     if failures:
         print("\nGATE FAIL:")
         for f in failures:

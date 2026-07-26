@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.cards import cached_lookup_card
 from app.logging_config import configure_logging
-from app.pack import scan_followup
+from app.pack import scan_followup, vlm_client
 from app.pack.matching import card_fields_from_match
 from app.pack.pipeline import scan_pack
 from app.pack.scan_stream import scan_pack_sse
@@ -122,6 +122,10 @@ async def scan_pack_endpoint(
         None, description='Guided-capture metadata JSON: {"guide_positions":[y...],"image_dims":[w,h],"declared_count":n}'
     ),
 ) -> PackScanResponse:
+    # Warm the RunPod worker FIRST, so its ~16GB cold load overlaps the upload read
+    # + segmentation + OCR instead of landing inside the background VLM call.
+    # Debounced + fire-and-forget inside kick() (app/pack/vlm_client.py).
+    vlm_client.kick()
     stair_bytes = await _read_image(staircase, "staircase")
     code_bytes = await _read_image(code_card, "code_card")
     meta = _parse_capture_meta(capture_meta)
@@ -143,6 +147,7 @@ async def scan_pack_stream_endpoint(
     """SSE variant of /scan/pack: streams {stage} progress events while the
     scan runs, then a terminal `result` (or `error`) event. Purely additive —
     /scan/pack above is untouched and remains the non-streaming fallback."""
+    vlm_client.kick()   # same warm-up as /scan/pack (debounced, fire-and-forget)
     stair_bytes = await _read_image(staircase, "staircase")
     code_bytes = await _read_image(code_card, "code_card")
     meta = _parse_capture_meta(capture_meta)

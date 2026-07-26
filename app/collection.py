@@ -22,7 +22,7 @@ from app.db.models import CollectionCard
 from app.db.session import async_session_maker
 from app.db.users import CurrentTrainer
 from app.dex.species import species_of
-from app.pack import scan_followup
+from app.pack import scan_followup, vlm_client
 from app.pack.binder import scan_binder_page
 from app.pack.name_index import normalize_name
 from app.pack.set_resolution import catalog_local_id, load_denominator_table
@@ -168,6 +168,10 @@ async def _read_image(upload: UploadFile, field: str) -> bytes:
 async def scan_binder(trainer: CurrentTrainer, page: UploadFile = File(...)) -> dict:
     """Scan one binder page → grid of PackCard-shaped cells (with thumbs). Decode
     failures / no readable cards → 422 {"detail": "no_cards_found"}."""
+    # Warm the RunPod worker FIRST, so its ~16GB cold load overlaps this page's
+    # upload read + OCR instead of landing inside the background VLM call.
+    # Debounced + fire-and-forget inside kick() (app/pack/vlm_client.py).
+    vlm_client.kick()
     data = await _read_image(page, "page")
     try:
         return await scan_binder_page(data)

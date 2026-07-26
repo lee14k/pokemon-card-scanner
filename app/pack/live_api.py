@@ -18,6 +18,7 @@ from app.db.models import Trainer
 from app.db.session import async_session_maker
 from app.db.users import CurrentTrainer
 from app.pack import live_session as store
+from app.pack import vlm_client
 from app.pack.confidence import pack_confidence
 from app.pack.live_identify import identify_frame
 from app.pack.pipeline import OCR_GATE, _decode
@@ -60,6 +61,10 @@ async def _attach_price(card: PackCard) -> None:
 
 @router.post("/start")
 async def start(trainer: CurrentTrainer) -> dict:
+    # Warm the RunPod worker the moment a session opens: the first uncertain card
+    # is seconds away and its VLM call would otherwise pay the ~16GB cold load.
+    # Debounced + fire-and-forget inside kick(), so this adds nothing measurable.
+    vlm_client.kick()
     return {"session_id": await store.start_session(str(trainer.id))}
 
 

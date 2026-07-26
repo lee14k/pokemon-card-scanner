@@ -34,11 +34,13 @@ from statistics import median
 import cv2
 import numpy as np
 
+from app.cards import normalize_local_id
 from app.pack import scan_followup as followup
 from app.pack import vlm_client
 from app.pack.card_crop import refine_card_box
 from app.pack.confidence import pack_confidence
 from app.pack.identify_core import IdentityResult, SessionPrior, resolve_identity
+from app.pack.name_index import get_name_index, normalize_name
 from app.pack.ocr import NumberReading, parse_number
 from app.pack.pipeline import OCR_GATE, _decode
 from app.pack.rapidocr_reader import detect_lines_xy
@@ -489,6 +491,21 @@ def _page_modal(cells: list[BinderCell]) -> SessionPrior | None:
         denominator=entry.denominators[0] if len(entry.denominators) == 1 else None)
 
 
+def _denominator_owners(den: str) -> tuple:
+    """Every catalog row that prints ``den``, comparing NORMALIZED forms.
+
+    A printed denominator is zero-padded to the numerator's width ("096/094")
+    while the table stores the bare count ("94"), so raw string equality misses
+    12 of the 53 rows outright — every me-era set among them. ``normalize_local_id``
+    is the project's existing both-sides normalizer for exactly this shape
+    (strips leading zeros off the numeric tail, preserves an alpha prefix), so
+    "094" and "94" compare equal while the gallery denominators ("TG30", "GG70",
+    "SV122") keep theirs."""
+    key = normalize_local_id(den)
+    return tuple(s for s in load_denominator_table().sets
+                 if any(normalize_local_id(d) == key for d in s.denominators))
+
+
 def _prior_denominator_ok(reading: NumberReading | None,
                           prior: SessionPrior) -> bool:
     """A3's non-negotiable per-cell guard: may THIS cell be handed the page prior?
@@ -500,15 +517,20 @@ def _prior_denominator_ok(reading: NumberReading | None,
     the wrong cell therefore mints a confident-WRONG identity outright — so the
     page's opinion only reaches a cell that does not CONTRADICT it:
 
-      * no reading at all -> nothing to contradict; the prior applies. (This is
-        the whole point: an OCR-blind cell on a single-set page is exactly what
-        A3 exists to rescue.)
-      * a printed denominator -> it must be one the modal set actually PRINTS.
-        Compared against the catalog row's whole ``denominators`` tuple rather
-        than the single value ``_page_modal`` was willing to publish: a set with
-        two recorded denominators legitimately prints both, while a set with
-        NONE recorded (the promo sets) can agree with nothing, so there any read
-        denominator vetoes the prior.
+      * no reading at all -> nothing to contradict. (``_apply_page_prior`` will
+        not act on such a cell anyway — it requires a read numerator — but the
+        hint suppression in ``_vlm_payload`` shares this predicate and a blind
+        cell contradicts nothing there either.)
+      * a printed denominator -> it must belong to the modal set and to NO OTHER
+        SET. "The modal set happens to print it" is not enough: 6 denominators
+        are shared across 15 of the 53 catalog rows (182 = Paradox Rift AND
+        Destined Rivals; 86 = Chaos Rising / Black Bolt / White Flare; TG30
+        spans all four Trainer Galleries; also 159, 189, 198). A correct
+        "005/182" Destined Rivals cell on a Paradox-Rift-dominant page satisfies
+        "the modal set prints 182" and would be confidently relabelled Paradox
+        Rift — a confident-wrong minted from an input with NO OCR error at all.
+        So the test is UNIQUE ownership, ``_denominator_owners(den) == (entry,)``,
+        which fails closed on those 15 rows and keeps working for the other 38.
       * a promo prefix ("SWSH"/"SVP"/"MEP") -> ``parse_number`` emits this
         INSTEAD of a denominator (``NUMBER_RE`` and ``PROMO_RE`` are exclusive,
         so a promo read has ``denominator=None``), and it names a Black Star
@@ -516,23 +538,22 @@ def _prior_denominator_ok(reading: NumberReading | None,
         ``MEP 037`` cell would sail through and get promoted into whatever set
         the page voted for, so the prefix is treated as the set-naming alpha
         denominator it is: the prior applies only when that promo set IS the
-        modal set.
+        modal set. Note this is the same unique-ownership rule — a promo prefix
+        maps to exactly one row by construction (``by_promo_prefix``).
 
-    Alpha gallery denominators ("TG30", "GG70", "SV122") need no special case —
-    the comparison is on uppercased, stripped strings, which is the form both
-    sides already hold (``NUMBER_RE`` matches an uppercased line; the table's own
-    index is keyed ``.upper()``), so a ``TG12/TG30`` cell agrees with a Trainer
-    Gallery modal set and contradicts every ordinary one."""
+    Padding and alpha prefixes are handled by ``_denominator_owners``; a modal
+    set with no recorded denominator (the three promo rows) owns nothing, so any
+    read denominator vetoes the prior there."""
     if reading is None:
         return True
     if reading.prefix:
         promo = load_denominator_table().by_promo_prefix.get(reading.prefix.upper())
         return promo is not None and promo.set_id == prior.set_id
-    den = (reading.denominator or "").strip().upper()
+    den = (reading.denominator or "").strip()
     if not den:
         return True
     entry = entry_for_set_id(prior.set_id)
-    return entry is not None and den in {d.strip().upper() for d in entry.denominators}
+    return entry is not None and _denominator_owners(den) == (entry,)
 
 
 def _improves(old: IdentityResult, new: IdentityResult) -> bool:
@@ -553,6 +574,76 @@ def _improves(old: IdentityResult, new: IdentityResult) -> bool:
         return not old.confident
     return (new.set_id or new.set_name) is not None \
         and (old.set_id or old.set_name) is None
+
+
+async def _name_contradicts_numerator(read: CellRead, prior: SessionPrior) -> bool:
+    """Does the cell's own NAME point at a different card number than its own
+    NUMBER? Then the cell disagrees with itself and pass 2 must leave it alone.
+
+    Two distinct harms this prevents, both of which end in a confident-wrong:
+
+      * the ladder's unique-name rung (identify_core.py) can promote on the NAME
+        while keeping the READ numerator, producing a confident cell whose name
+        and printed number belong to different cards;
+      * the prior rung promotes on the numerator and then re-keys the catalog
+        lookup by it, OVERWRITING a pass-1 name that may well have been the
+        correct one — so a single misread digit silently renames the card.
+
+    The name resolution mirrors ``resolve_identity``'s (first candidate line that
+    matches wins; the set/denominator-scoped re-match is the fallback for
+    ambiguous or missing hits) computed as PASS 2 would see it, i.e. with the
+    prior's denominator standing in when the cell read none. It is a deliberate
+    mirror and must stay in step with the core; being read-only it can only ever
+    withhold a rescue, never grant one.
+
+    The contradiction test is "does ANY printing of the matched name sit at the
+    read numerator", NOT ``name_match.local_id != numerator``. Two reasons, both
+    measured against the real index:
+
+      * ``local_id`` is only a representative. A name with several printings
+        yields ``cands[0]`` — an arbitrary one — so the direct comparison vetoes
+        the honest case where name and number describe the same card in a
+        different printing: "Pinsir" reports ``local_id=127`` while the cell
+        correctly reads sv06's 168, and both ARE Pinsir.
+      * ``NameMatch.ambiguous`` cannot be used to carve that out, because it
+        conflates "several printings" with the substring hazard. Empirically it
+        is set for essentially every common Pokemon name — "Tangela" narrows to
+        exactly one printing and is still ``ambiguous=True`` — so gating on it
+        would switch this guard off almost everywhere.
+
+    Printings are narrowed by the effective denominator the same way
+    ``NameIndex.match`` narrows (``card_count_official``), so the question asked
+    is the precise one: *in a set of this size, is the card this name names
+    printed at the number this cell read?* Tangela/004 -> no (contradiction);
+    Pinsir/168, Dipplin/170, Infernape/173 -> yes. The narrowing falls back to
+    the unscoped printings when it would empty the list, and the private
+    ``_entries`` access mirrors ``resolve_identity``'s own use of
+    ``idx._official_to_sets``."""
+    if not read.name_texts or not (read.reading and read.reading.numerator):
+        return False
+    idx = await get_name_index()
+    den = read.reading.denominator or prior.denominator
+    name_match = None
+    top_name_text = None
+    for text, _conf in read.name_texts:
+        if top_name_text is None:
+            top_name_text = text
+        m = idx.match(text, denominator=den)
+        if m is not None:
+            name_match = m
+            break
+    if (name_match is None or name_match.ambiguous) and top_name_text:
+        scoped = idx.match_in_set(top_name_text, set_id=prior.set_id, denominator=den)
+        if scoped is not None and not scoped.ambiguous:
+            name_match = scoped
+    if name_match is None:
+        return False
+    printings = idx._entries.get(normalize_name(name_match.card_name), ())
+    if den and den.isdigit():
+        # (set_id, set_name, local_id, card_name, card_count_official)
+        printings = [e for e in printings if e[4] == int(den)] or printings
+    num = normalize_local_id(read.reading.numerator)
+    return all(normalize_local_id(e[2]) != num for e in printings)
 
 
 def _pack_card(row_index: int, res: IdentityResult) -> PackCard:
@@ -578,12 +669,27 @@ async def _apply_page_prior(cells: list[BinderCell], reads: list[CellRead],
     tie, too little support, or an unknown set) means the page never earned an
     opinion and this is a no-op, which is today's behaviour exactly.
 
-    Two structural guarantees, both visible in the loop below:
+    A cell must clear FOUR filters to be re-run, and a fifth to be written back:
 
-      1. A PASS-1 CONFIDENT CELL IS NEVER TOUCHED. ``todo`` is the only source of
-         indices this function ever writes to, and it is built by filtering on
-         ``not r.res.confident``. There is no other write.
-      2. NO DOWNGRADE. Every re-run goes through ``_improves`` before it is
+      1. NOT ALREADY CONFIDENT. ``todo`` is the only source of indices this
+         function ever writes to, and every candidate is filtered on
+         ``not r.res.confident``. There is no other write, so a pass-1 confident
+         cell cannot be touched.
+      2. IT READ A NUMERATOR. Without one the prior can still reach the cell
+         through the NAME path — ``match_in_set`` scoped to the prior's set, and
+         the prior's denominator narrowing ``idx.match`` — and on the 17
+         self-mapped sets (where the prior's id space happens to match the name
+         index's) that path fuzzy-matches a garbled title onto whatever card in
+         the modal set scores highest: a bare "ENERGY" became a confident
+         "Shadowy Darkness Energy", "Kyurem ex" became "Mega Delphox ex". None of
+         that is protected by the denominator guard, because there is no
+         denominator. So pass 2 acts ONLY through the numerator-in-set rung the
+         guard does protect; number-blind cells stay flagged and go to the VLM
+         exactly as they do today.
+      3. ITS DENOMINATOR DOES NOT CONTRADICT THE PAGE (``_prior_denominator_ok``).
+      4. ITS NAME DOES NOT CONTRADICT ITS OWN NUMBER
+         (``_name_contradicts_numerator``).
+      5. NO DOWNGRADE. Every re-run goes through ``_improves`` before it is
          written back; a weaker (or equal) result is dropped on the floor.
 
     DB-only by construction: it consumes the retained ``CellRead.name_texts`` /
@@ -594,8 +700,15 @@ async def _apply_page_prior(cells: list[BinderCell], reads: list[CellRead],
     # `not res.confident` is the same population as `card.needs_review` here —
     # the card was built from that very result — but the result is the fact and
     # the card is a projection of it, so filter on the fact.
-    todo = [i for i, r in enumerate(reads)
-            if not r.res.confident and _prior_denominator_ok(r.reading, prior)]
+    candidates = [i for i, r in enumerate(reads)
+                  if not r.res.confident
+                  and r.reading is not None and r.reading.numerator
+                  and _prior_denominator_ok(r.reading, prior)]
+    if not candidates:
+        return []
+    contradicts = await asyncio.gather(
+        *(_name_contradicts_numerator(reads[i], prior) for i in candidates))
+    todo = [i for i, bad in zip(candidates, contradicts) if not bad]
     if not todo:
         return []
     results = await asyncio.gather(
@@ -612,7 +725,7 @@ async def _apply_page_prior(cells: list[BinderCell], reads: list[CellRead],
     return rescued
 
 
-def _vlm_payload(cells: list[BinderCell], crops: list,
+def _vlm_payload(cells: list[BinderCell], reads: list[CellRead],
                  prior: SessionPrior | None) -> list[dict]:
     """The VLM request body for the still-uncertain cells, encoded UP FRONT.
 
@@ -651,23 +764,34 @@ def _vlm_payload(cells: list[BinderCell], crops: list,
 
     Cells are selected on ``needs_vlm``, which ``_apply_page_prior`` has already
     cleared for anything it rescued — a cell the page prior settled is not sent
-    to the worker at all."""
+    to the worker at all.
+
+    The hint is applied PER CELL under the same veto pass 2 used
+    (``_prior_denominator_ok``). A cell reaches the worker precisely because pass
+    2 refused it, and the commonest reason to refuse is that its printed
+    denominator contradicts the page — so handing that cell the modal set as
+    context would push the model toward the one set the cell's own pixels rule
+    out, and an echoed answer can carry an identity through the merge guards
+    (see above). A vetoed cell is therefore sent hint-free."""
     payload: list[dict] = []
-    for c, crop in zip(cells, crops):
+    hinted = 0
+    for c, r in zip(cells, reads):
         if not c.needs_vlm:
             continue
-        b64 = vlm_client.jpeg_b64(crop)
+        b64 = vlm_client.jpeg_b64(r.crop)
         if b64 is None:
             continue
+        hint = prior if (prior and _prior_denominator_ok(r.reading, prior)) else None
+        hinted += hint is not None
         # kind="full_card": a binder cell crop is a whole card, never a strip.
         payload.append({"row_index": c.card.row_index, "image_b64": b64,
-                        "hint_set": prior.set_name if prior else None,
-                        "hint_denominator": prior.denominator if prior else None,
+                        "hint_set": hint.set_name if hint else None,
+                        "hint_denominator": hint.denominator if hint else None,
                         "kind": "full_card"})
     if payload:
-        log.info("binder.vlm_hints set=%s den=%s cells=%s",
+        log.info("binder.vlm_hints set=%s den=%s cells=%s hinted=%s",
                  prior.set_name if prior else "-",
-                 prior.denominator if prior else "-", len(payload))
+                 prior.denominator if prior else "-", len(payload), hinted)
     return payload
 
 
@@ -760,7 +884,7 @@ async def _vlm_followup(followup_id: str, cells: list[BinderCell],
                      followup_id, scan_id, len(payload), resolved)
 
 
-async def _vlm_prepare(cells: list[BinderCell], crops: list,
+async def _vlm_prepare(cells: list[BinderCell], reads: list[CellRead],
                        prior: SessionPrior | None) -> list[dict]:
     """The VLM request body, or ``[]`` for "no follow-up" — every case the old
     awaited call would itself have no-op'd on (no worker configured, no flagged
@@ -773,7 +897,7 @@ async def _vlm_prepare(cells: list[BinderCell], crops: list,
         return []
     # Threaded: N cv2 JPEG encodes is real CPU, and it is the one piece of VLM
     # work that stays on the request path.
-    return await asyncio.to_thread(_vlm_payload, cells, crops, prior)
+    return await asyncio.to_thread(_vlm_payload, cells, reads, prior)
 
 
 async def _finish(reads: list[CellRead], rows: int, cols: int,
@@ -798,10 +922,8 @@ async def _finish(reads: list[CellRead], rows: int, cols: int,
     ``scan_id`` is carried purely so the price/VLM timing lines correlate with the
     rest of this page's ``timing.binder.*`` lines — it is NOT the follow-up id."""
     cells: list[BinderCell] = []
-    crops: list = []
     texts_by_row: dict[int, list[str]] = {}
     for idx, r in enumerate(reads):
-        crops.append(r.crop)
         texts_by_row[idx] = r.texts
         cells.append(BinderCell(cell=r.box, card=_pack_card(idx, r.res),
                                 thumb_b64=_thumb(r.crop),
@@ -825,7 +947,7 @@ async def _finish(reads: list[CellRead], rows: int, cols: int,
     page_confidence = pack_confidence([c.card.confidence for c in cells])
 
     with stage("binder", "vlm_dispatch", scan_id):
-        payload = await _vlm_prepare(cells, crops, prior)
+        payload = await _vlm_prepare(cells, reads, prior)
     pending_rows = {p["row_index"] for p in payload}
 
     # Build the response dicts BEFORE spawning anything: from here to the return

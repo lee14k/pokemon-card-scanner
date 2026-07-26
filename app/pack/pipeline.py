@@ -487,14 +487,18 @@ async def scan_pack(
 
         with stage("pack", "code_ocr", scan_id):
             # The single heaviest blocking call in a scan (QR pass + up to ~6 serial
-            # Tesseract subprocesses), so it belongs in a thread. Reading through the
-            # memo also lets the save path (POST /pulls) reuse this exact reading
-            # instead of OCR'ing the same photo a second time.
+            # Tesseract subprocesses), so it belongs in a thread — and behind the same
+            # OCR_GATE as every other Tesseract call, or N concurrent scans could each
+            # fork ~6 subprocesses and blow the small container's memory. Like the
+            # other _bounded stages (read_numbers, resolve_set), this stage's timing
+            # therefore includes any gate queueing. Reading through the memo also lets
+            # the save path (POST /pulls) reuse this exact reading instead of OCR'ing
+            # the same photo a second time.
             code_img = await asyncio.to_thread(_decode, code_bytes)
             if code_img is None:
                 code_result = CodeCardResult(code=None, confidence=0.0, format_ok=False)
             else:
-                cr = await asyncio.to_thread(cached_read_code_card, code_bytes, code_img)
+                cr = await _bounded(cached_read_code_card, code_bytes, code_img)
                 code_result = CodeCardResult(code=cr.code, confidence=round(cr.confidence, 3),
                                              format_ok=cr.format_ok)
 

@@ -10,8 +10,6 @@ import re
 import uuid
 from collections import Counter
 
-import cv2
-import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -24,7 +22,8 @@ from app.db.session import async_session_maker
 from app.db.users import CurrentTrainer
 from app.dex.species import species_of
 from app.prices import latest_price_map
-from app.pack.ocr import CodeReading, cached_read_code_card, code_cache_get
+from app.pack.ocr import CodeReading, code_cache_get, code_cache_put, read_code_card
+from app.pack.pipeline import _decode  # shared decode: EXIF transpose + HEIC support
 from app.storage import move_session_frames, open_photo, save_code_photo, save_pull_photos
 from app.timing import new_scan_id, stage
 
@@ -36,14 +35,22 @@ _MAX_UPLOAD = 15 * 1024 * 1024
 
 
 def _ocr_code_bytes(code_bytes: bytes) -> CodeReading | None:
-    """Decode + OCR a code-card photo. Sync and blocking (decode + up to ~6 serial
-    Tesseract subprocesses) — always call it via asyncio.to_thread. None when the
-    bytes don't decode, exactly as before. Reads through the ocr module's memo so
-    a re-submit of the same photo is free as well."""
-    code_img = cv2.imdecode(np.frombuffer(code_bytes, np.uint8), cv2.IMREAD_COLOR)
+    """Decode + OCR a code-card photo, memoizing the result. Sync and blocking
+    (decode + up to ~6 serial Tesseract subprocesses) — always call it via
+    asyncio.to_thread. None when the bytes don't decode.
+
+    Uses the pipeline's `_decode`, NOT cv2.imdecode, and that matters: cv2 ignores
+    EXIF orientation and cannot parse HEIC at all, so an iPhone code-card upload
+    decoded with cv2 yields None while the same bytes decode fine here. Since the
+    memo can serve this photo's scan-time reading (computed with `_decode`), using
+    a weaker decoder on the miss path would make `verified` depend on cache state:
+    same upload, opposite persisted result. Both paths now decode identically."""
+    code_img = _decode(code_bytes)
     if code_img is None:
         return None
-    return cached_read_code_card(code_bytes, code_img)
+    reading = read_code_card(code_img)
+    code_cache_put(code_bytes, reading)
+    return reading
 
 
 async def _server_code_reading(code_bytes: bytes) -> CodeReading | None:
@@ -53,8 +60,12 @@ async def _server_code_reading(code_bytes: bytes) -> CodeReading | None:
     Almost always a memo hit: /scan/pack just OCR'd these exact bytes server-side
     a moment ago, and re-reading them is the single most expensive thing the app
     does. A miss (direct save, restarted process, evicted entry) does the full
-    read in a thread — equally authoritative, just slower."""
-    cr = code_cache_get(code_bytes)
+    read in a thread — equally authoritative, and now decoded identically.
+
+    The consult runs in a thread too: it hashes up to 15MB (~6ms measured here,
+    worse on a small cloud vCPU) and that would otherwise be a small loop stall of
+    exactly the kind this change exists to remove."""
+    cr = await asyncio.to_thread(code_cache_get, code_bytes)
     if cr is not None:
         return cr
     return await asyncio.to_thread(_ocr_code_bytes, code_bytes)

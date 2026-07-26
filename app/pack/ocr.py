@@ -380,39 +380,57 @@ _code_cache_lock = threading.Lock()
 
 
 def code_cache_key(code_bytes: bytes) -> str:
+    """sha256 of the uploaded bytes. Not free: ~6ms for a 15MB upload on a dev
+    machine and worse on a small cloud vCPU, so an event-loop caller should run
+    this (and code_cache_get) in a thread rather than hash inline."""
     return hashlib.sha256(code_bytes).hexdigest()
 
 
-def code_cache_get(code_bytes: bytes) -> CodeReading | None:
-    """The memoized reading for these exact bytes, or None. Cheap (a hash) — the
-    save path calls this BEFORE decoding, so a hit skips the decode too.
-
-    Returns a copy: CodeReading is a mutable dataclass and callers must not be
-    able to mutate the cached entry (or each other's return value)."""
-    key = code_cache_key(code_bytes)
+def _cache_lookup(key: str) -> CodeReading | None:
+    """Locked LRU read, no logging. Returns a copy: CodeReading is a mutable
+    dataclass and no caller may mutate the cached entry (or another caller's
+    return value)."""
     with _code_cache_lock:
         hit = _code_cache.get(key)
-        if hit is not None:
-            _code_cache.move_to_end(key)
+        if hit is None:
+            return None
+        _code_cache.move_to_end(key)
+        return replace(hit)
+
+
+def code_cache_get(code_bytes: bytes) -> CodeReading | None:
+    """The memoized reading for these exact bytes, or None. The save path consults
+    this BEFORE decoding, so a hit skips the decode as well as the OCR.
+
+    Logs exactly one ``ocr.code_cache hit=`` line per consult — so grepping that
+    line counts consults, and grepping ``ocr.code`` counts real OCR runs."""
+    key = code_cache_key(code_bytes)
+    hit = _cache_lookup(key)
     log.info("ocr.code_cache hit=%s key=%s", hit is not None, key[:12])
-    return replace(hit) if hit is not None else None
+    return hit
 
 
-def cached_read_code_card(code_bytes: bytes, code_img: np.ndarray) -> CodeReading:
-    """read_code_card(code_img), memoized on ``code_bytes``. Sync — call it in a
-    thread. ``code_img`` must be the decode of ``code_bytes``.
+def code_cache_put(code_bytes: bytes, reading: CodeReading) -> None:
+    """Memoize a freshly computed reading, evicting the least-recently-used entry
+    past _CODE_CACHE_MAX.
 
-    Every computed reading is stored, whatever it contains (a legitimate "no code
-    found" read is a result, not a failure); nothing else is ever stored, so a
-    miss always means "recompute", never "trust a placeholder"."""
-    hit = code_cache_get(code_bytes)
-    if hit is not None:
-        return hit
-    reading = read_code_card(code_img)
+    Stores whatever was computed, including a "no code found" reading — that is a
+    result, not a failure. Nothing else is ever stored, so a miss always means
+    "recompute", never "trust a placeholder"."""
     key = code_cache_key(code_bytes)
     with _code_cache_lock:
         _code_cache[key] = replace(reading)
-        _code_cache.move_to_end(key)
+        _code_cache.move_to_end(key)   # in case a racing thread already stored it
         while len(_code_cache) > _CODE_CACHE_MAX:
             _code_cache.popitem(last=False)
+
+
+def cached_read_code_card(code_bytes: bytes, code_img: np.ndarray) -> CodeReading:
+    """read_code_card(code_img), memoized on ``code_bytes``. Sync and blocking —
+    call it in a thread. ``code_img`` must be the decode of ``code_bytes``."""
+    reading = code_cache_get(code_bytes)
+    if reading is not None:
+        return reading
+    reading = read_code_card(code_img)
+    code_cache_put(code_bytes, reading)
     return reading

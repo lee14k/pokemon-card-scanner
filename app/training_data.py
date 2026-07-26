@@ -91,7 +91,10 @@ async def upload_training_photo(
     if split not in _SPLITS:
         raise HTTPException(422, f"split must be one of {list(_SPLITS)}")
     data = await _read_image(photo, "photo")
-    img = _decode(data)
+    # Threaded like every other decode in the app: a 12MP HEIC decode is 100s of ms
+    # of blocking CPU, and on the event loop it stalls every concurrent request in
+    # the process (find_strips below was already offloaded for the same reason).
+    img = await asyncio.to_thread(_decode, data)
     if img is None:
         raise HTTPException(422, "photo could not be decoded")
 
@@ -100,8 +103,13 @@ async def upload_training_photo(
         raise HTTPException(422, "no rows detected")
 
     photo_id = uuid.uuid4()
-    photo_path, strip_paths = _save_training_photo(
-        photo_id, _jpg(img), [(s.row_index, _jpg(s.image)) for s in seg.strips]
+    # One hop for the whole write: N+1 JPEG encodes of a full photo plus every strip,
+    # then N+1 synchronous disk writes. _jpg's HTTPException propagates out of the
+    # worker thread unchanged, so a bad encode is still a clean 500.
+    photo_path, strip_paths = await asyncio.to_thread(
+        lambda: _save_training_photo(
+            photo_id, _jpg(img), [(s.row_index, _jpg(s.image)) for s in seg.strips]
+        )
     )
 
     async with async_session_maker() as session:

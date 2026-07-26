@@ -1,6 +1,6 @@
 """Binder page scan: STRUCTURE-FIRST card-quad detection into grid cells ->
 live-style band OCR per cell (name band + number strip) -> the shared identify
-ladder (no page prior) -> thumbnails/VLM -> prices.
+ladder -> a strictly-guarded page-prior second pass -> thumbnails/VLM -> prices.
 
 Real binder pages carry their structure VISUALLY: card rectangles sit in sleeve
 pockets. That structure survives full-art cards whose printed text sprawls
@@ -13,7 +13,13 @@ Each quad cell then identifies the live way from a small name band (top of the
 crop) and a number strip (bottom) — stacked into one OCR pass per cell, all cells
 run concurrently under ``OCR_GATE``. The identify ladder itself is
 ``resolve_identity`` — the same core the live single-card flow uses — so the two
-flows can never drift."""
+flows can never drift.
+
+A binder page is usually ONE set, so the page gets a second, DB-only identify
+pass: ``_page_modal`` elects the page's set from the cells that came back
+confident and ``_apply_page_prior`` re-runs the ladder for the ones that didn't.
+That prior is identity-DECIDING (see ``_prior_denominator_ok``), so both the
+election and the per-cell hand-off are deliberately hard to earn."""
 from __future__ import annotations
 
 import asyncio
@@ -32,11 +38,11 @@ from app.pack import scan_followup as followup
 from app.pack import vlm_client
 from app.pack.card_crop import refine_card_box
 from app.pack.confidence import pack_confidence
-from app.pack.identify_core import SessionPrior, resolve_identity
-from app.pack.ocr import parse_number
+from app.pack.identify_core import IdentityResult, SessionPrior, resolve_identity
+from app.pack.ocr import NumberReading, parse_number
 from app.pack.pipeline import OCR_GATE, _decode
 from app.pack.rapidocr_reader import detect_lines_xy
-from app.pack.set_resolution import entry_for_set_id
+from app.pack.set_resolution import entry_for_set_id, load_denominator_table
 from app.schemas import PackCard
 from app.timing import new_scan_id, stage
 
@@ -74,6 +80,27 @@ class BinderCell:
     card: PackCard
     thumb_b64: str | None
     needs_vlm: bool
+
+
+@dataclass
+class CellRead:
+    """One cell's PASS-1 read — everything that went INTO the identify ladder,
+    retained so the page-prior second pass can re-run the ladder without
+    re-doing any OCR (``_apply_page_prior`` is DB-only).
+
+    Both cell finders produce these, which is what lets the page prior live in
+    the shared tail (``_finish``) instead of being implemented twice.
+
+    ``name_texts``/``reading`` are the ladder's actual inputs; ``texts`` is the
+    cell's raw OCR strings, which are not a ladder input at all — they are the
+    VLM merge's pixel-corroboration evidence and only ride along here so the two
+    per-cell lists cannot fall out of order."""
+    box: tuple[int, int, int, int]
+    crop: object                              # BGR ndarray (thumb + VLM encode)
+    res: IdentityResult
+    texts: list[str]
+    name_texts: list[tuple[str, float]]
+    reading: NumberReading | None
 
 
 def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
@@ -232,10 +259,12 @@ def _name_texts_from_band(name_xy: list) -> list[tuple[str, float]]:
     return [(t, c) for _y, t, c in joined]
 
 
-async def _identify_quad_cell(img, box: tuple[int, int, int, int], W: int, H: int):
+async def _identify_quad_cell(img, box: tuple[int, int, int, int],
+                              W: int, H: int) -> CellRead:
     """Identify one card quad the live way: read its NAME BAND (top of the crop)
     and NUMBER STRIP (bottom) with OCR under OCR_GATE, then run the shared
-    identify ladder. Returns (clamped_box, crop, IdentityResult).
+    identify ladder. Returns the cell's ``CellRead`` (pass-1 result plus the
+    ladder inputs, which the page-prior pass re-uses without re-reading pixels).
 
     The two bands are the only card regions live-style identification needs, so
     rather than OCR the whole card (dense, slow) or fire two separate detector
@@ -284,7 +313,9 @@ async def _identify_quad_cell(img, box: tuple[int, int, int, int], W: int, H: in
     res = await resolve_identity(name_texts, reading, None)
     # The cell's raw OCR texts ride along so the VLM merge can demand pixel
     # corroboration of a claimed number (hallucination guard).
-    return (x0, y0, x1 - x0, y1 - y0), crop, res, [l[2] for l in lines]
+    return CellRead(box=(x0, y0, x1 - x0, y1 - y0), crop=crop, res=res,
+                    texts=[l[2] for l in lines],
+                    name_texts=name_texts, reading=reading)
 
 
 def _is_stage_label(text: str) -> bool:
@@ -458,7 +489,131 @@ def _page_modal(cells: list[BinderCell]) -> SessionPrior | None:
         denominator=entry.denominators[0] if len(entry.denominators) == 1 else None)
 
 
-def _vlm_payload(cells: list[BinderCell], crops: list) -> list[dict]:
+def _prior_denominator_ok(reading: NumberReading | None,
+                          prior: SessionPrior) -> bool:
+    """A3's non-negotiable per-cell guard: may THIS cell be handed the page prior?
+
+    A ``SessionPrior`` is identity-DECIDING inside ``resolve_identity``, not a
+    hint: its own rung promotes a cell to ``confident`` on nothing but "the
+    numerator exists in the prior's set" (identify_core.py), and its denominator
+    substitutes into name matching when the cell read none. A prior handed to
+    the wrong cell therefore mints a confident-WRONG identity outright — so the
+    page's opinion only reaches a cell that does not CONTRADICT it:
+
+      * no reading at all -> nothing to contradict; the prior applies. (This is
+        the whole point: an OCR-blind cell on a single-set page is exactly what
+        A3 exists to rescue.)
+      * a printed denominator -> it must be one the modal set actually PRINTS.
+        Compared against the catalog row's whole ``denominators`` tuple rather
+        than the single value ``_page_modal`` was willing to publish: a set with
+        two recorded denominators legitimately prints both, while a set with
+        NONE recorded (the promo sets) can agree with nothing, so there any read
+        denominator vetoes the prior.
+      * a promo prefix ("SWSH"/"SVP"/"MEP") -> ``parse_number`` emits this
+        INSTEAD of a denominator (``NUMBER_RE`` and ``PROMO_RE`` are exclusive,
+        so a promo read has ``denominator=None``), and it names a Black Star
+        Promos set outright. Left to the "absent denominator" branch a
+        ``MEP 037`` cell would sail through and get promoted into whatever set
+        the page voted for, so the prefix is treated as the set-naming alpha
+        denominator it is: the prior applies only when that promo set IS the
+        modal set.
+
+    Alpha gallery denominators ("TG30", "GG70", "SV122") need no special case —
+    the comparison is on uppercased, stripped strings, which is the form both
+    sides already hold (``NUMBER_RE`` matches an uppercased line; the table's own
+    index is keyed ``.upper()``), so a ``TG12/TG30`` cell agrees with a Trainer
+    Gallery modal set and contradicts every ordinary one."""
+    if reading is None:
+        return True
+    if reading.prefix:
+        promo = load_denominator_table().by_promo_prefix.get(reading.prefix.upper())
+        return promo is not None and promo.set_id == prior.set_id
+    den = (reading.denominator or "").strip().upper()
+    if not den:
+        return True
+    entry = entry_for_set_id(prior.set_id)
+    return entry is not None and den in {d.strip().upper() for d in entry.denominators}
+
+
+def _improves(old: IdentityResult, new: IdentityResult) -> bool:
+    """May pass 2's re-run REPLACE the pass-1 result? Forward moves only.
+
+    A prior can hurt as well as help — it can empty a name-match's candidate
+    list via the denominator narrowing — so a re-run that came back weaker is
+    DISCARDED rather than written back. The accepted gains are the two the plan
+    names: a cell that becomes confident, or one that resolves a set it had no
+    opinion on.
+
+    The second branch is dormant against today's ``resolve_identity`` (it only
+    fills ``set_id``/``set_name`` on a result it is also marking confident, so a
+    non-confident result always carries no set). It is written out anyway so the
+    "never downgrade" contract is enforced by this predicate and not by that
+    incidental property of the core."""
+    if new.confident:
+        return not old.confident
+    return (new.set_id or new.set_name) is not None \
+        and (old.set_id or old.set_name) is None
+
+
+def _pack_card(row_index: int, res: IdentityResult) -> PackCard:
+    """One cell's response card from an identity result. Shared by pass 1 and the
+    page-prior pass so a rescued cell cannot drift in shape from a first-pass one."""
+    return PackCard(
+        row_index=row_index, card_number=res.display_number,
+        set_id=res.set_id, set_code=res.set_code, set_name=res.set_name,
+        confidence=0.9 if res.confident else 0.3,
+        low_confidence_reason=res.low_confidence_reason,
+        needs_review=not res.confident, **res.fields)
+
+
+async def _apply_page_prior(cells: list[BinderCell], reads: list[CellRead],
+                            prior: SessionPrior | None) -> list[int]:
+    """PASS 2 (A3): re-run the identify ladder for the page's NON-confident cells
+    with the page's elected set as a prior. Returns the ``row_index`` of every
+    cell it actually rescued; ``cells``/``reads`` are updated in place for those
+    cells and left untouched for all the others.
+
+    ``prior`` is whatever ``_page_modal`` elected from the PASS-1 confident cells
+    — strict unique maximum, >= ``_MODAL_MIN_SUPPORT`` supporters. ``None`` (a
+    tie, too little support, or an unknown set) means the page never earned an
+    opinion and this is a no-op, which is today's behaviour exactly.
+
+    Two structural guarantees, both visible in the loop below:
+
+      1. A PASS-1 CONFIDENT CELL IS NEVER TOUCHED. ``todo`` is the only source of
+         indices this function ever writes to, and it is built by filtering on
+         ``not r.res.confident``. There is no other write.
+      2. NO DOWNGRADE. Every re-run goes through ``_improves`` before it is
+         written back; a weaker (or equal) result is dropped on the floor.
+
+    DB-only by construction: it consumes the retained ``CellRead.name_texts`` /
+    ``CellRead.reading`` and never sees a pixel, so the cost is the ladder's own
+    catalog I/O for a handful of cells (issued concurrently), not a second OCR."""
+    if prior is None or not prior.set_id:
+        return []
+    # `not res.confident` is the same population as `card.needs_review` here —
+    # the card was built from that very result — but the result is the fact and
+    # the card is a projection of it, so filter on the fact.
+    todo = [i for i, r in enumerate(reads)
+            if not r.res.confident and _prior_denominator_ok(r.reading, prior)]
+    if not todo:
+        return []
+    results = await asyncio.gather(
+        *(resolve_identity(reads[i].name_texts, reads[i].reading, prior)
+          for i in todo))
+    rescued: list[int] = []
+    for i, new in zip(todo, results):
+        if not _improves(reads[i].res, new):
+            continue
+        reads[i].res = new
+        cells[i].card = _pack_card(cells[i].card.row_index, new)
+        cells[i].needs_vlm = not new.confident
+        rescued.append(cells[i].card.row_index)
+    return rescued
+
+
+def _vlm_payload(cells: list[BinderCell], crops: list,
+                 prior: SessionPrior | None) -> list[dict]:
     """The VLM request body for the still-uncertain cells, encoded UP FRONT.
 
     Blocking (cv2 JPEG encode per cell) — callers run it in a thread. Encoding
@@ -467,9 +622,14 @@ def _vlm_payload(cells: list[BinderCell], crops: list) -> list[dict]:
     through them, whatever the decoder allocated for a multi-megapixel page) for
     the whole RunPod round trip.
 
-    The page's modal set rides along as a HINT (``_page_modal``) — the pack flow
-    has always sent one and the binder sent nulls, so the worker got no context
-    at all for exactly the cells that read worst.
+    The page's modal set rides along as a HINT — the pack flow has always sent
+    one and the binder sent nulls, so the worker got no context at all for
+    exactly the cells that read worst. ``prior`` is the page prior ``_finish``
+    already elected with ``_page_modal`` and spent on pass 2; it is passed in
+    rather than recomputed so the hint the worker sees is provably the same set
+    the second pass acted on (recomputing after pass 2 could elect a DIFFERENT
+    set off the cells the prior itself just promoted — a vote counting its own
+    output).
 
     A hint is NOT harmless, which is why ``_page_modal`` demands a strict
     majority-of-one before offering it. The guards in ``apply_vlm_answer`` do not
@@ -487,8 +647,11 @@ def _vlm_payload(cells: list[BinderCell], crops: list) -> list[dict]:
     denominator-contradiction veto) and kill a CORRECT name resolution.
 
     Hence: hint only when the page really has one dominant set, and never
-    override a guard to make room for one."""
-    prior = _page_modal(cells)
+    override a guard to make room for one.
+
+    Cells are selected on ``needs_vlm``, which ``_apply_page_prior`` has already
+    cleared for anything it rescued — a cell the page prior settled is not sent
+    to the worker at all."""
     payload: list[dict] = []
     for c, crop in zip(cells, crops):
         if not c.needs_vlm:
@@ -520,7 +683,6 @@ async def _run_vlm(cells: list[BinderCell], payload: list[dict],
     ``payload`` comes from ``_vlm_payload`` — the enabled/anything-flagged checks
     live in ``_vlm_prepare``, and ``_finish`` never spawns this with an empty one."""
     try:
-        from app.pack.set_resolution import load_denominator_table
         from app.pack.vlm_merge import apply_vlm_answer, collapse_duplicate_answers
         table = load_denominator_table()
         result = await vlm_client.identify(payload)
@@ -598,24 +760,32 @@ async def _vlm_followup(followup_id: str, cells: list[BinderCell],
                      followup_id, scan_id, len(payload), resolved)
 
 
-async def _vlm_prepare(cells: list[BinderCell], crops: list) -> list[dict]:
+async def _vlm_prepare(cells: list[BinderCell], crops: list,
+                       prior: SessionPrior | None) -> list[dict]:
     """The VLM request body, or ``[]`` for "no follow-up" — every case the old
     awaited call would itself have no-op'd on (no worker configured, no flagged
     cell, nothing encodable). An empty list is what keeps a VLM-less response
-    byte-identical to the pre-follow-up one."""
+    byte-identical to the pre-follow-up one.
+
+    Runs AFTER the page-prior pass, so ``needs_vlm`` here is the post-pass-2
+    state and a rescued cell is already gone from the population."""
     if not vlm_client.enabled() or not any(c.needs_vlm for c in cells):
         return []
     # Threaded: N cv2 JPEG encodes is real CPU, and it is the one piece of VLM
     # work that stays on the request path.
-    return await asyncio.to_thread(_vlm_payload, cells, crops)
+    return await asyncio.to_thread(_vlm_payload, cells, crops, prior)
 
 
-async def _finish(cell_specs: list, rows: int, cols: int,
+async def _finish(reads: list[CellRead], rows: int, cols: int,
                   scan_id: str | None = None) -> dict:
-    """Shared tail for both cell finders. ``cell_specs`` is an ordered list of
-    (cell_box, crop, IdentityResult); builds the PackCards, thumbs and prices,
-    assembles the response, and hands the flagged cells to a BACKGROUND VLM pass.
-    Row indices are (re)assigned in the given reading order.
+    """Shared tail for both cell finders. ``reads`` is an ordered list of
+    ``CellRead`` (pass-1 identity plus the ladder inputs that produced it); runs
+    the page-prior second pass, builds the PackCards, thumbs and prices,
+    assembles the response, and hands the still-flagged cells to a BACKGROUND VLM
+    pass. Row indices are (re)assigned in the given reading order.
+
+    Both cell finders funnel through here, so A3's page prior is implemented once
+    and the quad path and the text-cluster fallback cannot diverge on it.
 
     The VLM used to be awaited here, which put a RunPod round trip (90s timeout,
     serverless cold start) inside the HTTP response for exactly the pages that
@@ -630,17 +800,24 @@ async def _finish(cell_specs: list, rows: int, cols: int,
     cells: list[BinderCell] = []
     crops: list = []
     texts_by_row: dict[int, list[str]] = {}
-    for idx, (box, crop, res, texts) in enumerate(cell_specs):
-        crops.append(crop)
-        texts_by_row[idx] = texts
-        card = PackCard(
-            row_index=idx, card_number=res.display_number,
-            set_id=res.set_id, set_code=res.set_code, set_name=res.set_name,
-            confidence=0.9 if res.confident else 0.3,
-            low_confidence_reason=res.low_confidence_reason,
-            needs_review=not res.confident, **res.fields)
-        cells.append(BinderCell(cell=box, card=card,
-                                thumb_b64=_thumb(crop), needs_vlm=not res.confident))
+    for idx, r in enumerate(reads):
+        crops.append(r.crop)
+        texts_by_row[idx] = r.texts
+        cells.append(BinderCell(cell=r.box, card=_pack_card(idx, r.res),
+                                thumb_b64=_thumb(r.crop),
+                                needs_vlm=not r.res.confident))
+
+    # A3 — the page's own set as a prior for the cells that failed. Elected from
+    # the PASS-1 confident cells only (so the vote can never count a cell the
+    # prior itself promoted) and spent under a per-cell denominator veto. The
+    # elected prior is then reused as the VLM hint instead of being recomputed.
+    flagged_1 = sum(1 for c in cells if c.card.needs_review)
+    with stage("binder", "prior_pass", scan_id):
+        prior = _page_modal(cells)
+        rescued = await _apply_page_prior(cells, reads, prior)
+    log.info("binder.page_prior set=%s den=%s flagged=%s rescued=%s",
+             prior.set_name if prior else "-", prior.denominator if prior else "-",
+             flagged_1, len(rescued))
 
     with stage("binder", "prices", scan_id):
         await _attach_prices(cells)
@@ -648,7 +825,7 @@ async def _finish(cell_specs: list, rows: int, cols: int,
     page_confidence = pack_confidence([c.card.confidence for c in cells])
 
     with stage("binder", "vlm_dispatch", scan_id):
-        payload = await _vlm_prepare(cells, crops)
+        payload = await _vlm_prepare(cells, crops, prior)
     pending_rows = {p["row_index"] for p in payload}
 
     # Build the response dicts BEFORE spawning anything: from here to the return
@@ -714,13 +891,17 @@ async def _scan_text_clusters(img, W: int, H: int, scan_id: str | None = None) -
     results = await asyncio.gather(
         *(resolve_identity(names, reading, None) for reading, names in parsed))
 
-    cell_specs: list = []
-    for (_ei, _ci, cell), res in zip(records, results):
+    reads: list[CellRead] = []
+    for (_ei, _ci, cell), (reading, names), res in zip(records, parsed, results):
         coarse = _coarse_box(cell, col_pitch, row_pitch, W, H)
         x, y, w, h = refine_card_box(img, coarse)
         crop = img[y:y + h, x:x + w]
-        cell_specs.append(((x, y, w, h), crop, res, [line[2] for line in cell]))
-    return await _finish(cell_specs, rows, cols, scan_id)
+        # name_texts/reading are the very inputs `parsed` fed the ladder above —
+        # retained so the page-prior pass re-runs it without touching pixels.
+        reads.append(CellRead(box=(x, y, w, h), crop=crop, res=res,
+                              texts=[line[2] for line in cell],
+                              name_texts=names, reading=reading))
+    return await _finish(reads, rows, cols, scan_id)
 
 
 async def scan_binder_page(page_bytes: bytes) -> dict:
@@ -748,9 +929,9 @@ async def scan_binder_page(page_bytes: bytes) -> dict:
                 # concurrent per-cell burst: several cells' first OCR calls would
                 # otherwise race the engine init and some return empty (dropped reads).
                 await asyncio.to_thread(detect_lines_xy, img[:64, :64], 64)
-                specs = await asyncio.gather(
+                reads = await asyncio.gather(
                     *(_identify_quad_cell(img, box, W, H) for box in ordered))
-            return await _finish(list(specs), rows, cols, scan_id)
+            return await _finish(list(reads), rows, cols, scan_id)
 
         log.info("binder.quads found=%s fallback=%s", len(quads), True)
         return await _scan_text_clusters(img, W, H, scan_id)

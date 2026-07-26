@@ -1,6 +1,6 @@
 """Shared merge of one VLM answer into a PackCard.
 
-Both the batch pack pipeline (`pipeline._vlm_fallback`) and the live-scan session
+Both the batch pack pipeline (`pipeline._merge_vlm`) and the live-scan session
 store (`live_session`) hand still-uncertain cards to the RunPod VLM worker and
 fold the definitive ID back in the SAME way — number/denominator, set-name → set
 resolution via the denominator table, then a keyed re-lookup for name/rarity/

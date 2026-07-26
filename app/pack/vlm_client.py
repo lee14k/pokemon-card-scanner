@@ -25,7 +25,11 @@ def enabled() -> bool:
     return _endpoint() is not None
 
 
-def _b64_jpeg(img) -> str | None:
+def jpeg_b64(img) -> str | None:
+    """The exact payload encoding ``identify`` sends. Public so a caller that
+    hands the request off to a background task can encode UP FRONT and retain
+    only these few KB per card instead of pinning whole-page BGR arrays for the
+    life of the task (see scan_followup)."""
     ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])
     return base64.b64encode(buf.tobytes()).decode() if ok else None
 
@@ -34,13 +38,17 @@ async def identify(cards: list[dict], timeout: float = 90.0) -> dict[int, dict] 
     """cards: [{"row_index": int, "image": bgr ndarray, "hint_set": str|None,
     "hint_denominator": str|None}]. Returns {row_index: {number, denominator,
     set_name, confidence}} or None (disabled / no cards / error). Timeout is
-    generous for serverless cold start."""
+    generous for serverless cold start.
+
+    ``"image_b64"`` may be supplied instead of ``"image"`` (already
+    ``jpeg_b64``-encoded) — the background follow-up path does that so the crop
+    is encoded once, on the request path, and the ndarray can be released."""
     base = _endpoint()
     if base is None or not cards:
         return None
     payload_cards = []
     for c in cards:
-        b = _b64_jpeg(c["image"])
+        b = c.get("image_b64") or jpeg_b64(c["image"])
         if b is None:
             continue
         payload_cards.append({

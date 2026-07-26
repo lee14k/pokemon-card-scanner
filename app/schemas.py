@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, SerializerFunctionWrapHandler, model_serializer
 
 
 class PackCard(BaseModel):
@@ -21,6 +21,26 @@ class PackCard(BaseModel):
     needs_review: bool = False  # true when the card is uncertain (frontend highlights it)
     price_usd_low: float | None = None
     price_usd_high: float | None = None
+    # Background-VLM lifecycle, named exactly like live_session's per-card states:
+    # "pending_vlm" (a follow-up task is still identifying this row — poll
+    # /scan/{pack,binder}/{scan_id}), "ok", "vlm_failed". None means no follow-up
+    # applies to this card, which is every response the VLM never touched.
+    state: str | None = None
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_state(self, handler: SerializerFunctionWrapHandler) -> dict:
+        """Omit ``state`` from the serialized card when it is None.
+
+        ``state`` is meaningful only while a background VLM follow-up exists, so a
+        plain optional field would have added ``"state": null`` to every card of
+        every response that has nothing to do with the VLM (/cards/lookup, every
+        VLM-disabled scan, the binder gate's fixtures). Dropping the null keeps
+        those payloads byte-for-byte what they were before the field existed —
+        which is the contract the binder gate and old clients are held to."""
+        dumped = handler(self)
+        if dumped.get("state") is None:
+            dumped.pop("state", None)
+        return dumped
 
 
 class CodeCardResult(BaseModel):
@@ -34,6 +54,11 @@ class PackScanResponse(BaseModel):
     code_card: CodeCardResult
     pack_confidence: float
     segmentation_warning: str | None = None
+    # Follow-up handle: set only when a background VLM pass is still running for
+    # this scan, in which case the flagged cards carry state="pending_vlm" and
+    # GET /scan/pack/{scan_id} serves their patched identities. Old clients that
+    # ignore it just keep the flagged Phase-1 cards.
+    scan_id: str | None = None
 
 
 class SetInfo(BaseModel):

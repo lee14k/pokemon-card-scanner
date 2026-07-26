@@ -121,8 +121,19 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
         set_id = await _pw_set_id_for(name_match.tcgdex_set_id)
 
     if not confident and reading is not None and prior and prior.set_id:
+        # get_set_numerators returns an EMPTY set for BOTH a DB failure and a set
+        # that isn't mapped/ingested (app/cards.py). Empty therefore means "we
+        # don't know this set's numerators" — never "every numerator is valid".
+        # This rung's whole job is to check the number against the set, so with no
+        # catalog to check against it must validate NOTHING (otherwise any garbage
+        # the OCR produced became a confident identity in the session's set). And
+        # it must say so: a repeatedly empty result is a catalog gap, not noise.
         valid = await get_set_numerators(prior.set_id)
-        if numerator and (not valid or numerator in valid):
+        if numerator and not valid:
+            log.warning("identify.set_numerators_empty set=%s numerator=%s "
+                        "(unmapped/uningested set or DB failure) — rung skipped",
+                        prior.set_id, numerator)
+        if numerator and valid and numerator in valid:
             confident = True                  # number valid in session's set
             set_id, set_name = prior.set_id, prior.set_name
 

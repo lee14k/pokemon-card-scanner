@@ -21,6 +21,7 @@ import base64
 import bisect
 import logging
 import re
+from collections import Counter
 from dataclasses import dataclass
 from statistics import median
 
@@ -31,10 +32,11 @@ from app.pack import scan_followup as followup
 from app.pack import vlm_client
 from app.pack.card_crop import refine_card_box
 from app.pack.confidence import pack_confidence
-from app.pack.identify_core import resolve_identity
+from app.pack.identify_core import SessionPrior, resolve_identity
 from app.pack.ocr import parse_number
 from app.pack.pipeline import OCR_GATE, _decode
 from app.pack.rapidocr_reader import detect_lines_xy
+from app.pack.set_resolution import entry_for_set_id
 from app.schemas import PackCard
 from app.timing import new_scan_id, stage
 
@@ -63,6 +65,7 @@ _QUAD_MED_MULT = 3.0   # grid sanity: keep boxes within this factor of median ar
 _NAME_BAND = 0.28      # per-cell name band = top this fraction of the crop
 _NUM_STRIP = 0.20      # per-cell number strip = bottom this fraction of the crop
 _BAND_CAP = 1000       # stacked name-band+strip OCR downscale cap (text stays large)
+_MODAL_MIN_SUPPORT = 2  # confident cells needed to elect a page modal set (_page_modal)
 
 
 @dataclass
@@ -408,6 +411,42 @@ def _thumb(crop) -> str | None:
     return base64.b64encode(buf.tobytes()).decode() if ok else None
 
 
+def _page_modal(cells: list[BinderCell]) -> SessionPrior | None:
+    """The page's own modal set as a prior, or None when the page hasn't earned
+    one. PURE: reads only ``cell.card.set_id``/``needs_review`` and the memoized
+    denominator table — no I/O, no request state, no mutation.
+
+    Mirrors the pack's modal-hint derivation (pipeline._vlm_payload +
+    _apply_constraints): vote among the CONFIDENT cells only, and require
+    ``_MODAL_MIN_SUPPORT`` supporters — one confident cell is an anecdote, not a
+    page context, and a binder page is legitimately allowed to be a mixed
+    scrapbook. The denominator comes from the elected set's catalog row and only
+    when that row has exactly ONE denominator: a set with reprint denominators
+    (or none recorded) has no single right answer to offer.
+
+    ``needs_review`` rather than the frozen ``needs_vlm`` flag, so a caller that
+    runs this AFTER a VLM merge sees the cells that are confident NOW — which is
+    also what live_session.prior() means by its ``state == "ok"`` filter.
+
+    Returned as a SessionPrior because that is exactly what the shape is: the
+    binder VLM hints use ``.set_name``/``.denominator``, and the identify ladder
+    (resolve_identity) takes this object as-is, so a page-level prior can reuse
+    the vote without recomputing it."""
+    votes = Counter(c.card.set_id for c in cells
+                    if not c.card.needs_review and c.card.set_id)
+    if not votes:
+        return None
+    set_id, n = votes.most_common(1)[0]
+    if n < _MODAL_MIN_SUPPORT:
+        return None
+    entry = entry_for_set_id(set_id)
+    if entry is None:
+        return None
+    return SessionPrior(
+        set_id=set_id, set_name=entry.set_name,
+        denominator=entry.denominators[0] if len(entry.denominators) == 1 else None)
+
+
 def _vlm_payload(cells: list[BinderCell], crops: list) -> list[dict]:
     """The VLM request body for the still-uncertain cells, encoded UP FRONT.
 
@@ -415,7 +454,15 @@ def _vlm_payload(cells: list[BinderCell], crops: list) -> list[dict]:
     here rather than inside ``identify`` is what lets the background follow-up
     hold a few KB of base64 per flagged cell instead of pinning the crops (and,
     through them, whatever the decoder allocated for a multi-megapixel page) for
-    the whole RunPod round trip."""
+    the whole RunPod round trip.
+
+    The page's modal set rides along as a HINT (``_page_modal``) — the pack flow
+    has always sent one and the binder sent nulls, so the worker got no context
+    at all for exactly the cells that read worst. It is only ever prompt context:
+    every vlm_merge guard (accept threshold, duplicate collapse, OCR
+    corroboration, denominator contradiction) still judges the answer on its own,
+    so a wrong hint cannot promote a wrong identity."""
+    prior = _page_modal(cells)
     payload: list[dict] = []
     for c, crop in zip(cells, crops):
         if not c.needs_vlm:
@@ -423,8 +470,15 @@ def _vlm_payload(cells: list[BinderCell], crops: list) -> list[dict]:
         b64 = vlm_client.jpeg_b64(crop)
         if b64 is None:
             continue
+        # kind="full_card": a binder cell crop is a whole card, never a strip.
         payload.append({"row_index": c.card.row_index, "image_b64": b64,
-                        "hint_set": None, "hint_denominator": None})
+                        "hint_set": prior.set_name if prior else None,
+                        "hint_denominator": prior.denominator if prior else None,
+                        "kind": "full_card"})
+    if payload:
+        log.info("binder.vlm_hints set=%s den=%s cells=%s",
+                 prior.set_name if prior else "-",
+                 prior.denominator if prior else "-", len(payload))
     return payload
 
 

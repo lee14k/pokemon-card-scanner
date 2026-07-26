@@ -3,6 +3,10 @@ Build app/pack/data/set_denominators.json from PokéWallet data.
 
 Usage: POKEWALLET_API_KEY=... .venv/bin/python scripts/build_denominator_table.py
 Review the printed table, then commit the JSON.
+
+Merges rather than overwrites: rows this run produces from the symbol index win,
+and every other row already in the JSON (the hand-maintained me-era and Black
+Star Promo sets, which the index cannot produce) is PRESERVED.
 """
 
 from __future__ import annotations
@@ -63,6 +67,12 @@ SLUG_TO_SET: dict[str, tuple[str, str]] = {
     "destined-rivals": ("DRI", "sv"),
     "black-bolt": ("BLK", "sv"),
     "white-flare": ("WHT", "sv"),
+    # Products the local TCGdex catalog carries that the index can also resolve
+    # (positive set_ids as of 2026-07-26): the Celebrations reprint subset, the
+    # SV basic-energy set and the Futsal promo collection.
+    "celebrations-classic-collection": ("CEL-CC", "swsh"),
+    "scarlet-and-violet-energies": ("SVE", "sv"),
+    "pokemon-futsal-collection": ("FUT20", "swsh"),
     # Black-star promo sets. Currently carry placeholder set_id=-172 in the symbol
     # index (skipped by the non-positive guard). Listed so that once a real id is
     # scraped, the build picks them up automatically instead of silently omitting them.
@@ -133,8 +143,38 @@ async def main() -> None:
         print(f"\nWARNING: no symbol-index entry for slugs: {sorted(missing)}")
         print("Re-seed via scripts/run_set_symbol_pipeline.sh, then rerun.")
 
+    # MERGE, never clobber. Most of the table cannot be produced from the symbol
+    # index at all — the me-era sets and the Black Star Promo sets have no usable
+    # index entry (missing, or a placeholder set_id skipped above), so they are
+    # maintained by hand in the JSON. A plain overwrite would DELETE them, which
+    # is how a "regenerate the table" run silently shrinks set coverage. So:
+    # rows produced by this run win, everything else in the file is preserved,
+    # and a preserved row's hand-set tcgdex_id carries over onto a fresh row that
+    # doesn't have one (it is the bridge app/pack/vlm_merge.py resolves sets by).
+    previous: dict = {}
+    if OUT.exists():
+        try:
+            previous = json.loads(OUT.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise SystemExit(f"{OUT} is not valid JSON ({exc}); fix or move it first")
+    prior_rows = {str(r.get("set_code")): r for r in previous.get("sets") or []}
+    produced = {r["set_code"] for r in rows}
+    for row in rows:
+        old = prior_rows.get(row["set_code"])
+        if old and not row.get("tcgdex_id") and old.get("tcgdex_id"):
+            row["tcgdex_id"] = old["tcgdex_id"]
+            print(f"{row['set_code']:5} kept tcgdex_id={old['tcgdex_id']}")
+    for code, row in prior_rows.items():
+        if code not in produced:
+            rows.append(row)
+            print(f"{code:5} PRESERVED (hand-maintained; not produced by this run)")
+
+    out: dict = {}
+    if previous.get("_provisional"):   # provenance note is hand-written; keep it
+        out["_provisional"] = previous["_provisional"]
+    out["sets"] = rows
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps({"sets": rows}, indent=2) + "\n")
+    OUT.write_text(json.dumps(out, indent=2) + "\n")
     print(f"\nWrote {OUT} ({len(rows)} sets). Review denominators before committing.")
 
 

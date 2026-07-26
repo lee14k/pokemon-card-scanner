@@ -1,5 +1,5 @@
 {
-  "_provisional": "hand-seeded 2026-06-11 (+TG/GG/shiny-vault subsets 2026-06-15); promo sets + MEW/151 omitted (set_id unknown); regenerate with scripts/build_denominator_table.py once POKEWALLET_API_KEY is available. me-era sets (me01-me05, me02.5) hand-added 2026-07-21 from tcgdex_set.card_count_official — PokéWallet has no me-era coverage, so set_id/set_code hold the TCGdex id directly (identity-only resolution; no PokéWallet price bridge).",
+  "_provisional": "hand-seeded 2026-06-11 (+TG/GG/shiny-vault subsets 2026-06-15); promo sets + MEW/151 omitted (set_id unknown); regenerate with scripts/build_denominator_table.py once POKEWALLET_API_KEY is available. me-era sets (me01-me05, me02.5) hand-added 2026-07-21 from tcgdex_set.card_count_official — PokéWallet has no me-era coverage, so set_id/set_code hold the TCGdex id directly (identity-only resolution; no PokéWallet price bridge). 2026-07-26: the remaining 11 sets of the local TCGdex catalog were hand-added so the table now covers all 53 ingested sets (swshp, cel25cc, fut2020, sv03.5, sv10.5b, sv10.5w, sve, mfb, svp, mee, mep). Their PokéWallet set_ids are unknown or placeholders in app/data/set_symbols/index.json, so — like the me-era rows — set_id holds the TCGdex id (identity-only; no price bridge) and tcgdex_id is set explicitly. denominators carry the printed denominator ONLY where it is verifiable: card_count_official for the numbered expansions (151 -> 165, Black Bolt / White Flare -> 86), and [] for (a) the three Black Star Promo sets, which print a PREFIX and no denominator (promo_prefix instead: SWSH / SVP / MEP, the last confirmed from the printed 'MEP EN 037' on tests/corpus/binder/real/page_3.jpeg), (b) Celebrations Classic Collection, whose reprints carry their ORIGINAL set's number — listing '25' would wrongly make Celebrations' unique /25 ambiguous, and (c) the energy/deck products sve, mee, mfb and fut2020, whose printed numbering could not be verified from the catalog. Never guess a denominator: a wrong value silently steals a unique-denominator resolution.",
   "sets": [
     {
       "set_id": "23876",
@@ -426,6 +426,111 @@
       ],
       "promo_prefix": null,
       "tcgdex_id": "me05"
+    },
+    {
+      "set_id": "swshp",
+      "set_code": "SWSHP",
+      "set_name": "SWSH Black Star Promos",
+      "era": "swsh",
+      "denominators": [],
+      "promo_prefix": "SWSH",
+      "tcgdex_id": "swshp"
+    },
+    {
+      "set_id": "cel25cc",
+      "set_code": "CEL-CC",
+      "set_name": "Celebrations Classic Collection",
+      "era": "swsh",
+      "denominators": [],
+      "promo_prefix": null,
+      "tcgdex_id": "cel25cc"
+    },
+    {
+      "set_id": "fut2020",
+      "set_code": "FUT20",
+      "set_name": "Pok\u00e9mon Futsal 2020",
+      "era": "swsh",
+      "denominators": [],
+      "promo_prefix": null,
+      "tcgdex_id": "fut2020"
+    },
+    {
+      "set_id": "sv03.5",
+      "set_code": "MEW",
+      "set_name": "151",
+      "era": "sv",
+      "denominators": [
+        "165"
+      ],
+      "promo_prefix": null,
+      "tcgdex_id": "sv03.5"
+    },
+    {
+      "set_id": "sv10.5b",
+      "set_code": "BLK",
+      "set_name": "Black Bolt",
+      "era": "sv",
+      "denominators": [
+        "86"
+      ],
+      "promo_prefix": null,
+      "tcgdex_id": "sv10.5b"
+    },
+    {
+      "set_id": "sv10.5w",
+      "set_code": "WHT",
+      "set_name": "White Flare",
+      "era": "sv",
+      "denominators": [
+        "86"
+      ],
+      "promo_prefix": null,
+      "tcgdex_id": "sv10.5w"
+    },
+    {
+      "set_id": "sve",
+      "set_code": "SVE",
+      "set_name": "Scarlet & Violet Energy",
+      "era": "sv",
+      "denominators": [],
+      "promo_prefix": null,
+      "tcgdex_id": "sve"
+    },
+    {
+      "set_id": "mfb",
+      "set_code": "MFB",
+      "set_name": "My First Battle",
+      "era": "sv",
+      "denominators": [],
+      "promo_prefix": null,
+      "tcgdex_id": "mfb"
+    },
+    {
+      "set_id": "svp",
+      "set_code": "SVP",
+      "set_name": "SVP Black Star Promos",
+      "era": "sv",
+      "denominators": [],
+      "promo_prefix": "SVP",
+      "tcgdex_id": "svp"
+    },
+    {
+      "set_id": "mee",
+      "set_code": "MEE",
+      "set_name": "Mega Evolution Energy",
+      "era": "me",
+      "denominators": [],
+      "promo_prefix": null,
+      "tcgdex_id": "mee"
+    },
+    {
+      "set_id": "mep",
+      "set_code": "MEP",
+      "set_name": "MEP Black Star Promos",
+      "era": "me",
+      "denominators": [],
+      "promo_prefix": "MEP",
+      "tcgdex_id": "mep"
     }
   ]
 }

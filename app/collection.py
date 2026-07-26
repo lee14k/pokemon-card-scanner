@@ -22,6 +22,7 @@ from app.db.models import CollectionCard
 from app.db.session import async_session_maker
 from app.db.users import CurrentTrainer
 from app.dex.species import species_of
+from app.pack import scan_followup
 from app.pack.binder import scan_binder_page
 from app.pack.name_index import normalize_name
 from app.pack.set_resolution import catalog_local_id, load_denominator_table
@@ -172,6 +173,23 @@ async def scan_binder(trainer: CurrentTrainer, page: UploadFile = File(...)) -> 
         return await scan_binder_page(data)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
+
+
+@router.get("/scan/binder/{scan_id}")
+async def scan_binder_followup(trainer: CurrentTrainer, scan_id: str) -> dict:
+    """Poll the background VLM pass for a binder page → ``{cards, any_pending,
+    done}``. ``scan_id`` comes from the scan response and only exists while a
+    follow-up is running; unknown/expired (or a pack id) is a 404.
+
+    Auth mirrors POST /scan/binder. There is deliberately no per-trainer binding
+    on the entry itself: this is a single-trainer collection flow and the 128-bit
+    scan_id is unguessable, so the auth check plus the id is the whole scope. If
+    the app ever becomes multi-tenant in a shared process, bind the entry to
+    trainer.id here the way live_session.get_session does."""
+    entry = scan_followup.get(scan_id, "binder")
+    if entry is None:
+        raise HTTPException(404, "scan not found")
+    return entry
 
 
 @router.post("/collection", response_model=CollectionSaveOut)

@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover - dependency ships in requirements
     pass
 
 from app.matcher_client import enabled as matcher_enabled, kick_index_build, match_strips
+from app.pack import scan_followup
 from app.pack.confidence import pack_confidence, score_card
 from app.pack.matching import card_fields_from_match, lookup_resolved_cards
 from app.pack.ocr import cached_read_code_card, read_card_number
@@ -293,30 +294,51 @@ def _needs_review(reading, res, valid_nums: set[str], modal_entry) -> bool:
     return False
 
 
-async def _vlm_fallback(cards, strips, resolutions, readings) -> None:
-    """Send still-uncertain cards to the RunPod VLM worker; merge definitive IDs
-    back in (number, set, re-lookup name/price). Best-effort — any failure or a
-    disabled worker leaves the Phase-1 cards untouched."""
+def _vlm_payload(cards, strips, resolutions) -> list[dict]:
+    """The VLM request body for the still-uncertain cards, encoded UP FRONT.
+
+    Blocking (cv2 JPEG encode per flagged strip) — callers run it in a thread.
+    Encoding here rather than inside ``identify`` is what lets the background
+    follow-up retain a few KB of base64 per flagged row instead of pinning
+    full-width strips of a 12MP staircase photo for the whole RunPod round trip."""
     from app.pack import vlm_client
-    if not vlm_client.enabled():
-        return
+    from app.pack.set_resolution import load_denominator_table
+
     idx = [i for i, c in enumerate(cards) if c.needs_review]
     if not idx:
-        return
+        return []
+    table = load_denominator_table()
+    set_ids = [r.set_id for r in resolutions if r.set_id]
+    hint_set = hint_den = None
+    if set_ids:
+        modal = Counter(set_ids).most_common(1)[0][0]
+        e = next((s for s in table.sets if s.set_id == modal), None)
+        if e:
+            hint_set = e.set_name
+            hint_den = e.denominators[0] if len(e.denominators) == 1 else None
+    payload = []
+    for i in idx:
+        b64 = vlm_client.jpeg_b64(strips[i].image)
+        if b64 is None:
+            continue
+        payload.append({"row_index": cards[i].row_index, "image_b64": b64,
+                        "hint_set": hint_set, "hint_denominator": hint_den})
+    return payload
+
+
+async def _merge_vlm(cards, payload, texts_by_row) -> None:
+    """Send the prebuilt batch to the RunPod worker and merge definitive IDs back
+    into ``cards`` (number, set, re-lookup name/price). Best-effort — any failure
+    leaves the Phase-1 cards untouched.
+
+    ``cards`` are the follow-up task's OWN copies (see ``_start_vlm_followup``):
+    the objects in the HTTP response must never be mutated behind the client's
+    back, and FastAPI may still be serializing them when this runs."""
+    from app.pack import vlm_client
     try:
         from app.pack.set_resolution import load_denominator_table
 
         table = load_denominator_table()
-        set_ids = [r.set_id for r in resolutions if r.set_id]
-        hint_set = hint_den = None
-        if set_ids:
-            modal = Counter(set_ids).most_common(1)[0][0]
-            e = next((s for s in table.sets if s.set_id == modal), None)
-            if e:
-                hint_set = e.set_name
-                hint_den = e.denominators[0] if len(e.denominators) == 1 else None
-        payload = [{"row_index": cards[i].row_index, "image": strips[i].image,
-                    "hint_set": hint_set, "hint_denominator": hint_den} for i in idx]
         result = await vlm_client.identify(payload)
         if not result:
             return
@@ -327,17 +349,72 @@ async def _vlm_fallback(cards, strips, resolutions, readings) -> None:
         # hallucination signature (e.g. "126/167" answered for unrelated crops).
         result = collapse_duplicate_answers(result)
 
-        for i in idx:
-            card = cards[i]
+        for card in cards:
             # Corroborate the claimed number against this strip's own OCR text
             # (NumberReading.raw). Empty when OCR read nothing -> pass None so the
             # corroboration check is skipped for that card (unchanged behavior).
-            ocr_texts = [readings[i].raw] if readings[i].raw else None
             await apply_vlm_answer(card, result.get(card.row_index) or {}, table,
-                                   ocr_texts=ocr_texts)
-        log.info("vlm.fallback applied cards=%s", len(idx))
+                                   ocr_texts=texts_by_row.get(card.row_index))
+        log.info("vlm.fallback applied cards=%s", len(cards))
     except Exception as e:
         log.warning("pipeline.vlm_fallback_failed err=%r", e)
+
+
+async def _vlm_followup(followup_id: str, cards: list[PackCard], payload: list[dict],
+                        texts_by_row: dict[int, list[str] | None],
+                        scan_id: str | None) -> None:
+    """The background half of a pack scan: the VLM batch that used to be awaited
+    inside the request. Every card it owns ends TERMINAL — ``ok`` or
+    ``vlm_failed`` — and ``finish`` runs in a ``finally`` so a crash or a 90s
+    timeout still stops the client's poll instead of spinning it forever."""
+    try:
+        with stage("pack", "vlm", scan_id):
+            await _merge_vlm(cards, payload, texts_by_row)
+    finally:
+        resolved = 0
+        for card in cards:
+            card.state = "vlm_failed" if card.needs_review else "ok"
+            resolved += card.state == "ok"
+            scan_followup.patch(followup_id, card.row_index, card.model_dump())
+        scan_followup.finish(followup_id)
+        log.info("pipeline.followup_done id=%s scan=%s cards=%s resolved=%s",
+                 followup_id, scan_id, len(cards), resolved)
+
+
+async def _start_vlm_followup(cards: list[PackCard], strips, resolutions, readings,
+                              scan_id: str | None) -> str | None:
+    """Hand the still-uncertain cards to a background VLM drain; return the
+    follow-up id the client polls, or None for "nothing to follow up" — every case
+    the old awaited call would itself have no-op'd on (no worker configured, no
+    flagged card, nothing encodable). None means the response is byte-identical to
+    the pre-follow-up one, states and all.
+
+    Sets ``state`` on the response cards (``pending_vlm`` on the flagged rows,
+    ``ok`` on the rest) and seeds the follow-up entry from that same snapshot, so
+    the first poll already agrees with the response the client is holding."""
+    from app.pack import vlm_client
+    if not vlm_client.enabled() or not any(c.needs_review for c in cards):
+        return None
+    # Threaded: N cv2 JPEG encodes is real CPU, and it is the one piece of VLM
+    # work that stays on the request path.
+    payload = await asyncio.to_thread(_vlm_payload, cards, strips, resolutions)
+    if not payload:
+        return None
+    pending_rows = {p["row_index"] for p in payload}
+    for c in cards:
+        c.state = "pending_vlm" if c.row_index in pending_rows else "ok"
+    # The task gets deep COPIES so its merge can never mutate the response's own
+    # cards (FastAPI serializes those after scan_pack returns), and the OCR texts
+    # it needs for the corroboration guard, keyed by row rather than by position.
+    mine = [c.model_copy(deep=True) for c in cards if c.row_index in pending_rows]
+    texts_by_row = {c.row_index: ([readings[i].raw] if readings[i].raw else None)
+                    for i, c in enumerate(cards) if c.row_index in pending_rows}
+    followup_id = scan_followup.create("pack", [c.model_dump() for c in cards])
+    scan_followup.spawn(
+        followup_id, _vlm_followup(followup_id, mine, payload, texts_by_row, scan_id))
+    log.info("pipeline.followup id=%s scan=%s cards=%s", followup_id, scan_id,
+             len(payload))
+    return followup_id
 
 
 async def scan_pack(
@@ -480,10 +557,17 @@ async def scan_pack(
                 **card_fields_from_match(match),
             ))
 
-        # Confidence-gated VLM fallback: send only the still-uncertain cards to the
-        # RunPod worker for definitive ID. Off when VLM_ENDPOINT unset; never blocks.
-        with stage("pack", "vlm", scan_id):
-            await _vlm_fallback(cards, strips, resolutions, readings)
+        # Confidence-gated VLM fallback: only the still-uncertain cards go to the
+        # RunPod worker for definitive ID. Off when VLM_ENDPOINT unset. NON-BLOCKING
+        # since the follow-up store landed: awaiting it here put a serverless cold
+        # start (90s timeout) inside the HTTP response for exactly the packs that
+        # read worst. The response now ships the Phase-1 cards with
+        # state="pending_vlm" on the flagged rows plus a scan_id, and one background
+        # task patches the follow-up entry the client polls. The `vlm` timing stage
+        # moved with the work — it now measures the background call.
+        with stage("pack", "vlm_dispatch", scan_id):
+            followup_id = await _start_vlm_followup(cards, strips, resolutions,
+                                                    readings, scan_id)
 
         with stage("pack", "code_ocr", scan_id):
             # The single heaviest blocking call in a scan (QR pass + up to ~6 serial
@@ -505,11 +589,15 @@ async def scan_pack(
         resp = PackScanResponse(
             cards=cards,
             code_card=code_result,
+            # Phase-1 confidence: a background VLM merge can only raise a card's
+            # confidence, so this is the floor, not the final word, when a
+            # follow-up is running (the poll carries the per-card truth).
             pack_confidence=pack_confidence([c.confidence for c in cards]),
             segmentation_warning=seg_warning,
+            scan_id=followup_id,
         )
-        log.info("pipeline.done rows=%s flagged=%s pack_conf=%.3f code=%s",
+        log.info("pipeline.done rows=%s flagged=%s pack_conf=%.3f code=%s followup=%s",
                  len(cards), sum(1 for c in cards if c.low_confidence_reason),
-                 resp.pack_confidence, code_result.code)
+                 resp.pack_confidence, code_result.code, followup_id or "-")
         _emit({"stage": "done"})
         return resp

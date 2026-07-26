@@ -27,6 +27,8 @@ from statistics import median
 import cv2
 import numpy as np
 
+from app.pack import scan_followup as followup
+from app.pack import vlm_client
 from app.pack.card_crop import refine_card_box
 from app.pack.confidence import pack_confidence
 from app.pack.identify_core import resolve_identity
@@ -406,24 +408,41 @@ def _thumb(crop) -> str | None:
     return base64.b64encode(buf.tobytes()).decode() if ok else None
 
 
-async def _run_vlm(cells: list[BinderCell], crops: list,
+def _vlm_payload(cells: list[BinderCell], crops: list) -> list[dict]:
+    """The VLM request body for the still-uncertain cells, encoded UP FRONT.
+
+    Blocking (cv2 JPEG encode per cell) — callers run it in a thread. Encoding
+    here rather than inside ``identify`` is what lets the background follow-up
+    hold a few KB of base64 per flagged cell instead of pinning the crops (and,
+    through them, whatever the decoder allocated for a multi-megapixel page) for
+    the whole RunPod round trip."""
+    payload: list[dict] = []
+    for c, crop in zip(cells, crops):
+        if not c.needs_vlm:
+            continue
+        b64 = vlm_client.jpeg_b64(crop)
+        if b64 is None:
+            continue
+        payload.append({"row_index": c.card.row_index, "image_b64": b64,
+                        "hint_set": None, "hint_denominator": None})
+    return payload
+
+
+async def _run_vlm(cells: list[BinderCell], payload: list[dict],
                    texts_by_row: dict[int, list[str]]) -> None:
-    """Best-effort VLM pass on the still-uncertain cells (off when VLM_ENDPOINT
-    unset). One batch, merged in place; any failure leaves Phase-1 cards intact.
-    Hallucination guards: identical answers claimed for 3+ cells collapse, and a
-    claimed number must be corroborated by the cell's own OCR text to clear the
-    review flag (production evidence: garbage crops minted the same confident
-    identity three times on one page)."""
-    from app.pack import vlm_client
-    if not vlm_client.enabled() or not any(c.needs_vlm for c in cells):
-        return
+    """Best-effort VLM pass on the still-uncertain cells. One batch, merged in
+    place; any failure leaves Phase-1 cards intact. Hallucination guards:
+    identical answers claimed for 3+ cells collapse, and a claimed number must be
+    corroborated by the cell's own OCR text to clear the review flag (production
+    evidence: garbage crops minted the same confident identity three times on one
+    page).
+
+    ``payload`` comes from ``_vlm_payload`` — the enabled/anything-flagged checks
+    live in ``_vlm_prepare``, and ``_finish`` never spawns this with an empty one."""
     try:
         from app.pack.set_resolution import load_denominator_table
         from app.pack.vlm_merge import apply_vlm_answer, collapse_duplicate_answers
         table = load_denominator_table()
-        payload = [{"row_index": c.card.row_index, "image": crop,
-                    "hint_set": None, "hint_denominator": None}
-                   for c, crop in zip(cells, crops) if c.needs_vlm]
         result = await vlm_client.identify(payload)
         if not result:
             return
@@ -451,15 +470,78 @@ async def _attach_prices(cells: list[BinderCell]) -> None:
         log.warning("binder.price_failed err=%r", e)
 
 
+def _cell_dict(c: BinderCell, state: str | None = None) -> dict:
+    """One response/follow-up card: the PackCard plus the binder-only fields the
+    review grid draws with. ``state`` is attached ONLY when a follow-up exists —
+    with no VLM configured the dict is exactly what it was before follow-ups."""
+    d = c.card.model_dump()
+    d["cell"] = list(c.cell)
+    d["thumb_b64"] = c.thumb_b64
+    if state is not None:
+        d["state"] = state
+    return d
+
+
+async def _vlm_followup(followup_id: str, cells: list[BinderCell],
+                        payload: list[dict], texts_by_row: dict[int, list[str]],
+                        scan_id: str | None) -> None:
+    """The background half of a binder scan: the VLM batch that used to be awaited
+    inside the request, plus a price refresh for the cells it re-identified (a
+    merged answer can change match_id, and the response's prices were attached
+    before this ran).
+
+    Every flagged cell ends TERMINAL — ``ok`` or ``vlm_failed`` — and ``finish``
+    runs in a ``finally`` so a crash or a timeout still stops the client's poll.
+    ``cells`` are this task's own objects: the response body was serialized from
+    ``_cell_dict`` copies before the task was spawned, so mutating the cards here
+    cannot reach it."""
+    try:
+        with stage("binder", "vlm", scan_id):
+            await _run_vlm(cells, payload, texts_by_row)
+        with stage("binder", "vlm_prices", scan_id):
+            await _attach_prices([c for c in cells if c.needs_vlm])
+    finally:
+        resolved = 0
+        for c in cells:
+            if not c.needs_vlm:
+                continue
+            state = "vlm_failed" if c.card.needs_review else "ok"
+            resolved += state == "ok"
+            followup.patch(followup_id, c.card.row_index, _cell_dict(c, state))
+        followup.finish(followup_id)
+        log.info("binder.followup_done id=%s scan=%s cells=%s resolved=%s",
+                 followup_id, scan_id, len(payload), resolved)
+
+
+async def _vlm_prepare(cells: list[BinderCell], crops: list) -> list[dict]:
+    """The VLM request body, or ``[]`` for "no follow-up" — every case the old
+    awaited call would itself have no-op'd on (no worker configured, no flagged
+    cell, nothing encodable). An empty list is what keeps a VLM-less response
+    byte-identical to the pre-follow-up one."""
+    if not vlm_client.enabled() or not any(c.needs_vlm for c in cells):
+        return []
+    # Threaded: N cv2 JPEG encodes is real CPU, and it is the one piece of VLM
+    # work that stays on the request path.
+    return await asyncio.to_thread(_vlm_payload, cells, crops)
+
+
 async def _finish(cell_specs: list, rows: int, cols: int,
                   scan_id: str | None = None) -> dict:
     """Shared tail for both cell finders. ``cell_specs`` is an ordered list of
-    (cell_box, crop, IdentityResult); builds the PackCards, thumbs, runs the VLM
-    batch on the flagged cells (with their crops) and prices, and assembles the
-    response. Row indices are (re)assigned in the given reading order.
+    (cell_box, crop, IdentityResult); builds the PackCards, thumbs and prices,
+    assembles the response, and hands the flagged cells to a BACKGROUND VLM pass.
+    Row indices are (re)assigned in the given reading order.
 
-    ``scan_id`` is carried purely so the VLM/price timing lines correlate with the
-    rest of this page's ``timing.binder.*`` lines."""
+    The VLM used to be awaited here, which put a RunPod round trip (90s timeout,
+    serverless cold start) inside the HTTP response for exactly the pages that
+    were hardest to read. It now runs in one background task that patches a
+    follow-up entry; the response ships the Phase-1 cards immediately with
+    ``state: "pending_vlm"`` on the flagged cells and a top-level ``scan_id`` the
+    client polls (GET /scan/binder/{scan_id}). With no worker configured nothing
+    of this happens and the response is unchanged.
+
+    ``scan_id`` is carried purely so the price/VLM timing lines correlate with the
+    rest of this page's ``timing.binder.*`` lines — it is NOT the follow-up id."""
     cells: list[BinderCell] = []
     crops: list = []
     texts_by_row: dict[int, list[str]] = {}
@@ -475,23 +557,36 @@ async def _finish(cell_specs: list, rows: int, cols: int,
         cells.append(BinderCell(cell=box, card=card,
                                 thumb_b64=_thumb(crop), needs_vlm=not res.confident))
 
-    with stage("binder", "vlm", scan_id):
-        await _run_vlm(cells, crops, texts_by_row)
     with stage("binder", "prices", scan_id):
         await _attach_prices(cells)
 
     page_confidence = pack_confidence([c.card.confidence for c in cells])
-    log.info("binder.done grid=%sx%s cells=%s flagged=%s page_conf=%.3f",
+
+    with stage("binder", "vlm_dispatch", scan_id):
+        payload = await _vlm_prepare(cells, crops)
+    pending_rows = {p["row_index"] for p in payload}
+
+    # Build the response dicts BEFORE spawning anything: from here to the return
+    # there is no await, so the drain task cannot start, and create() copies these
+    # dicts — the response body and the follow-up entry are independent from the
+    # first instant, however FastAPI interleaves its serialization.
+    out = [_cell_dict(c, None if not payload else
+                      (followup.PENDING if c.card.row_index in pending_rows else "ok"))
+           for c in cells]
+    body: dict = {"cards": out, "grid": {"rows": rows, "cols": cols},
+                  "page_confidence": page_confidence}
+    if payload:
+        followup_id = followup.create("binder", out)
+        followup.spawn(followup_id,
+                       _vlm_followup(followup_id, cells, payload, texts_by_row, scan_id))
+        body["scan_id"] = followup_id
+        log.info("binder.followup id=%s scan=%s cells=%s", followup_id, scan_id,
+                 len(payload))
+
+    log.info("binder.done grid=%sx%s cells=%s flagged=%s page_conf=%.3f followup=%s",
              rows, cols, len(cells), sum(1 for c in cells if c.card.needs_review),
-             page_confidence)
-    out = []
-    for c in cells:
-        d = c.card.model_dump()
-        d["cell"] = list(c.cell)
-        d["thumb_b64"] = c.thumb_b64
-        out.append(d)
-    return {"cards": out, "grid": {"rows": rows, "cols": cols},
-            "page_confidence": page_confidence}
+             page_confidence, body.get("scan_id", "-"))
+    return body
 
 
 async def _scan_text_clusters(img, W: int, H: int, scan_id: str | None = None) -> dict:

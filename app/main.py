@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.cards import cached_lookup_card
 from app.logging_config import configure_logging
+from app.pack import scan_followup
 from app.pack.matching import card_fields_from_match
 from app.pack.pipeline import scan_pack
 from app.pack.scan_stream import scan_pack_sse
@@ -151,6 +152,21 @@ async def scan_pack_stream_endpoint(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.get("/scan/pack/{scan_id}")
+async def scan_pack_followup(scan_id: str) -> dict:
+    """Poll the background VLM pass for a pack scan → ``{cards, any_pending,
+    done}``. The ``scan_id`` comes from the scan response and only exists while a
+    follow-up is running; an unknown/expired id (or a binder id, which lives
+    behind auth) is a 404.
+
+    Anonymous, exactly like POST /scan/pack — the 128-bit scan_id IS the
+    capability, and it never leaves the client that ran the scan."""
+    entry = scan_followup.get(scan_id, "pack")
+    if entry is None:
+        raise HTTPException(404, "scan not found")
+    return entry
 
 
 @app.get("/sets", response_model=list[SetInfo])

@@ -40,7 +40,7 @@ def snap_denominators(readings, canonical: str) -> int:
     return n
 
 
-def _unique_edit1(num: str, valid: set[str]) -> str | None:
+def _unique_edit1(num: str, valid: frozenset[str]) -> str | None:
     """A valid number one same-length digit-substitution from `num`, unique."""
     if num in valid:
         return num
@@ -49,7 +49,7 @@ def _unique_edit1(num: str, valid: set[str]) -> str | None:
     return cands[0] if len(cands) == 1 else None
 
 
-def correct_numerators(readings, valid: set[str]) -> int:
+def correct_numerators(readings, valid: frozenset[str]) -> int:
     """Snap a pure-numeric numerator to a unique single-digit-off catalog number
     when the OCR'd one isn't in the set. `valid` = normalized (no leading zero)
     numerators of the resolved set. Returns the number of corrections."""

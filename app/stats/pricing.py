@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 from app.db.models import Anomaly, CardPrice, PriceSnapshot, PullCard, PullCardDerived
 from app.db.session import async_session_maker
 from app.pokewallet import get_api_key, lookup_card_exact, make_async_client
+from app.prices import invalidate_price_cache
 from app.stats.config import stats_settings
 
 log = logging.getLogger("pokemon_scanner.stats.pricing")
@@ -150,6 +151,11 @@ async def refresh_prices_if_stale(stats_snapshot_id: uuid.UUID) -> str | None:
 
             snap.status = "done"
             await session.commit()
+            # This batch runs in the serving process (admin background task), and
+            # it just made every reader's 60s price memo wrong. Drop it rather
+            # than let a snapshot the app itself produced take a minute to appear
+            # — battles in particular 409 until a done snapshot exists.
+            invalidate_price_cache()
             log.info("pricing.done snapshot=%s cards=%s", snap_id, len(universe))
             return str(snap_id)
         except Exception:

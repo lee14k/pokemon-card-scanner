@@ -22,7 +22,7 @@ from app.pack.matching import card_fields_from_match
 from app.pack.pipeline import scan_pack
 from app.pack.scan_stream import scan_pack_sse
 from app.pack.set_resolution import load_denominator_table
-from app.pokewallet import get_api_key
+from app.pokewallet import close_shared_client, get_api_key
 from app.schemas import CardLookupResponse, PackCard, PackScanResponse, SetInfo
 from app.set_symbol_index import load_symbol_index
 from app.db.users import (
@@ -182,6 +182,13 @@ async def _lifespan(app: FastAPI):
         warm.cancel()
         with suppress(asyncio.CancelledError):
             await warm
+    # The PokéWallet client outlives every request on purpose (app/pokewallet.py),
+    # so this is the only place its pool gets closed. After the warm task, since a
+    # warm-up in flight may still be using it.
+    try:
+        await close_shared_client()
+    except Exception as e:
+        log.warning("shutdown.pokewallet_client_close_failed err=%r", e)
 
 
 app = FastAPI(

@@ -6,6 +6,7 @@ break a lookup — every DB error degrades to the plain API call (or a miss)."""
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -33,13 +34,58 @@ def normalize_local_id(lid: str) -> str:
     return f"{m.group(1)}{m.group(2)}" if m else s
 
 
-async def get_set_numerators(set_id: str) -> set[str]:
+# A set's numerator catalog changes only when scripts/ingest_tcgdex.py or
+# scripts/build_id_maps.py runs — i.e. never inside a serving process — so a
+# populated answer is cached for ten minutes. AN EMPTY ANSWER IS NOT: it is
+# fail-closed evidence (see get_set_numerators), and the two ways to get one are
+# a genuinely unmapped/un-ingested set and a TRANSIENT DB FAILURE, which this
+# layer cannot tell apart. Pinning the failure for ten minutes would keep every
+# card in the session's set flagged long after the database came back, so both
+# empties share a 30-second TTL instead — short enough that recovery is invisible
+# to a user, long enough that the next page or live frame is not another round
+# trip. The un-ingested set pays one cheap query every 30s for that, which is the
+# right side of the trade.
+#
+# NO LOCK AROUND THE MISS, deliberately. A single-flight lock would save the
+# duplicate queries when a binder page's nine cells miss together — worth about
+# eight cheap queries once per TTL — and would cost a crash mode: an
+# asyncio.Lock binds to the first event loop that ever BLOCKS on it and raises
+# `RuntimeError: bound to a different event loop` on every other one (verified on
+# 3.12), and a process can absolutely have several loops (a TestClient per test,
+# a script calling asyncio.run twice). Unlike name_index's one-shot lock, these
+# entries EXPIRE, so a second loop really can reach the slow path. That
+# RuntimeError would surface inside resolve_identity, which does not guard this
+# call — a flagged or failed cell, to save eight queries. Concurrent misses
+# instead each run the query and each store the same answer, which is what
+# happens today on every single call anyway.
+_NUMERATORS_TTL_S = 600.0
+_NUMERATORS_EMPTY_TTL_S = 30.0
+_numerators_cache: dict[str, tuple[float, frozenset[str]]] = {}
+
+
+async def get_set_numerators(set_id: str) -> frozenset[str]:
     """Normalized card numbers of a set, via set_id_map -> tcgdex_card. Numeric
     ids lose leading zeros ("012" -> "12"); gallery/promo ids keep their alpha
     prefix and lose only their tail zeros ("TG22" -> "TG22", "GG07" -> "GG7") so
     a printed "TG22"/"GG7" numerator validates against the catalog. Feeds OCR
-    constraint repair. {} on any failure or when the set isn't mapped/ingested —
-    the caller then simply skips catalog correction."""
+    constraint repair. Empty on any failure or when the set isn't mapped/ingested
+    — the caller then simply skips catalog correction.
+
+    Memoized per set_id with the two TTLs above; the result is a frozenset so the
+    shared cached value cannot be mutated by a caller. Callers only ever test
+    membership and truthiness."""
+    key = str(set_id)
+    hit = _numerators_cache.get(key)
+    if hit is not None and time.monotonic() < hit[0]:
+        return hit[1]
+    out = await _query_set_numerators(key)
+    ttl = _NUMERATORS_TTL_S if out else _NUMERATORS_EMPTY_TTL_S
+    _numerators_cache[key] = (time.monotonic() + ttl, out)
+    return out
+
+
+async def _query_set_numerators(set_id: str) -> frozenset[str]:
+    """The uncached body of get_set_numerators."""
     try:
         async with async_session_maker() as session:
             tdx = (await session.execute(
@@ -47,7 +93,7 @@ async def get_set_numerators(set_id: str) -> set[str]:
                 .where(SetIdMap.pokewallet_set_id == str(set_id))
             )).scalar_one_or_none()
             if not tdx:
-                return set()
+                return frozenset()
             rows = (await session.execute(
                 select(TcgdexCard.local_id).where(TcgdexCard.set_id == tdx)
             )).scalars().all()
@@ -59,10 +105,10 @@ async def get_set_numerators(set_id: str) -> set[str]:
                 out.add(str(int(lid)))  # "012" -> "12"
             elif re.match(r"[A-Za-z]", lid):  # gallery/promo, e.g. "TG22", "GG07"
                 out.add(normalize_local_id(lid))
-        return out
+        return frozenset(out)
     except Exception as e:
         log.warning("cards.set_numerators_failed set=%s err=%r", set_id, e)
-        return set()
+        return frozenset()
 
 
 def normalize_numerator(numerator: str) -> str:

@@ -46,11 +46,59 @@ class IdentityResult:
     name_match_score: float | None
 
 
+_set_id_map: dict[str, str] | None = None
+
+
+async def _load_set_id_map() -> dict[str, str] | None:
+    """The whole set_id_map bridge table as tcgdex id -> PokéWallet id, loaded
+    once per process. None when the load itself failed.
+
+    INVALIDATION: none, by design. The table is written only by
+    scripts/build_id_maps.py, which is an offline script — a serving process
+    cannot observe it change, and a deploy (which is how a rebuild reaches
+    production) restarts the process anyway. That is the same lifetime the name
+    index already assumes for the catalog it is built from.
+
+    It is 53 rows. The point is not the bytes, it is that this used to be a
+    connection acquire + round trip on EVERY confidently identified card — nine
+    of them on a binder page, one per live frame — to answer a question with 53
+    possible inputs.
+
+    Unguarded on purpose: if a page's nine cells race here on a cold process they
+    all load the same 53 rows and all write the same dict, which is harmless and
+    still 53 rows fewer than the nine queries they used to make. A module-level
+    asyncio.Lock would be the usual guard and is the wrong tool — it binds to the
+    first event loop that blocks on it and raises for every other one, and this
+    function's only caller does not guard against that."""
+    global _set_id_map
+    if _set_id_map is not None:
+        return _set_id_map
+    try:
+        async with async_session_maker() as session:
+            rows = (await session.execute(select(
+                SetIdMap.tcgdex_set_id, SetIdMap.pokewallet_set_id))).all()
+        _set_id_map = {t: p for t, p in rows}
+        log.info("identify.set_id_map_loaded rows=%s", len(_set_id_map))
+    except Exception as e:
+        # Leave it unloaded so the next call retries, and let the caller fall
+        # back to the single-row query it always used.
+        log.warning("identify.set_id_map_load_failed err=%r", e)
+    return _set_id_map
+
+
 async def _pw_set_id_for(tcgdex_set_id: str) -> str | None:
     """tcgdex set -> PokéWallet set_id via the set_id_map bridge table (built
     by scripts/build_id_maps.py). me-era sets are self-referential (e.g.
     "me05" -> "me05"); sets that haven't been mapped yet yield None, and the
-    card's identity still comes from the name index (price/image stay None)."""
+    card's identity still comes from the name index (price/image stay None).
+
+    Served from the preloaded table (``_load_set_id_map``); the per-row query is
+    kept as the fallback for the case where that load failed, so a hiccup at the
+    wrong moment degrades to the old behaviour rather than to a wrong None —
+    which would silently cost the card its price and image."""
+    table = await _load_set_id_map()
+    if table is not None:
+        return table.get(tcgdex_set_id)
     async with async_session_maker() as session:
         return (await session.execute(
             select(SetIdMap.pokewallet_set_id)
@@ -162,6 +210,26 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
     for text, conf in name_texts:
         if top_name_text is None:
             top_name_text = text
+        # STAYS ON THE EVENT LOOP, and that is a measured decision rather than an
+        # oversight. Task 9 moved this (and the scoped re-match below) to
+        # asyncio.to_thread on the theory that a rapidfuzz sweep of the catalog is
+        # CPU the loop should not be doing, then measured it and put it back:
+        #
+        #   * rapidfuzz 3.14 does NOT release the GIL in process.extractOne — the
+        #     same matches across four threads run at 1.0x of sequential, i.e. no
+        #     parallelism whatsoever.
+        #   * so a worker thread cannot return the loop to service any sooner than
+        #     running the match does. A match is ~0.3-1ms, well under CPython's 5ms
+        #     switch interval, so the loop waits the same time either way. Over 30
+        #     trials of a 270-match storm shaped like the binder's 9-cell gather,
+        #     tick lateness was indistinguishable (max ~14.9ms and p95 ~12.5ms in
+        #     BOTH arms) while the threaded arm cost 2-3% more wall time in 6 runs
+        #     out of 6.
+        #
+        # Reproduce with .superpowers/sdd/do-an-audit-and-wild-eich/task-9-probe.py
+        # concurrency. The win Task 9 actually delivered here is in the match
+        # itself, not in where it runs: NameIndex now precomputes what this call
+        # used to recompute per call, and its p50 fell 0.93ms -> 0.59ms.
         m = idx.match(text, denominator=den)
         if m is not None:
             name_match = m
@@ -179,7 +247,7 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
         # docstring). A floor separates on the wrong axis — it also refuses the
         # honest recoveries this scoping exists for, whose scores are legitimately
         # well under 100 (a dropped "Hop's" possessive scores 90.0).
-        scoped = idx.match_in_set(
+        scoped = idx.match_in_set(   # on the loop, for the reason given above
             top_name_text,
             set_id=(prior.set_id if prior and prior.set_id else promo_set),
             denominator=den)

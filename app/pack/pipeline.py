@@ -264,10 +264,10 @@ async def _apply_constraints(readings, resolutions):
                             candidate, n)
     except Exception as e:
         log.warning("pipeline.constraints_failed err=%r", e)
-    return set(), None
+    return frozenset(), None
 
 
-def _needs_review(reading, res, valid_nums: set[str], modal_entry) -> bool:
+def _needs_review(reading, res, valid_nums: frozenset[str], modal_entry) -> bool:
     """A card is confidently identified when its number reads cleanly, its set
     resolves, and (when we have the set catalog) its numerator is a real card in
     that set. Independent of the DB lookup, which only adds name/price — a clean

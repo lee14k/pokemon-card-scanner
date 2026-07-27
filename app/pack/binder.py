@@ -73,13 +73,20 @@ _QUAD_AREA_MAX = 0.35
 _QUAD_IOU = 0.4        # NMS: drop a box overlapping a kept box more than this
 _QUAD_MED_MULT = 3.0   # grid sanity: keep boxes within this factor of median area
 _NAME_BAND = 0.28      # per-cell name band = top this fraction of the crop
-_NUM_STRIP = 0.24      # per-cell number strip = bottom this fraction of the crop
-                       # (0.20 -> 0.24: the quad box is a contour fit, not a
-                       # rectification, so its bottom edge can sit above the
-                       # printed number by a few percent of the card height. The
-                       # wider strip absorbs that slop; the cost is more competing
-                       # body text in the same OCR pass, which is what the retry
-                       # below exists to undo.)
+_NUM_STRIP = 0.20      # per-cell number strip = bottom this fraction of the crop
+                       # Tried at 0.24, to absorb the slop in a quad box that is a
+                       # contour fit rather than a rectification. MEASURED WORSE
+                       # and reverted: the extra rows drag more body text into the
+                       # same pass, and the number read gets FRAGILE rather than
+                       # more likely. On page_3's Turtwig the strip retry reads
+                       # "MEP040" at every resolution from native to 2800 when the
+                       # strip is 0.20, but only inside a narrow 1400-1800 window
+                       # when it is 0.24. 0.24 also LOST a pass-1 read outright
+                       # (page_5's "TG22/TG30"), paying a whole retry to recover
+                       # the identical number, and taxed pages that fire no retry
+                       # at all. Identical gate either way — so this is the cheap
+                       # one and the robust one. Box slop is Phase-2 rectification
+                       # work, not a wider crop.
 _BAND_CAP = 1000       # stacked name-band+strip OCR downscale cap (text stays large)
 _STRIP_RETRY_LONG = 1400  # number-strip retry: the strip ALONE resized to this
                        # long side. NOT a cap — see _retry_strip_number.
@@ -433,28 +440,31 @@ async def _retry_strip_number(strip) -> tuple[NumberReading | None, list[str]]:
     would otherwise reach ``resolve_identity`` numberless. That is what keeps the
     extra OCR bounded: a page whose numbers all read pays nothing.
 
-    WHY IT READS ANYTHING THE FIRST PASS DID NOT — and why this is a resize, not
-    a cap. Pass 1 detects the name band and the strip STACKED into one image and
-    passes ``_BAND_CAP`` to ``detect_lines_xy``, which scales on the image's LONG
-    side. A binder cell's bands are WIDE and short, so the long side is the crop
-    WIDTH (~1000-1350px on the real fixtures) and the cap costs the strip
-    ~15-20% of its linear resolution. Handing the strip alone to
-    ``detect_lines_xy`` with a LARGER cap would change nothing at all: the cap
-    only ever downscales, and these strips already sit under it. Measured — the
-    strip at native resolution reads exactly what pass 1 read.
+    WHY IT READS ANYTHING THE FIRST PASS DID NOT. Pass 1 detects the name band
+    and the strip STACKED into one image. Two things change here, and the FIRST
+    is the one that does the work:
 
-    So the strip is resized so its long side is ``_STRIP_RETRY_LONG``, which for
-    a real fixture is an UPSCALE of ~1.05-1.25x on top of the ~1.2x pass 1 gave
-    away. Small, and sufficient: page_3's Turtwig prints "MEP 040" in the same
-    small type as its eight neighbours and is the one cell of nine the stacked
-    pass misses; at 1400 the retry reads it (0.88-0.95 conf), at native it does
-    not. 1600/1800 also read it and cost more pixels; 2200+ LOSE it again (the
-    detector starts splitting the line). Hence 1400 rather than "as big as
-    possible".
+    1. THE STRIP IS ALONE. The name band contributes nothing to a number read but
+       it does share the frame, and the detector's output is not independent of
+       what else is in the image. Isolating the strip is what recovers page_3's
+       Turtwig — it prints "MEP 040" in the same small type as its eight
+       neighbours and is the one cell of nine the stacked pass misses.
+    2. It is resized to ``_STRIP_RETRY_LONG``. This is DEFENSIVE HEADROOM, not
+       the win: with the strip at ``_NUM_STRIP`` the retry reads Turtwig at every
+       resolution measured — native, 1400, 1600, 1800, 2200, 2800. What the
+       resize buys is a floor under cells whose print is smaller or whose crop is
+       narrower than anything in the corpus, and a defined working size instead
+       of one that drifts with the photo's megapixels.
 
-    The strip is detected on its own rather than re-stacked because the name band
-    contributes nothing to a number read and would only spend the budget: the
-    same long side spread over both bands is the situation pass 1 is already in.
+    Note it must be a RESIZE and not simply a bigger cap: ``detect_lines_xy``'s
+    cap only ever downscales, and these strips (wide and short — the long side is
+    the crop WIDTH, ~1000-1350px on the real fixtures) already sit under any cap
+    worth naming, so a cap argument alone is a no-op. Pass 1's ``_BAND_CAP`` does
+    bind, costing the stacked image ~15-20% of its linear resolution.
+
+    1400 rather than "as big as possible": 1600/1800/2200/2800 also read Turtwig
+    and cost strictly more pixels, so 1400 is the cheapest working value with
+    room on both sides of it.
 
     Runs under ``OCR_GATE`` in a worker thread exactly like pass 1, acquired
     fresh so a retrying cell cannot hold the gate across both of its passes."""

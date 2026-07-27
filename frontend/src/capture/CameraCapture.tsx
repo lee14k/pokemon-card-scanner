@@ -1,40 +1,67 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * Longest side, in pixels, of anything this component uploads.
+ * Longest side, in pixels, of anything this component encodes.
  *
- * A modern phone camera hands us 12-48MP (4032-8064px long side) and the whole
- * file crosses a mobile uplink before any scanning starts. The scanner does not
- * use that: the binder page's whole-photo detection caps at 2800px
- * (``binder._CAP``), its quad finder works at 1600 (``binder._QUAD_LONG``), and
- * the pack/live paths cap at 2600 (``rapidocr_reader.detect_lines*``). 2800 is
- * the largest of those, so it is the size above which extra pixels are
- * uploaded, decoded and then thrown away.
+ * The whole file crosses a mobile uplink before any scanning starts, and the
+ * scanner does not use the top of it: the binder page's whole-photo detection
+ * caps at 2800px (``binder._CAP``), its quad finder works at 1600
+ * (``binder._QUAD_LONG``), and the pack/live paths cap at 2600
+ * (``rapidocr_reader.detect_lines*``). 2800 is the largest of those, so it is
+ * the size above which extra pixels are uploaded, decoded and thrown away.
  *
  * CAVEAT, measured, and the reason this is a ceiling rather than a target: the
  * binder's PER-CELL band OCR crops out of the FULL-resolution page, so a card's
  * name/number band is read at a resolution proportional to the page's, not to
- * 2800. Halving the page really does halve that band. Downscaling to 2800 was
- * scored against every committed binder fixture and held the accuracy line
- * (18 correct, zero confident-wrong) — but it is not a free operation, and
- * lowering this constant further has not been measured.
+ * 2800. Halving the page really does halve that band. Lowering this constant
+ * further has not been measured and is not a free knob.
+ *
+ * In the shipped configuration this binds on the CAMERA path only — see
+ * UPLOAD_DOWNSCALE for why an uploaded file is passed through untouched.
  */
 const MAX_LONG_SIDE = 2800;
 
 /**
- * JPEG quality for anything re-encoded here — one constant for both paths so
- * the camera and upload flows cannot drift apart.
+ * JPEG quality for anything re-encoded here.
  *
- * 0.85, 0.92 and 0.95 were each scored at 2800px against every committed binder
- * fixture. All three held zero confident-wrong; they differed only in which
- * marginal card rectangle the quad finder happened to keep (see ``uploadFile``),
- * which is noise, not signal — 0.85 was the joint best and is the smallest
- * upload, so it is the one that ships. This does lower the camera path from the
- * 0.92 it used before; that payload is a ~1080p frame either way, so the change
- * is a few tens of KB and no measured accuracy.
+ * 0.92 — unchanged from what this component has always used. The size win in
+ * this change comes from the PIXEL COUNT (see MAX_LONG_SIDE), and moving quality
+ * at the same time would add a second variable to a path the committed fixtures
+ * cannot validate: they are raw camera FILES, so they exercise the upload path,
+ * never this one. 0.85 and 0.95 were both scored against those fixtures and were
+ * indistinguishable from 0.92 (zero confident-wrong in all three; they differed
+ * only in which marginal card rectangle survived, which is noise) — no evidence
+ * to move, so it does not move.
  * (LiveCapture has its own pipeline at 0.8 and is untouched.)
  */
-const JPEG_QUALITY = 0.85;
+const JPEG_QUALITY = 0.92;
+
+/**
+ * Downscale on the "Upload instead" path — currently OFF, and this is a
+ * deliberate hold rather than dead code.
+ *
+ * Downscaling an upload requires decoding and re-encoding it, and that step
+ * alone — with no resize and at quality 100 — is enough to change how many card
+ * rectangles the binder's contour-based quad finder finds. On the committed
+ * corpus it moves page_5 from 6 cells to 5, which is the binder gate's HARD
+ * failure category (cell count != truth count), not a soft accuracy dip. The
+ * effect is non-monotonic in both resolution and quality, so no cap or quality
+ * setting tunes it away; a 2800px upload scored no confident-wrong, but "one
+ * fixture crosses into the gate's fail bucket" is not something to ship for a
+ * bandwidth win, and one clean cap value on a five-photo corpus is not evidence
+ * that it generalises.
+ *
+ * TO RE-ENABLE, both must be true:
+ *   1. the Phase-2 detection cascade has replaced the single contour pass that
+ *      is sitting on this knife edge, and
+ *   2. docs/acceptance/binder_gate.py scores a RE-ENCODED corpus, so the failure
+ *      mode above is visible to CI instead of only to a one-off experiment.
+ *
+ * Until then an "Upload instead" file goes up byte-for-byte as the user picked
+ * it, exactly as it always has. The machinery below is kept working and behind
+ * this flag so re-enabling is a one-line change with a test to back it.
+ */
+const UPLOAD_DOWNSCALE: boolean = false;
 
 /** (width, height) shrunk to fit MAX_LONG_SIDE. Never enlarges. */
 function fitted(w: number, h: number): [number, number] {
@@ -129,9 +156,10 @@ export default function CameraCapture({
   };
 
   /**
-   * "Upload instead": shrink an oversized photo before it crosses the network.
+   * "Upload instead". With UPLOAD_DOWNSCALE off (the shipped state, see the
+   * constant) this hands the picked file straight through, untouched.
    *
-   * THREE PATHS, and the two that skip the canvas are the point:
+   * When it is on, THREE PATHS — and the two that skip the canvas are the point:
    *
    *  1. Already small enough -> the ORIGINAL FILE is sent, untouched. Decoding
    *     and re-encoding a photo that is not being resized buys nothing and is
@@ -160,6 +188,10 @@ export default function CameraCapture({
    *     optimisation failing.
    */
   const uploadFile = async (file: File) => {
+    if (!UPLOAD_DOWNSCALE) {
+      onUploadFile(file);
+      return;
+    }
     let bitmap: ImageBitmap;
     try {
       bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });

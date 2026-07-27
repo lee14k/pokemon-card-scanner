@@ -569,9 +569,25 @@ def _improves(old: IdentityResult, new: IdentityResult) -> bool:
     fills ``set_id``/``set_name`` on a result it is also marking confident, so a
     non-confident result always carries no set). It is written out anyway so the
     "never downgrade" contract is enforced by this predicate and not by that
-    incidental property of the core."""
+    incidental property of the core.
+
+    A CONFIDENT RESCUE MUST BE A NAMED ONE. The numerator-in-set rung promotes on
+    "this numerator exists in that set" alone; when the cell's name band was
+    unreadable AND the catalog lookup returns nothing, that promotion produces a
+    confident row with ``name=None`` — a set and a number, which is not an
+    identity. Measured on the real fixtures under a forced prior: page_2's
+    ``248/191`` and page_4's ``096/094`` both went confident and nameless, and
+    both scored confident-WRONG. Under the zero-confident-wrong bar such a row is
+    unacceptable whether or not it happens to be right, so a nameless result is
+    not an improvement and the cell stays flagged for the VLM.
+
+    Note what this does and does not buy (see the report's fix round 3): it
+    unconditionally forbids a nameless confident cell, but it is NOT a general
+    fix for a wrong-numerator rescue. Where the catalog lookup CAN name the card
+    — production, with the PokeWallet catalog reachable — the same promotion
+    proceeds under a real card name; only the nameless shape is closed."""
     if new.confident:
-        return not old.confident
+        return not old.confident and bool(new.fields.get("name"))
     return (new.set_id or new.set_name) is not None \
         and (old.set_id or old.set_name) is None
 

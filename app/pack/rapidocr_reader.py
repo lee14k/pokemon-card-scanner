@@ -1,9 +1,11 @@
 """RapidOCR (PP-OCR models on onnxruntime) number reader — far stronger than
-Tesseract on real-photo small/tilted/low-contrast text. Lazily loaded; any
-failure returns None so read_card_number falls back to the Tesseract path."""
+Tesseract on real-photo small/tilted/low-contrast text. Lazily loaded (and
+eagerly warmed at app startup, see app.main._warm_start); any failure returns
+None so read_card_number falls back to the Tesseract path."""
 from __future__ import annotations
 
 import logging
+import threading
 
 import cv2
 import numpy as np
@@ -11,41 +13,82 @@ import numpy as np
 log = logging.getLogger("pokemon_scanner.pack.rapidocr")
 
 _engine = None
-_loaded = False
+_ready = False          # engine BUILT and usable — set only after construction
+_failed = False         # construction raised once; permanent for this process
+_init_lock = threading.Lock()
 
 
 def _get():
-    global _engine, _loaded
-    if _loaded:
-        return _engine
-    _loaded = True
-    try:
-        from rapidocr_onnxruntime import RapidOCR
+    """The process-wide RapidOCR engine, built on first use. None when RapidOCR
+    is unavailable, which every caller treats as "fall back".
 
-        import os as _os
-        _threads = int(_os.environ.get("OCR_THREADS", "0"))
-        kwargs = {}
-        if _threads > 0:
-            # rapidocr-onnxruntime 1.4.x accepts intra_op_num_threads per stage
-            kwargs = {
-                "det_use_cuda": False, "rec_use_cuda": False, "cls_use_cuda": False,
-                "intra_op_num_threads": _threads, "inter_op_num_threads": 1,
-            }
+    THREAD-SAFE BY CONSTRUCTION, and it has to be: every caller arrives from a
+    worker thread (``asyncio.to_thread``) and the binder fires nine cells at
+    once. The previous version set its ``_loaded`` flag BEFORE building the
+    engine, so concurrent first callers sailed past the guard, read ``_engine``
+    while it was still None, and silently returned no lines — dropped reads on
+    exactly the first page of a fresh process (binder papered over this with a
+    single-threaded warm-up call before its gather; that hack is gone). The flag
+    is now set only after a successful build, under a lock, so concurrent first
+    callers block for the build and then all get the same engine.
+
+    A build FAILURE is PERMANENT for the process (``_failed``) — the same
+    contract the old flag-first code had, kept deliberately. Callers already
+    degrade correctly (``detect_lines_xy`` -> [], ``read_text`` -> None, and
+    ``ocr.read_card_number`` then uses Tesseract), and the realistic failures
+    here — package not installed, model files missing or corrupt, no memory for
+    the ONNX graphs — do not heal inside one process. Retrying per call would
+    re-pay a failed model load on every OCR of every scan and re-log it each
+    time. A restart is the retry."""
+    global _engine, _ready, _failed
+    if _ready or _failed:                 # fast path: no lock once decided
+        return _engine
+    with _init_lock:
+        if _ready or _failed:             # another thread built it while we waited
+            return _engine
         try:
-            import cv2 as _cv2
+            from rapidocr_onnxruntime import RapidOCR
+
+            import os as _os
+            _threads = int(_os.environ.get("OCR_THREADS", "0"))
+            kwargs = {}
             if _threads > 0:
-                _cv2.setNumThreads(_threads)
-        except Exception:
-            pass
-        try:
-            _engine = RapidOCR(**kwargs)
-        except TypeError:
-            _engine = RapidOCR()
-        log.info("rapidocr.loaded")
-    except Exception as e:  # not installed / init failure
-        log.warning("rapidocr.load_failed err=%r", e)
-        _engine = None
+                # rapidocr-onnxruntime 1.4.x accepts intra_op_num_threads per stage
+                kwargs = {
+                    "det_use_cuda": False, "rec_use_cuda": False, "cls_use_cuda": False,
+                    "intra_op_num_threads": _threads, "inter_op_num_threads": 1,
+                }
+            try:
+                import cv2 as _cv2
+                if _threads > 0:
+                    _cv2.setNumThreads(_threads)
+            except Exception:
+                pass
+            try:
+                engine = RapidOCR(**kwargs)
+            except TypeError:
+                engine = RapidOCR()
+            # Publish the engine BEFORE the ready flag: a reader outside the lock
+            # must never see _ready True with _engine still None (the old bug).
+            _engine = engine
+            _ready = True
+            log.info("rapidocr.loaded")
+        except Exception as e:  # not installed / init failure
+            _engine = None
+            _failed = True
+            log.warning("rapidocr.load_failed err=%r", e)
     return _engine
+
+
+def warmup() -> bool:
+    """Build the engine and push one tiny image through the full detect+recognize
+    path, so the first real scan pays neither the model load nor the first-call
+    graph/allocator warm-up. BLOCKING (that is the point) — callers run it in a
+    thread. True when the engine is usable. Called from the startup warm task."""
+    if _get() is None:
+        return False
+    detect_lines_xy(np.full((64, 64, 3), 255, np.uint8), 64)
+    return True
 
 
 def detect_lines_xy(

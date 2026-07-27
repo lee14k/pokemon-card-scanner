@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -39,6 +40,7 @@ from app.pack.live_api import router as live_api_router
 from app.pulls import router as pulls_router
 from app.stats_api import router as stats_router
 from app.storage import ensure_photo_dir
+from app.timing import stage
 from app.training_data import router as training_data_router
 
 log = logging.getLogger("pokemon_scanner.api")
@@ -50,6 +52,111 @@ _MAX_BODY = 2 * _MAX_UPLOAD + 1024 * 1024
 _MAX_CAPTURE_META = 4096
 
 
+async def _warm_catalog() -> None:
+    """Warm the deferred catalog path a scan's constraint pass takes, and audit
+    the promo local_id forms with the very same queries.
+
+    THE WARM-UP: ``_apply_constraints``/``_needs_review`` reach for
+    ``app.pack.constraints`` and ``app.cards`` behind function-local imports and
+    then make their first DB call, so scan #1 of a process pays the import plus
+    the SQLAlchemy engine + asyncpg connect inside its own latency (Task 3
+    measured this as the ``pack.constraints`` stall). One real
+    ``get_set_numerators`` call walks exactly that path — set_id_map join
+    included — so the first scan finds it hot.
+
+    THE AUDIT (data-trust guard — reads only, changes no behavior):
+    ``catalog_local_id`` decides whether a promo numerator is compared as
+    "SWSH123" or as "123" purely from the denominator table's
+    ``local_id_prefixed`` flag. If that flag and the ingested catalog ever
+    disagree, every promo card in that set quietly fails its ``_needs_review``
+    catalog check — a data defect with no visible symptom, only a page of
+    needlessly flagged cells. The flag is therefore checked against the catalog
+    it claims to describe, once, at startup: an ERROR names the set and the
+    disagreement. Both directions are checked (the brief asks for
+    ``local_id_prefixed=True``; the False rows are the same one-line assertion
+    against the same query, and a False row whose catalog IS prefixed breaks
+    identically), and a set with no rows at all is only a WARNING — that is an
+    un-ingested catalog, not a contradiction."""
+    from app.cards import get_set_numerators, normalize_local_id  # noqa: F401
+    from app.pack import constraints  # noqa: F401  (deferred in _apply_constraints)
+    from app.pack.set_resolution import load_denominator_table
+
+    for entry in load_denominator_table().sets:
+        if not entry.promo_prefix:
+            continue
+        nums = await get_set_numerators(entry.set_id)
+        if not nums:
+            log.warning("warm.catalog_empty set=%s (promo set not ingested — its "
+                        "numerators cannot be validated)", entry.set_id)
+            continue
+        prefix = entry.promo_prefix.upper()
+        prefixed = sum(1 for n in nums if n.upper().startswith(prefix))
+        if entry.local_id_prefixed and prefixed < len(nums):
+            log.error("warm.local_id_prefix_mismatch set=%s prefix=%s expected=prefixed "
+                      "prefixed=%s of %s — catalog_local_id() will compare the wrong "
+                      "form and flag real cards", entry.set_id, prefix, prefixed, len(nums))
+        elif not entry.local_id_prefixed and prefixed:
+            log.error("warm.local_id_prefix_mismatch set=%s prefix=%s expected=bare "
+                      "prefixed=%s of %s — catalog_local_id() will compare the wrong "
+                      "form and flag real cards", entry.set_id, prefix, prefixed, len(nums))
+        else:
+            log.info("warm.catalog_ok set=%s prefixed=%s cards=%s",
+                     entry.set_id, entry.local_id_prefixed, len(nums))
+
+
+async def _warm_start() -> None:
+    """Pay the first scan's one-off costs at boot instead of on a user's request.
+
+    Every one of these is lazily built on first use, so without this the FIRST
+    scan after a deploy pays all of it inside its own latency: the RapidOCR model
+    load (~1s), the 8.4k-row name index, and the deferred catalog/DB path
+    (Task 3's ``pack.constraints`` stall).
+
+    Runs as a BACKGROUND task off the lifespan and NEVER inline: Railway's
+    healthcheck has to see /health answer within 120s of deploy, and warming must
+    never be what stops it. Each component is independently guarded — a warm-up
+    is an optimization, so a failure (no DB reachable yet, no model files) logs
+    and moves on, leaving the lazy path to run on first use exactly as before.
+
+    Emits one ``timing.warm.<component> ms=`` line per component."""
+    from app.pack import rapidocr_reader
+    from app.pack.name_index import get_name_index
+
+    try:
+        with stage("warm", "rapidocr"):
+            # In a thread: building the ONNX sessions is ~1s of blocking CPU, and
+            # the whole point is that the app is already serving while it happens.
+            ok = await asyncio.to_thread(rapidocr_reader.warmup)
+        if not ok:
+            log.warning("warm.rapidocr_unavailable — OCR will fall back to Tesseract")
+    except Exception as e:
+        log.warning("warm.rapidocr_failed err=%r", e)
+
+    try:
+        with stage("warm", "name_index"):
+            await get_name_index()
+    except Exception as e:
+        log.warning("warm.name_index_failed err=%r", e)
+
+    try:
+        with stage("warm", "catalog"):
+            await _warm_catalog()
+    except Exception as e:
+        log.warning("warm.catalog_failed err=%r", e)
+
+
+def _warm_done(task: asyncio.Task) -> None:
+    """Done-callback (also the strong reference that keeps the task from being
+    garbage-collected mid-flight) — the same shape as scan_followup.spawn's."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.error("warm.crashed err=%r", exc)
+    else:
+        log.info("warm.done")
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     configure_logging()
@@ -57,7 +164,19 @@ async def _lifespan(app: FastAPI):
     load_symbol_index()
     load_denominator_table()
     ensure_photo_dir()
+    # Eager init, in the BACKGROUND: the app starts serving (and /health answers)
+    # immediately while the OCR engine, the name index and the catalog/DB path warm
+    # up behind it. Anchored on app.state + a done-callback that logs a crash
+    # instead of letting asyncio swallow it — the established pattern
+    # (app/pack/scan_followup.py).
+    warm = asyncio.create_task(_warm_start())
+    app.state.warm_task = warm
+    warm.add_done_callback(_warm_done)
     yield
+    if not warm.done():
+        # Shutdown mid-warm (a deploy that dies young, or a TestClient closing its
+        # lifespan): cancel so the loop doesn't close under a pending task.
+        warm.cancel()
 
 
 app = FastAPI(

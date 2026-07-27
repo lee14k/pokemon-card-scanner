@@ -385,10 +385,13 @@ async def _identify_quad_cell(img, box: tuple[int, int, int, int],
     whole-photo pass. The stack keeps the two bands vertically separated, so
     lines split cleanly back by y (name band above the seam, number strip below).
     Cells run concurrently and OCR_GATE bounds the batch onto the CPU; the ladder
-    that follows is DB I/O, not OCR, so it runs free. The engine is pre-warmed
-    (see scan_binder_page) so the concurrent burst never races the lazy RapidOCR
-    init. A tight cap keeps the large title/number text sharp while cutting time
-    (the synthetic-fixture bands sit below the cap, so it is unaffected there)."""
+    that follows is DB I/O, not OCR, so it runs free. The concurrent burst is safe
+    against a cold engine on its own: rapidocr_reader._get() builds under a lock
+    and publishes the engine before its ready flag, so first callers block for the
+    build instead of racing it (this is why scan_binder_page no longer fires a
+    single-threaded warm-up call first). A tight cap keeps the large title/number
+    text sharp while cutting time (the synthetic-fixture bands sit below the cap,
+    so it is unaffected there)."""
     x, y, w, h = box
     x0 = max(0, min(x, W - 1))
     y0 = max(0, min(y, H - 1))
@@ -1226,10 +1229,6 @@ async def scan_binder_page(page_bytes: bytes) -> dict:
             log.info("binder.quads found=%s fallback=%s", len(quads), False)
             ordered, rows, cols = _quad_reading_order(quads)
             with stage("binder", "ocr_cells", scan_id):
-                # Warm the lazily-loaded RapidOCR engine single-threaded BEFORE the
-                # concurrent per-cell burst: several cells' first OCR calls would
-                # otherwise race the engine init and some return empty (dropped reads).
-                await asyncio.to_thread(detect_lines_xy, img[:64, :64], 64)
                 reads = await asyncio.gather(
                     *(_identify_quad_cell(img, box, W, H) for box in ordered))
             return await _finish(list(reads), rows, cols, scan_id)

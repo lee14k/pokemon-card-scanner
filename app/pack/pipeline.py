@@ -491,15 +491,22 @@ async def scan_pack(
         _emit({"stage": "cards_found", "count": len(strips)})
 
         # Per-card "identifying" progress: resolve_set is the natural per-card unit
-        # of work remaining after strip/number detection, bounded by OCR_GATE so
-        # cards genuinely finish at staggered times (not all at once). asyncio.gather
-        # preserves input order in `resolutions` regardless of completion order, so
-        # this changes nothing about the result — only adds a side-effect callback.
+        # of work remaining after strip/number detection, and cards still finish at
+        # staggered times (each strip's resolution is a different amount of work and
+        # they complete as their threads do). asyncio.gather preserves input order in
+        # `resolutions` regardless of completion order, so this changes nothing about
+        # the result — only adds a side-effect callback.
+        #
+        # NOT behind OCR_GATE: resolve_set runs no OCR. It is table lookups plus, only
+        # when a denominator is ambiguous, one perceptual hash of a small crop — while
+        # holding an OCR slot it delayed the work the gate exists to admit (per-strip
+        # Tesseract, the code-card read, a concurrent scanner's live frame) behind
+        # work that never needed one.
         _done = 0
 
         async def _resolve_with_progress(r, s):
             nonlocal _done
-            res = await _bounded(resolve_set, r, s.image)
+            res = await asyncio.to_thread(resolve_set, r, s.image)
             _done += 1
             _emit({"stage": "identifying", "done": _done, "total": len(strips)})
             return res
@@ -583,8 +590,8 @@ async def scan_pack(
             # Tesseract subprocesses), so it belongs in a thread — and behind the same
             # OCR_GATE as every other Tesseract call, or N concurrent scans could each
             # fork ~6 subprocesses and blow the small container's memory. Like the
-            # other _bounded stages (read_numbers, resolve_set), this stage's timing
-            # therefore includes any gate queueing. Reading through the memo also lets
+            # other _bounded stage (read_numbers), this stage's timing therefore
+            # includes any gate queueing. Reading through the memo also lets
             # the save path (POST /pulls) reuse this exact reading instead of OCR'ing
             # the same photo a second time.
             code_img = await asyncio.to_thread(_decode, code_bytes)

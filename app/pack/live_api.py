@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -21,13 +22,23 @@ from app.pack import live_session as store
 from app.pack import vlm_client
 from app.pack.confidence import pack_confidence
 from app.pack.live_identify import identify_frame
-from app.pack.pipeline import OCR_GATE, _decode
+from app.pack.pipeline import _decode
 from app.prices import latest_price_map
 from app.schemas import CodeCardResult, PackCard, PackScanResponse
 from app.timing import new_scan_id, stage
 
 log = logging.getLogger("pokemon_scanner.pack.live_api")
 router = APIRouter(prefix="/scan/live", tags=["live-scan"])
+
+# Decode admission gate. A live frame is a 12MP phone photo: the decoded ndarray
+# alone is ~36MB, and a frame may carry a second (the number strip). The per-session
+# frame_lock bounds ONE session to one frame in flight, but nothing bounded the
+# number of sessions decoding at once — N scanners holding up cards at the same
+# moment is exactly the shape of this feature, and each is a fresh 36MB+ allocation
+# in a small container. Four in flight already saturates any cloud vCPU we run on.
+# Separate from OCR_GATE on purpose: a frame waiting to decode must not be holding
+# an OCR slot, which is the same mistake this task removed from the identify path.
+_DECODE_GATE = asyncio.Semaphore(int(os.environ.get("LIVE_DECODE_CONCURRENCY", "4")))
 
 
 class DuplicateBody(BaseModel):
@@ -82,31 +93,30 @@ async def frame(
             raise HTTPException(409, "busy")
         async with s.frame_lock:
             card_bytes = await card.read()
+            strip_bytes = await strip.read() if strip is not None else None
             with stage("live", "decode", scan_id):
                 # Threaded: a phone frame is a 12MP HEIC/JPEG, 100s of ms of
                 # blocking CPU that would otherwise stall every concurrent
                 # scanner's requests (the whole point of the per-session lock is
-                # to serialize ONE session, not the whole process).
-                img = await asyncio.to_thread(_decode, card_bytes)
-                if img is None:
-                    raise HTTPException(422, "unreadable image")
-                strip_img = None
-                if strip is not None:
-                    strip_bytes = await strip.read()
-                    strip_img = await asyncio.to_thread(_decode, strip_bytes)
+                # to serialize ONE session, not the whole process). Bounded by
+                # _DECODE_GATE across sessions; this stage's timing therefore
+                # includes any decode queueing, like the OCR-gated stages.
+                async with _DECODE_GATE:
+                    img = await asyncio.to_thread(_decode, card_bytes)
+                    if img is None:
+                        raise HTTPException(422, "unreadable image")
+                    strip_img = (await asyncio.to_thread(_decode, strip_bytes)
+                                 if strip_bytes is not None else None)
 
-            # `async with OCR_GATE` expanded so the queueing delay (how long this
-            # frame waited for an OCR slot) is measured separately from the work —
-            # under concurrent scanners the wait IS the latency. acquire()/release()
-            # in a finally is exactly what the async-with does, so behavior is
-            # unchanged.
-            with stage("live", "gate_wait", scan_id):
-                await OCR_GATE.acquire()
-            try:
-                with stage("live", "identify", scan_id):
-                    res = await identify_frame(img, strip_img, s.prior())
-            finally:
-                OCR_GATE.release()
+            # The OCR gate is acquired INSIDE identify_frame now, around its OCR
+            # and nothing else (it still logs `timing.live.gate_wait`, plus a
+            # `timing.live.ocr` for the guarded span). Holding it out here meant a
+            # frame owned one of the three slots through the whole identify ladder
+            # — DB lookups, name-index matching, PokéWallet I/O — none of which is
+            # the CPU the gate rations. `live.identify` still measures the whole
+            # call, so the two are directly comparable in the logs.
+            with stage("live", "identify", scan_id):
+                res = await identify_frame(img, strip_img, s.prior(), scan_id)
 
             if res.card is not None:
                 with stage("live", "prices", scan_id):

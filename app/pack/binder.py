@@ -281,8 +281,10 @@ def _compact(text: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (text or "").upper())
 
 
-def _promo_line_re() -> re.Pattern:
-    """``^(prefix)(language-or-junk)(digits)?$`` over a compacted line.
+def _promo_line_re() -> re.Pattern | None:
+    """``^(prefix)(language-or-junk)(digits)?$`` over a compacted line, or None
+    when the table records no promo prefixes at all (an empty alternation would
+    match the EMPTY prefix and turn every short token into a promo line).
 
     The prefixes are the denominator table's ``promo_prefix`` column — the same
     rows ``_prior_denominator_ok`` turns into a set — so the project keeps ONE
@@ -291,8 +293,10 @@ def _promo_line_re() -> re.Pattern:
     absorbs the printed LANGUAGE CODE, which OCR glues onto the prefix as often
     as not ("MEPEN", "MEPFR"), or a single mis-recognized glyph ("MEPB037",
     measured on fixture page_3 cell 0)."""
-    alt = "|".join(re.escape(p) for p in
-                   sorted(load_denominator_table().by_promo_prefix, key=len, reverse=True))
+    prefixes = sorted(load_denominator_table().by_promo_prefix, key=len, reverse=True)
+    if not prefixes:
+        return None
+    alt = "|".join(re.escape(p) for p in prefixes)
     return re.compile(rf"^({alt})([A-Z]{{0,2}})(\d{{1,3}})?$")
 
 
@@ -332,6 +336,8 @@ def _promo_number(lines: list[Line]) -> NumberReading | None:
     This is emphatically NOT the bare-numerator path (``parse_bare_numerator``):
     here the set-naming prefix was really read, off the card, next to the digits."""
     rx = _promo_line_re()
+    if rx is None:
+        return None
     hits = [(line, m) for line in lines if (m := rx.match(_compact(line[2])))]
     # Digit-only detections, paired with their parsed value once.
     digit_lines = [(line, _compact(line[2])) for line in lines

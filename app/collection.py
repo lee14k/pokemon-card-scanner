@@ -125,12 +125,27 @@ def _identity_key(set_code: str | None, set_name: str | None,
     return f"{left}:{right}"
 
 
-# Keys with no identity in them at all. They are what _identity_key produces for a
-# cell that resolved no set, no number and no usable name — and they are the SAME
-# string for every such cell, so persisting one would file two unrelated unknown
-# cards as one collection row (qty 2). "?:unknown" is the same shape arriving from
-# a client that spells its blank name out (identify_core's old fallback did).
-_DEGENERATE_KEYS = frozenset({"?:", "?:unknown"})
+def _is_degenerate_key(identity_key: str) -> bool:
+    """A key that identifies no particular card, so a row filed under it is a
+    shared bucket that the NEXT such card would increment instead of adding.
+
+    Two shapes:
+
+    * an EMPTY right-hand side — no numerator, and no name that survives
+      normalization. "?:" is the no-evidence cell, but "SVI:" is the same damage
+      one set down: every unreadable Scarlet & Violet card in the binder would
+      land on one row and read back as "qty 4" of a card nobody can name.
+      Split on the LAST colon, because the left side is a set NAME and may
+      contain one ("Sword & Shield: Astral Radiance"); the right side never can
+      (a numerator has no colon, and normalize_name strips punctuation).
+    * the literal "?:unknown" — the same no-evidence cell from a client that
+      spells its blank name out, which is what identify_core's old fallback did.
+
+    A key with a real right-hand side is left alone even when its set is unknown
+    ("?:126", "?:pikachu"): that is a partial identity, not an absent one, and it
+    can only be persisted by a user explicitly confirming the flagged cell."""
+    _, _, right = identity_key.rpartition(":")
+    return not right or identity_key == "?:unknown"
 
 
 def _is_flagged(card: CollectionSaveCardIn) -> bool:
@@ -257,9 +272,10 @@ async def save_collection(
       client marks a flagged card ``confirmed`` only when the user fixed it or
       explicitly kept it, so "the user never touched the flag" now means "not
       saved" rather than "saved as if confirmed".
-    * a card whose identity key would be DEGENERATE — no set, no number, no
-      usable name. That key is a constant, so the row it would create is a
-      shared bucket that a second unknown card would increment.
+    * a card whose identity key would be DEGENERATE — no number and no usable
+      name, whether or not the set resolved (see ``_is_degenerate_key``). Such a
+      key is shared by every card of its kind, so the row it creates is a bucket
+      that the next unreadable card increments rather than adding to.
 
     Both are reported back as ``skipped``/``skipped_rows`` so the client can say
     what happened instead of silently dropping cells the user pressed save on."""
@@ -280,10 +296,10 @@ async def save_collection(
         for card in cards:
             numerator = _numerator(card.card_number)
             identity_key = _identity_key(card.set_code, card.set_name, numerator, card.name)
-            if identity_key in _DEGENERATE_KEYS:
-                # Zero information: nothing to file it under, and every such cell
-                # would file under the same thing. The cell was visibly flagged in
-                # review; fixing it there is the path.
+            if _is_degenerate_key(identity_key):
+                # Nothing to file it under, and every such cell would file under
+                # the same thing. The cell was visibly flagged in review; fixing it
+                # there is the path.
                 skipped_rows.append(card.row_index)
                 continue
             if _is_flagged(card) and not card.confirmed:

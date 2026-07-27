@@ -407,21 +407,7 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
     else:
         reason = "no_db_match"
 
-    # IDENTITY KEY, OR NONE — a cell with nothing to key on gets nothing.
-    # The key is a dedup handle ("is this the same card I already have?"), so it
-    # may only be built out of evidence. When the set is unresolved AND no
-    # numerator survived AND no name resolved, there is no evidence: the old
-    # fallback minted the same literal "?:unknown" for every such cell, which
-    # made two DIFFERENT unidentified cards compare EQUAL — silently merging them
-    # in live dedup (or raising a "duplicate?" prompt about two cards that have
-    # nothing in common). None means "no identity"; consumers must treat it as
-    # never-equal rather than as a key (see live_session.add_frame_result).
-    # Every other shape is byte-identical to what this line built before: a
-    # resolved name still keys on the name, and a known set with an unresolved
-    # name still keys on "<set>:unknown" (that key carries real set evidence).
-    name_key = normalize_key(fields.get("name"))
-    key = None if not (set_code or set_name or numerator or name_key) else \
-        f"{set_code or set_name or '?'}:{numerator or name_key or 'unknown'}"
+    key = identity_key(set_code, set_name, numerator, fields.get("name"))
     return IdentityResult(
         confident=confident, numerator=numerator, display_number=display_number,
         set_id=set_id, set_code=set_code, set_name=set_name, fields=fields,
@@ -433,8 +419,39 @@ def normalize_key(name: str | None) -> str:
     """The name in dedup-key form — EMPTY when there is no usable name.
 
     It used to substitute the literal "unknown" for a missing name, which is why
-    a nameless, numberless, setless cell keyed as "?:unknown"; the caller now
-    decides what a missing name means in each position (nothing at all when the
-    set is unknown too, "unknown" when the set is known)."""
+    a nameless, numberless, setless cell keyed as "?:unknown"; ``identity_key``
+    now decides what a missing name means in each position (nothing at all when
+    the set is unknown too, "unknown" when the set is known)."""
     from app.pack.name_index import normalize_name
     return normalize_name(name or "")
+
+
+def identity_key(set_code: str | None, set_name: str | None,
+                 numerator: str | None, name: str | None) -> str | None:
+    """The cell's dedup handle — OR None when there is nothing to key on.
+
+    A key answers "is this the same card I already have?", so it may only be
+    built out of evidence. With the set unresolved AND no numerator surviving AND
+    no name resolving there is none, and the expression this replaced minted the
+    same literal "?:unknown" for every such cell: two DIFFERENT unidentified
+    cards compared EQUAL, which silently merged them in live dedup inside the dup
+    window and raised a "duplicate?" prompt about unrelated cards outside it.
+    None means "no identity" and consumers must treat it as never-equal rather
+    than as a key (see live_session.add_frame_result).
+
+    Every REACHABLE non-degenerate shape keys exactly as before. The one string
+    that changed is unreachable from this module and named here so the claim is
+    honest: a card with a set, no numerator and a name that is truthy but
+    normalizes to nothing ("???") used to key "<set>:" and now keys
+    "<set>:unknown", joining the bucket a name-less card of that set was already
+    in. ``resolve_identity`` cannot produce it — it only ever assigns set_code /
+    set_name alongside a name match or a validated numerator — so the divergence
+    exists for a direct caller only.
+
+    Not to be confused with ``app/collection.py::_identity_key``, which builds
+    the PERSISTED key from a saved card's own fields and refuses the degenerate
+    shapes outright (``_is_degenerate_key``). This one is live dedup's."""
+    name_key = normalize_key(name)
+    if not (set_code or set_name or numerator or name_key):
+        return None
+    return f"{set_code or set_name or '?'}:{numerator or name_key or 'unknown'}"

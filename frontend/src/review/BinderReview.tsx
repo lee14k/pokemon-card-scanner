@@ -48,15 +48,17 @@ function isFlagged(c: BinderCard): boolean {
   return c.needs_review ?? c.low_confidence_reason !== null;
 }
 
-// Does this cell carry ANY identity? The server refuses to file a card with no
-// set, no number and no name — there is nothing to key it on, and every such
-// card would key the same — so "keep as is" is not on offer for one: keeping it
-// would promise a save the server is going to refuse. Deliberately the loose
-// version of the server's rule (app/collection.py::_DEGENERATE_KEYS); a name
-// that survives here but normalizes to nothing there is caught by the skipped
-// count in the save summary.
+// Does this cell carry an identity the server can file it under? The set alone
+// is NOT one: the key's right-hand side is the number, else the name, and an
+// empty right-hand side ("SVI:" as much as "?:") is a bucket every unreadable
+// card of that set would share, so the server refuses it
+// (app/collection.py::_is_degenerate_key). "Keep as is" is therefore not on
+// offer for such a cell — keeping it would promise a save that is not coming.
+// Deliberately the loose version of the server's rule: a name that is truthy
+// here but normalizes to nothing there (e.g. "???") still gets the button, and
+// its refusal shows up in the save summary's skipped count.
 function hasIdentity(c: BinderCard): boolean {
-  return Boolean(c.set_code || c.set_name || c.card_number || c.name);
+  return Boolean(c.card_number || c.name);
 }
 
 // A cell is drawable only if its geometry is a finite [x, y, w, h] tuple.
@@ -479,13 +481,26 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
                     ) : hasIdentity(c) ? (
                       // Escape hatch for a card that cannot be fixed (an unreadable
                       // number the user can still read off the card in their hand).
-                      // stopPropagation: the whole cell opens the fix form.
+                      //
+                      // BOTH handlers stop propagation, because the cell around this
+                      // button is itself a role="button" that opens the fix form:
+                      //   - onClick, or a pointer press would keep the card AND open
+                      //     the form on top of it;
+                      //   - onKeyDown, because Enter/Space on a focused <button>
+                      //     dispatches keydown FIRST (which bubbles to the cell's
+                      //     onKeyDown, where preventDefault + setFixing would open the
+                      //     form) and only then synthesizes the click. Without this,
+                      //     "Keep as is" was reachable by mouse only: a keyboard user
+                      //     got the fix modal every time. Stopping the keydown leaves
+                      //     the browser's own Enter->click on the button intact, so the
+                      //     onClick above still runs and the keep still happens.
                       <button
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
                           keepAsIs(c.row_index);
                         }}
+                        onKeyDown={(e) => e.stopPropagation()}
                         style={{ fontSize: "0.8rem", padding: "0.15rem 0.4rem" }}
                       >
                         Keep as is
@@ -548,6 +563,10 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
         <button
           type="button"
           className="primary"
+          // Nothing on this page would be persisted: every cell is flagged and
+          // none has been settled. "Save 0 to collection" is a button whose only
+          // possible outcome is a summary saying nothing was saved.
+          disabled={cards.length === unsettled.length}
           onClick={() => onConfirm(confirmPayload())}
         >
           {unsettled.length > 0

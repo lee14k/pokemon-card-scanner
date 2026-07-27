@@ -11,7 +11,9 @@ as the FALLBACK for borderless/edge-case photos where no quads are found.
 
 Each quad cell then identifies the live way from a small name band (top of the
 crop) and a number strip (bottom) — stacked into one OCR pass per cell, all cells
-run concurrently under ``OCR_GATE``. The identify ladder itself is
+run concurrently under ``OCR_GATE``, with a single higher-resolution re-read of
+the strip alone for any cell that pass came out of numberless
+(``_retry_strip_number``). The identify ladder itself is
 ``resolve_identity`` — the same core the live single-card flow uses — so the two
 flows can never drift.
 
@@ -71,8 +73,16 @@ _QUAD_AREA_MAX = 0.35
 _QUAD_IOU = 0.4        # NMS: drop a box overlapping a kept box more than this
 _QUAD_MED_MULT = 3.0   # grid sanity: keep boxes within this factor of median area
 _NAME_BAND = 0.28      # per-cell name band = top this fraction of the crop
-_NUM_STRIP = 0.20      # per-cell number strip = bottom this fraction of the crop
+_NUM_STRIP = 0.24      # per-cell number strip = bottom this fraction of the crop
+                       # (0.20 -> 0.24: the quad box is a contour fit, not a
+                       # rectification, so its bottom edge can sit above the
+                       # printed number by a few percent of the card height. The
+                       # wider strip absorbs that slop; the cost is more competing
+                       # body text in the same OCR pass, which is what the retry
+                       # below exists to undo.)
 _BAND_CAP = 1000       # stacked name-band+strip OCR downscale cap (text stays large)
+_STRIP_RETRY_LONG = 1400  # number-strip retry: the strip ALONE resized to this
+                       # long side. NOT a cap — see _retry_strip_number.
 _MODAL_MIN_SUPPORT = 2  # confident cells needed to elect a page modal set (_page_modal)
 
 
@@ -96,13 +106,19 @@ class CellRead:
     ``name_texts``/``reading`` are the ladder's actual inputs; ``texts`` is the
     cell's raw OCR strings, which are not a ladder input at all — they are the
     VLM merge's pixel-corroboration evidence and only ride along here so the two
-    per-cell lists cannot fall out of order."""
+    per-cell lists cannot fall out of order.
+
+    ``strip_retry`` records whether the number-strip second pass
+    (``_retry_strip_number``) ran for this cell, so the page can count how often
+    it fired without a second source of truth. The text-cluster fallback never
+    retries, so it leaves the default."""
     box: tuple[int, int, int, int]
     crop: object                              # BGR ndarray (thumb + VLM encode)
     res: IdentityResult
     texts: list[str]
     name_texts: list[tuple[str, float]]
     reading: NumberReading | None
+    strip_retry: bool = False
 
 
 def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
@@ -370,8 +386,91 @@ def _promo_number(lines: list[Line]) -> NumberReading | None:
     return None
 
 
+def _strip_number(lines: list[Line], mid_y: float) -> NumberReading | None:
+    """The number-strip parsing chain, over strip-only detections.
+
+    Exactly the chain ``_identify_quad_cell`` runs on its pass-1 strip lines,
+    minus the name-band rung (which has no meaning here — the retry sees no name
+    band): a whole ``pattern_ok`` read, else a promo prefix + digits rejoined
+    across lines, else — last resort — a bare numerator confined to the lines
+    below ``mid_y``.
+
+    That confinement is the same geometric guard pass 1 applies and it is load
+    bearing: the strip's TOP is the fixed weakness/resistance/retreat row, whose
+    "x2" recognizes as a bare "32"/"232" (page_1 cell 0, at every retry
+    resolution tried). ``mid_y`` is in the coordinate space of whatever image was
+    detected, so the caller passes half of THAT image's height, not the crop's.
+
+    A bare reading from here is the same object pass 1 would have produced — not
+    ``pattern_ok``, ``bare=True`` — so every downstream restriction on bare
+    readings (the ladder's name+number rung is the only rung that accepts one;
+    ``_apply_page_prior`` refuses them outright) applies unchanged. The retry
+    buys resolution, never promotion."""
+    reading = _first_pattern_ok(lines) or _promo_number(lines)
+    if reading is not None:
+        return reading
+    return parse_bare_numerator([(l[2], l[3]) for l in lines if l[1] >= mid_y])
+
+
+def _scale_long(img, target: int):
+    """``img`` resized so its LONG side is ``target`` px — up or down."""
+    h, w = img.shape[:2]
+    long_side = max(h, w)
+    if long_side <= 0:
+        return img
+    s = target / long_side
+    interp = cv2.INTER_AREA if s < 1.0 else cv2.INTER_CUBIC
+    return cv2.resize(img, (max(1, round(w * s)), max(1, round(h * s))),
+                      interpolation=interp)
+
+
+async def _retry_strip_number(strip) -> tuple[NumberReading | None, list[str]]:
+    """SECOND PASS over the number strip ALONE, at higher effective resolution.
+    Returns (reading | None, the retry's raw OCR texts).
+
+    Fired only by a cell whose first pass read NO number at all — no
+    ``pattern_ok`` line, no promo rejoin, no bare numerator — i.e. a cell that
+    would otherwise reach ``resolve_identity`` numberless. That is what keeps the
+    extra OCR bounded: a page whose numbers all read pays nothing.
+
+    WHY IT READS ANYTHING THE FIRST PASS DID NOT — and why this is a resize, not
+    a cap. Pass 1 detects the name band and the strip STACKED into one image and
+    passes ``_BAND_CAP`` to ``detect_lines_xy``, which scales on the image's LONG
+    side. A binder cell's bands are WIDE and short, so the long side is the crop
+    WIDTH (~1000-1350px on the real fixtures) and the cap costs the strip
+    ~15-20% of its linear resolution. Handing the strip alone to
+    ``detect_lines_xy`` with a LARGER cap would change nothing at all: the cap
+    only ever downscales, and these strips already sit under it. Measured — the
+    strip at native resolution reads exactly what pass 1 read.
+
+    So the strip is resized so its long side is ``_STRIP_RETRY_LONG``, which for
+    a real fixture is an UPSCALE of ~1.05-1.25x on top of the ~1.2x pass 1 gave
+    away. Small, and sufficient: page_3's Turtwig prints "MEP 040" in the same
+    small type as its eight neighbours and is the one cell of nine the stacked
+    pass misses; at 1400 the retry reads it (0.88-0.95 conf), at native it does
+    not. 1600/1800 also read it and cost more pixels; 2200+ LOSE it again (the
+    detector starts splitting the line). Hence 1400 rather than "as big as
+    possible".
+
+    The strip is detected on its own rather than re-stacked because the name band
+    contributes nothing to a number read and would only spend the budget: the
+    same long side spread over both bands is the situation pass 1 is already in.
+
+    Runs under ``OCR_GATE`` in a worker thread exactly like pass 1, acquired
+    fresh so a retrying cell cannot hold the gate across both of its passes."""
+    if strip is None or getattr(strip, "size", 0) == 0:
+        return None, []
+    scaled = _scale_long(strip, _STRIP_RETRY_LONG)
+    async with OCR_GATE:
+        lines = await asyncio.to_thread(detect_lines_xy, scaled, _STRIP_RETRY_LONG)
+    if not lines:
+        return None, []
+    return _strip_number(lines, scaled.shape[0] / 2.0), [l[2] for l in lines]
+
+
 async def _identify_quad_cell(img, box: tuple[int, int, int, int],
-                              W: int, H: int) -> CellRead:
+                              W: int, H: int,
+                              scan_id: str | None = None) -> CellRead:
     """Identify one card quad the live way: read its NAME BAND (top of the crop)
     and NUMBER STRIP (bottom) with OCR under OCR_GATE, then run the shared
     identify ladder. Returns the cell's ``CellRead`` (pass-1 result plus the
@@ -391,7 +490,14 @@ async def _identify_quad_cell(img, box: tuple[int, int, int, int],
     build instead of racing it (this is why scan_binder_page no longer fires a
     single-threaded warm-up call first). A tight cap keeps the large title/number
     text sharp while cutting time (the synthetic-fixture bands sit below the cap,
-    so it is unaffected there)."""
+    so it is unaffected there).
+
+    A cell that comes out of that pass with NO number at all gets ONE second OCR
+    pass over the strip alone at higher resolution (``_retry_strip_number``).
+    Names are NOT re-read: the retry contributes number evidence only, and merges
+    into the very same parsing chain and the very same downstream — a retry
+    reading is indistinguishable from a pass-1 one by the time the ladder sees
+    it, so nothing downstream gains a new promotion path from this."""
     x, y, w, h = box
     x0 = max(0, min(x, W - 1))
     y0 = max(0, min(y, H - 1))
@@ -433,13 +539,28 @@ async def _identify_quad_cell(img, box: tuple[int, int, int, int],
         reading = parse_bare_numerator(
             [(l[2], l[3]) for l in strip_xy if l[1] >= strip_mid])
 
+    # Still numberless: ONE higher-resolution pass over the strip alone. This is
+    # the only place the retry can fire from, and the condition is exactly "the
+    # cell would reach resolve_identity with reading=None".
+    retry_texts: list[str] = []
+    retried = reading is None
+    if retried:
+        with stage("binder", "strip_retry", scan_id):
+            reading, retry_texts = await _retry_strip_number(strip)
+
     name_texts = _name_texts_from_band(name_xy)
     res = await resolve_identity(name_texts, reading, None)
     # The cell's raw OCR texts ride along so the VLM merge can demand pixel
-    # corroboration of a claimed number (hallucination guard).
+    # corroboration of a claimed number (hallucination guard). The retry's lines
+    # join them: they are this cell's own pixels, read better, and the guard is a
+    # CONTRADICTION test — a cell that reaches the VLM is one whose pass-1 text
+    # held no N/N pattern at all (that is why it retried), so without them the
+    # guard passes vacuously on precisely the cells it exists for. Adding them can
+    # only make it stricter, never admit an answer it would have refused.
     return CellRead(box=(x0, y0, x1 - x0, y1 - y0), crop=crop, res=res,
-                    texts=[l[2] for l in lines],
-                    name_texts=name_texts, reading=reading)
+                    texts=[l[2] for l in lines] + retry_texts,
+                    name_texts=name_texts, reading=reading,
+                    strip_retry=retried)
 
 
 def _is_stage_label(text: str) -> bool:
@@ -1230,7 +1351,14 @@ async def scan_binder_page(page_bytes: bytes) -> dict:
             ordered, rows, cols = _quad_reading_order(quads)
             with stage("binder", "ocr_cells", scan_id):
                 reads = await asyncio.gather(
-                    *(_identify_quad_cell(img, box, W, H) for box in ordered))
+                    *(_identify_quad_cell(img, box, W, H, scan_id)
+                      for box in ordered))
+            # How often the number-strip second pass had to fire. Expected to be
+            # a small minority of cells; a page where it fires for most of them
+            # means the quad boxes are cutting the number off, not that the
+            # numbers are small.
+            log.info("binder.strip_retry fired=%s/%s",
+                     sum(r.strip_retry for r in reads), len(reads))
             return await _finish(list(reads), rows, cols, scan_id)
 
         log.info("binder.quads found=%s fallback=%s", len(quads), True)

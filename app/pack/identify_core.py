@@ -19,6 +19,7 @@ from app.db.session import async_session_maker
 from app.pack.matching import card_fields_from_match
 from app.pack.name_index import get_name_index
 from app.pack.ocr import NumberReading
+from app.pack.set_resolution import load_denominator_table
 from app.pokewallet import get_api_key
 
 log = logging.getLogger("pokemon_scanner.pack.identify")
@@ -56,6 +57,35 @@ async def _pw_set_id_for(tcgdex_set_id: str) -> str | None:
             .where(SetIdMap.tcgdex_set_id == tcgdex_set_id))).scalars().first()
 
 
+def _promo_set_id(reading: NumberReading | None) -> str | None:
+    """The tcgdex set a printed PROMO PREFIX names, or None.
+
+    A promo card prints "MEP EN 037" / "SWSH039": a set-naming prefix and NO
+    denominator. ``parse_number`` reflects that faithfully (``prefix`` set,
+    ``denominator=None``), but every set-narrowing in this ladder keys off the
+    denominator — so the cards carrying the most explicit set evidence there is
+    were arriving with none of it usable, and their names matched against the
+    whole catalog. Measured on binder fixture page_3 (nine MEP promos, names read
+    perfectly): five of nine resolved to the wrong set's printing of the name and
+    stayed unconfident, purely because ``NameIndex.match`` returns an arbitrary
+    representative printing when a name has several.
+
+    ``by_promo_prefix`` is one row per prefix by construction, so a matched prefix
+    identifies exactly one set — the same fact ``binder._prior_denominator_ok``
+    already leans on. The id returned is the TCGdex one, which is the space
+    ``NameIndex._by_set`` is keyed in (the three promo rows are self-referential:
+    ``set_id == tcgdex_id``).
+
+    This scopes the NAME MATCH and vetoes a unique-name match in another set. It
+    grants no confidence by itself: a promo cell still becomes confident only
+    where its name and its printed number agree. ``bare`` readings have no prefix
+    and never reach it."""
+    if reading is None or not reading.prefix or not reading.pattern_ok:
+        return None
+    entry = load_denominator_table().by_promo_prefix.get(reading.prefix.upper())
+    return (entry.tcgdex_id or entry.set_id) if entry is not None else None
+
+
 async def resolve_identity(name_texts: list[tuple[str, float]],
                            reading: NumberReading | None,
                            prior: SessionPrior | None) -> IdentityResult:
@@ -64,11 +94,22 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
     ``name_texts`` is the title-band candidate lines as ``(text, conf)``,
     best-first (the caller does any y/conf ordering). Callers that need the
     live/binder FrameResult kinds (no_card/unreadable) decide those from the
-    inputs and this result — the core does not emit them."""
+    inputs and this result — the core does not emit them.
+
+    A ``bare`` reading (numerator only — ``ocr.parse_bare_numerator``, produced by
+    the binder alone) traverses exactly ONE rung: name+number agreement. It has no
+    denominator, so ``den`` falls through to the prior's exactly as a missing
+    reading would and no narrowing or veto keys off it; it has no prefix, so it
+    gets no promo scoping; and the caller keeps it out of the page-prior pass, so
+    the numerator-in-set rung never sees one either. Its only power is to let a
+    card's own printed name confirm its own printed number."""
     # name: highest-confidence line in the TITLE band only (hard filter)
     idx = await get_name_index()
     den = reading.denominator if (reading and reading.denominator) \
         else (prior.denominator if prior else None)
+    # A promo prefix is set-naming evidence with no denominator to express it in;
+    # see _promo_set_id. None for every non-promo and every bare reading.
+    promo_set = _promo_set_id(reading)
     name_match = None
     top_name_text = None
     for text, conf in name_texts:
@@ -81,12 +122,12 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
     # Fallback for prefixed "Trainer's Pokemon" names (e.g. Ascended Heroes): OCR
     # frequently drops the "Erika's"/"Sabrina's" prefix, so the bare Pokemon name
     # matches a commoner printing in another set ambiguously. If the session already
-    # knows the set, or the denominator uniquely identifies one, re-match scoped to
-    # that set's cards.
+    # knows the set, the card printed a promo prefix, or the denominator uniquely
+    # identifies one, re-match scoped to that set's cards.
     if (name_match is None or name_match.ambiguous) and top_name_text:
         scoped = idx.match_in_set(
             top_name_text,
-            set_id=(prior.set_id if prior and prior.set_id else None),
+            set_id=(prior.set_id if prior and prior.set_id else promo_set),
             denominator=den)
         if scoped is not None and not scoped.ambiguous:
             name_match = scoped
@@ -112,8 +153,31 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
             sets_for_den = idx._official_to_sets.get(int(reading.denominator))
             if sets_for_den and name_match.tcgdex_set_id not in sets_for_den:
                 den_veto = True
+        if promo_set is not None:
+            # Same veto in the promo shape: the printed prefix names the set, so a
+            # unique-name match in a DIFFERENT set is contradicted by the card's
+            # own pixels. And a promo read always carries a numerator too
+            # (PROMO_RE needs the digits), so the name had something concrete to
+            # agree with — reaching here means it did NOT, i.e. this cell
+            # disagrees with itself. This rung is for cells whose name is the only
+            # evidence, which a promo read is not, so it never promotes one:
+            # a promo cell goes confident through name+number agreement or not at
+            # all. Deliberately tighter than the pre-promo-scoping behaviour.
+            den_veto = True
         if not den_veto:
             confident = True                  # unique name (+denominator prior)
+            if reading is not None and reading.bare and numerator \
+                    and normalize_local_id(name_match.local_id) != numerator:
+                # This rung promotes on the NAME alone, and a bare numerator is
+                # not evidence — it is the digits left over when no pattern was
+                # found. Letting it ride along would print a number no rung
+                # believes onto a card the name resolved (measured: a unique
+                # "TYROGUE" with a stray "004" came back as Tyrogue #4 instead of
+                # its real #71). A bare reading must behave here exactly as no
+                # reading at all does, so the disagreeing digits are dropped and
+                # the matched printing's own local_id is used, as it is for a
+                # cell that read no number.
+                numerator = None
             numerator = numerator or normalize_local_id(name_match.local_id)
     if name_match and confident:
         set_name = name_match.set_name

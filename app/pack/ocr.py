@@ -37,6 +37,13 @@ class NumberReading:
     pattern_ok: bool = False
     blank: bool = False            # no text found at all
     tokens: list[str] = field(default_factory=list)
+    # A NUMERATOR AND NOTHING ELSE — no denominator, no prefix, no pattern behind
+    # it (see parse_bare_numerator). Always accompanied by pattern_ok=False, so
+    # every existing `if reading.pattern_ok` gate already refuses it; the flag
+    # names the shape positively for the few places that must refuse it for a
+    # DIFFERENT reason than "the pattern didn't match" — chiefly the binder's
+    # page-prior pass, whose per-cell veto has no denominator to check here.
+    bare: bool = False
 
 
 def _prep_variants(strip_bgr: np.ndarray) -> list[np.ndarray]:
@@ -117,6 +124,52 @@ def parse_number(text: str, conf: float) -> NumberReading | None:
         return NumberReading(raw=joined, numerator=p.group(2), denominator=None,
                              prefix=p.group(1), confidence=round(conf, 3),
                              pattern_ok=True, tokens=joined.split())
+    return None
+
+
+_BARE_NUM_RE = re.compile(r"\d{2,3}")
+
+
+def parse_bare_numerator(lines: list[tuple[str, float]]) -> NumberReading | None:
+    """A lone collector NUMERATOR ("037") from a card's number-strip lines, or None.
+
+    The last-resort number source. Promo cards print no denominator at all
+    ("MEP EN 037"), so when even the prefix went unread there is nothing left to
+    key on but the digits — and a bare digit run is far weaker evidence than an
+    N/N or a prefixed promo read, since it carries no set information whatsoever
+    and any 2-3 digit smudge on a card looks exactly like one.
+
+    So the reading it returns is deliberately **not** ``pattern_ok`` and carries
+    ``bare=True``. Everything that gates on ``pattern_ok`` therefore refuses it
+    unchanged (the binder's cell anchors, the whole-photo pipeline, live identify,
+    the VLM corroboration guard), and the binder's page-prior pass excludes it
+    explicitly. The one thing it can do is let the identify ladder's *name+number
+    agreement* rung fire: the card's own printed name independently confirming the
+    digits is what makes a bare numerator an identity rather than a guess.
+
+    ``lines`` is ``(text, confidence)`` for the NUMBER STRIP only — never the
+    title band, which prints the HP value in exactly this shape. Rejections:
+
+      * any input line that already parses as an N/N or prefixed promo number:
+        the caller has a real reading, and a stray digit run beside it is a
+        fragment of something else;
+      * runs of 4+ digits (the copyright year "2026...") and single digits (noise);
+      * anything that is not digits end to end — "X2", "130 HP", "097/088";
+      * zero ("000" is not a card).
+
+    Highest-confidence token first, so a crisply printed number beats a blurred
+    fragment when both survive."""
+    for text, conf in lines:
+        r = parse_number(text, conf)
+        if r is not None and r.pattern_ok:
+            return None
+    for text, conf in sorted(lines, key=lambda t: -t[1]):
+        tok = (text or "").strip()
+        if not _BARE_NUM_RE.fullmatch(tok) or int(tok) < 1:
+            continue
+        return NumberReading(raw=tok, numerator=tok, denominator=None, prefix=None,
+                             confidence=round(conf, 3), pattern_ok=False,
+                             tokens=[tok], bare=True)
     return None
 
 

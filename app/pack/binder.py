@@ -41,7 +41,7 @@ from app.pack.card_crop import refine_card_box
 from app.pack.confidence import pack_confidence
 from app.pack.identify_core import IdentityResult, SessionPrior, resolve_identity
 from app.pack.name_index import _alpha_prefix, get_name_index, normalize_name
-from app.pack.ocr import NumberReading, parse_number
+from app.pack.ocr import NumberReading, parse_bare_numerator, parse_number
 from app.pack.pipeline import OCR_GATE, _decode
 from app.pack.rapidocr_reader import detect_lines_xy
 from app.pack.set_resolution import entry_for_set_id, load_denominator_table
@@ -261,6 +261,102 @@ def _name_texts_from_band(name_xy: list) -> list[tuple[str, float]]:
     return [(t, c) for _y, t, c in joined]
 
 
+_DIGITS_RE = re.compile(r"\d{2,3}")
+_PROMO_JOIN_TOL = 1.5   # digits line's |dy| from the prefix line, in box heights
+
+
+def _first_pattern_ok(lines: list[Line]) -> NumberReading | None:
+    """Highest-confidence line that parses as a whole card number, or None."""
+    for line in sorted(lines, key=lambda t: -t[3]):
+        r = parse_number(line[2], line[3])
+        if r is not None and r.pattern_ok:
+            return r
+    return None
+
+
+def _compact(text: str) -> str:
+    """An OCR line reduced to its uppercase alphanumerics ("MEP EN" -> "MEPEN",
+    "037." -> "037"). Spacing and punctuation inside a printed number line are
+    exactly what the recognizer is least reliable about."""
+    return re.sub(r"[^A-Z0-9]", "", (text or "").upper())
+
+
+def _promo_line_re() -> re.Pattern:
+    """``^(prefix)(language-or-junk)(digits)?$`` over a compacted line.
+
+    The prefixes are the denominator table's ``promo_prefix`` column — the same
+    rows ``_prior_denominator_ok`` turns into a set — so the project keeps ONE
+    list of promo prefixes and a new promo set becomes readable by adding its row
+    (``PROMO_RE`` in ocr.py carries the same three and says so). The middle group
+    absorbs the printed LANGUAGE CODE, which OCR glues onto the prefix as often
+    as not ("MEPEN", "MEPFR"), or a single mis-recognized glyph ("MEPB037",
+    measured on fixture page_3 cell 0)."""
+    alt = "|".join(re.escape(p) for p in
+                   sorted(load_denominator_table().by_promo_prefix, key=len, reverse=True))
+    return re.compile(rf"^({alt})([A-Z]{{0,2}})(\d{{1,3}})?$")
+
+
+def _promo_number(lines: list[Line]) -> NumberReading | None:
+    """Rejoin a promo card's SPLIT "MEP EN 037" into one real promo reading, or None.
+
+    ``lines`` are the ``detect_lines_xy`` detections of ONE region — a binder
+    cell's number strip, or the text-cluster fallback's whole cell.
+
+    A promo card prints its set prefix, a language code and the collector number
+    as a single line, and the recognizer routinely hands them back as SEPARATE
+    detections ("MEPEN" + "038" — measured on all nine cells of fixture page_3) or
+    with a stray glyph welded in between ("MEPB037"). ``parse_number``'s
+    ``PROMO_RE`` needs the digits adjacent to the prefix, so both shapes read as
+    NO NUMBER AT ALL and a whole promo page goes unidentified.
+
+    The join is deliberately narrow, because a promo prefix is set-naming evidence
+    and must not be attached to some other line's digits:
+
+      * the prefix line must be a promo prefix and nothing else but a two-letter
+        language code or one stray glyph — a line that merely CONTAINS a prefix
+        does not qualify;
+      * the digits must be a 2-3 digit token, sitting to the RIGHT of the prefix
+        and within ``_PROMO_JOIN_TOL`` box heights of it vertically. Those two
+        conditions say "the two detections are halves of one printed line": the
+        number is printed after the prefix on a shared baseline. Fixture page_3's
+        seven split cells sit at 0.1-0.4 box heights; its ×2 weakness digits, the
+        nearest wrong answer on the page, sit at 2.9 and are refused;
+      * nearest such token wins if several, and a prefix line that already carries
+        its own digits needs no partner at all.
+
+    The result comes from ``parse_number`` itself on the rejoined string, so a
+    joined reading is INDISTINGUISHABLE from one read as a single "MEP037" token:
+    same numerator, same ``prefix``, same ``pattern_ok=True``. That is the point —
+    the prefix names its set outright, which is what the identify ladder's promo
+    scoping and the page prior's veto (``_prior_denominator_ok``) both key on.
+    This is emphatically NOT the bare-numerator path (``parse_bare_numerator``):
+    here the set-naming prefix was really read, off the card, next to the digits."""
+    rx = _promo_line_re()
+    hits = [(line, m) for line in lines if (m := rx.match(_compact(line[2])))]
+    # Digit-only detections, paired with their parsed value once.
+    digit_lines = [(line, _compact(line[2])) for line in lines
+                   if _DIGITS_RE.fullmatch(_compact(line[2]))]
+    for line, m in sorted(hits, key=lambda t: -t[0][3]):
+        prefix, digits, conf = m.group(1), m.group(3), line[3]
+        if digits is None:
+            near = [(other, text) for other, text in digit_lines
+                    if other[0] > line[0]                      # printed after it
+                    and abs(other[1] - line[1])
+                    <= _PROMO_JOIN_TOL * max(line[5], other[5])]  # same baseline
+            if not near:
+                continue
+            other, digits = min(near, key=lambda t: (abs(t[0][1] - line[1]), -t[0][3]))
+            conf = min(line[3], other[3])
+        if int(digits) < 1:
+            continue
+        r = parse_number(f"{prefix}{digits}", conf)
+        if r is not None and r.pattern_ok:
+            log.info("binder.promo_join prefix=%r digits=%s num=%s conf=%.2f",
+                     line[2], digits, r.numerator, r.confidence)
+            return r
+    return None
+
+
 async def _identify_quad_cell(img, box: tuple[int, int, int, int],
                               W: int, H: int) -> CellRead:
     """Identify one card quad the live way: read its NAME BAND (top of the crop)
@@ -298,18 +394,28 @@ async def _identify_quad_cell(img, box: tuple[int, int, int, int],
         lines = await asyncio.to_thread(detect_lines_xy, stacked, _BAND_CAP)
 
     name_xy = [l for l in lines if l[1] < seam]        # above the seam = title band
-    strip_lines = [(l[1], l[2], l[3]) for l in lines if l[1] >= seam]  # number strip
+    strip_xy = [l for l in lines if l[1] >= seam]      # below it = number strip
 
-    # number: best pattern_ok parse, strip first (the collector number lives in
-    # the bottom strip; the name band is only a fallback source).
-    name_lines = [(l[1], l[2], l[3]) for l in name_xy]
-    reading = None
-    for _y, text, conf in (sorted(strip_lines, key=lambda t: -t[2])
-                           + sorted(name_lines, key=lambda t: -t[2])):
-        r = parse_number(text, conf)
-        if r is not None and r.pattern_ok:
-            reading = r
-            break
+    # Number sources, strongest first — the collector number lives in the bottom
+    # strip, so every strip source is tried before the name band is consulted at
+    # all, and the evidence-free bare numerator is tried after everything:
+    #   1. a whole pattern_ok read off one strip line  ("012/202", "SWSH039")
+    #   2. a promo prefix + digits rejoined across strip lines ("MEP EN" + "037")
+    #   3. a whole pattern_ok read off a name-band line (unchanged fallback)
+    #   4. a lone numerator from the strip's BOTTOM HALF (bare — see below)
+    reading = _first_pattern_ok(strip_xy) or _promo_number(strip_xy) \
+        or _first_pattern_ok(name_xy)
+    if reading is None:
+        # LAST RESORT, and geometrically confined: the collector number prints at
+        # the very bottom of the card, while the strip's top is the fixed
+        # weakness/resistance/retreat row whose "×2" reads as a 2-3 digit token
+        # (page_1 cell 0's "232" is exactly that). Restricting the bare read to
+        # the strip's lower half keeps the printed number and drops that row —
+        # measured on all six fixtures. See parse_bare_numerator for the rest of
+        # the guards and for why this reading is not pattern_ok.
+        strip_mid = (seam + stacked.shape[0]) / 2.0
+        reading = parse_bare_numerator(
+            [(l[2], l[3]) for l in strip_xy if l[1] >= strip_mid])
 
     name_texts = _name_texts_from_band(name_xy)
     res = await resolve_identity(name_texts, reading, None)
@@ -396,13 +502,20 @@ def _cells(column: list[Line], H: int) -> list[list[Line]]:
 def _number_and_names(cell: list[Line]):
     """(best pattern_ok NumberReading | None, name candidates as [(text, conf)]).
     The number line is excluded from the name candidates; the rest are ordered by
-    y ascending then conf descending — a card's title is its top-most line."""
+    y ascending then conf descending — a card's title is its top-most line.
+
+    The split-promo rejoin (``_promo_number``) is shared with the quad path so a
+    promo page cannot read differently depending on which cell finder ran. It is
+    a strict fallback here: only a cell with no whole-line number at all consults
+    it, and the two lines it consumed stay in the name candidates (they sort to
+    the bottom by y, below the title, exactly like the illustrator/copyright
+    lines this path has always carried)."""
     best = None  # (conf, index, reading)
     for i, line in enumerate(cell):
         r = parse_number(line[2], line[3])
         if r is not None and r.pattern_ok and (best is None or r.confidence > best[0]):
             best = (r.confidence, i, r)
-    reading = best[2] if best else None
+    reading = best[2] if best else _promo_number(cell)
     num_idx = best[1] if best else None
     others = [line for i, line in enumerate(cell)
               if i != num_idx and not _is_stage_label(line[2])]
@@ -543,7 +656,14 @@ def _prior_denominator_ok(reading: NumberReading | None,
 
     Padding and alpha prefixes are handled by ``_denominator_owners``; a modal
     set with no recorded denominator (the three promo rows) owns nothing, so any
-    read denominator vetoes the prior there."""
+    read denominator vetoes the prior there.
+
+    A BARE reading (numerator only, no denominator, no prefix) lands in the first
+    branch — it contradicts nothing because it asserts nothing. That is correct
+    for this predicate's other caller, ``_vlm_payload``'s hint suppression (a cell
+    that read no set evidence is exactly the cell the worker most needs context
+    for), and it is precisely why ``_apply_page_prior`` refuses bare readings
+    separately instead of relying on this veto."""
     if reading is None:
         return True
     if reading.prefix:
@@ -707,7 +827,8 @@ async def _apply_page_prior(cells: list[BinderCell], reads: list[CellRead],
          function ever writes to, and every candidate is filtered on
          ``not r.res.confident``. There is no other write, so a pass-1 confident
          cell cannot be touched.
-      2. IT READ A NUMERATOR. Without one the prior can still reach the cell
+      2. IT READ A NUMERATOR, AND NOT A BARE ONE. Without a numerator the prior
+         can still reach the cell
          through the NAME path — ``match_in_set`` scoped to the prior's set, and
          the prior's denominator narrowing ``idx.match`` — and on the 17
          self-mapped sets (where the prior's id space happens to match the name
@@ -718,6 +839,18 @@ async def _apply_page_prior(cells: list[BinderCell], reads: list[CellRead],
          denominator. So pass 2 acts ONLY through the numerator-in-set rung the
          guard does protect; number-blind cells stay flagged and go to the VLM
          exactly as they do today.
+
+         A BARE numerator (``parse_bare_numerator``) is refused for the same
+         reason one step further in: it clears the letter of "read a numerator"
+         while carrying none of the evidence the guard inspects. Every other
+         candidate arrives with a denominator this page uniquely owns, or a promo
+         prefix naming this very set — a bare reading has neither, so
+         ``_prior_denominator_ok`` returns True on it vacuously (nothing to
+         contradict) and the numerator-in-set rung would then promote a lone
+         2-3 digit smudge purely because the modal set happens to contain that
+         number. That is the pass's whole hazard with none of its evidence, so
+         bare readings confirm identity ONLY where the card's own name agrees
+         with them (the ladder's name+number rung), never here.
       3. ITS DENOMINATOR DOES NOT CONTRADICT THE PAGE (``_prior_denominator_ok``).
       4. ITS NAME DOES NOT CONTRADICT ITS OWN NUMBER
          (``_name_contradicts_numerator``).
@@ -735,6 +868,7 @@ async def _apply_page_prior(cells: list[BinderCell], reads: list[CellRead],
     candidates = [i for i, r in enumerate(reads)
                   if not r.res.confident
                   and r.reading is not None and r.reading.numerator
+                  and not r.reading.bare
                   and _prior_denominator_ok(r.reading, prior)]
     if not candidates:
         return []

@@ -51,13 +51,26 @@ _set_id_map: dict[str, str] | None = None
 
 async def _load_set_id_map() -> dict[str, str] | None:
     """The whole set_id_map bridge table as tcgdex id -> PokéWallet id, loaded
-    once per process. None when the load itself failed.
+    once per process. Falsy — None from a failed load, or ``{}`` — when there is
+    nothing to serve from, and the caller then queries per row as it always did.
 
-    INVALIDATION: none, by design. The table is written only by
+    AN EMPTY TABLE IS NOT A LOADED TABLE. Every test below is truthiness, not
+    ``is not None``, and that distinction is the whole correctness of memoizing
+    this: a database with migrations applied but scripts/build_id_maps.py not yet
+    run answers this query with zero rows, and pinning ``{}`` for the life of the
+    process would make every confidently identified card resolve to a null
+    PokéWallet id — silently losing its price and image, with the documented
+    fallback never firing and no error anywhere. Staying falsy means the next
+    call retries, so the moment the table is populated this process starts
+    serving it.
+
+    INVALIDATION: none beyond that, by design. The table is written only by
     scripts/build_id_maps.py, which is an offline script — a serving process
-    cannot observe it change, and a deploy (which is how a rebuild reaches
-    production) restarts the process anyway. That is the same lifetime the name
-    index already assumes for the catalog it is built from.
+    cannot observe it change from populated to different, and a rebuild reaches
+    production through a deploy, which restarts the process. That is the same
+    lifetime the name index already assumes for the catalog it is built from.
+    The empty case above is the one transition that DOES happen under a live
+    process, which is exactly why it is not cached.
 
     It is 53 rows. The point is not the bytes, it is that this used to be a
     connection acquire + round trip on EVERY confidently identified card — nine
@@ -71,14 +84,21 @@ async def _load_set_id_map() -> dict[str, str] | None:
     first event loop that blocks on it and raises for every other one, and this
     function's only caller does not guard against that."""
     global _set_id_map
-    if _set_id_map is not None:
+    if _set_id_map:
         return _set_id_map
     try:
         async with async_session_maker() as session:
             rows = (await session.execute(select(
                 SetIdMap.tcgdex_set_id, SetIdMap.pokewallet_set_id))).all()
         _set_id_map = {t: p for t, p in rows}
-        log.info("identify.set_id_map_loaded rows=%s", len(_set_id_map))
+        if _set_id_map:
+            log.info("identify.set_id_map_loaded rows=%s", len(_set_id_map))
+        else:
+            log.warning("identify.set_id_map_empty — set_id_map has no rows "
+                        "(scripts/build_id_maps.py has not been run against this "
+                        "database); every identified card will resolve without a "
+                        "PokéWallet id, so no price and no image. Not cached — "
+                        "the next call retries.")
     except Exception as e:
         # Leave it unloaded so the next call retries, and let the caller fall
         # back to the single-row query it always used.
@@ -93,11 +113,12 @@ async def _pw_set_id_for(tcgdex_set_id: str) -> str | None:
     card's identity still comes from the name index (price/image stay None).
 
     Served from the preloaded table (``_load_set_id_map``); the per-row query is
-    kept as the fallback for the case where that load failed, so a hiccup at the
-    wrong moment degrades to the old behaviour rather than to a wrong None —
-    which would silently cost the card its price and image."""
+    kept as the fallback for whenever that preload has nothing to serve — a
+    failed load OR an empty table — so both degrade to the old behaviour rather
+    than to a wrong None, which would silently cost the card its price and image.
+    Truthiness, not ``is not None``: see ``_load_set_id_map``."""
     table = await _load_set_id_map()
-    if table is not None:
+    if table:
         return table.get(tcgdex_set_id)
     async with async_session_maker() as session:
         return (await session.execute(

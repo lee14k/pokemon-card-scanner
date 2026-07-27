@@ -43,9 +43,23 @@ async def latest_price_map(session) -> tuple[dict[str, tuple[float | None, float
 
     Cached for ``_PRICE_TTL_S``; ``session`` is used only on a miss. THE RETURNED
     DICT IS SHARED between callers and MUST NOT be mutated — every caller today
-    only reads it (``in`` / ``.get`` / indexing). A DB error is not cached: it
-    propagates out of here exactly as before and each caller's own try/except
-    decides what an unpriced response looks like."""
+    only reads it (``in`` / ``.get`` / indexing).
+
+    Two kinds of "no prices", cached differently on purpose:
+
+      * A DB ERROR is NOT cached. It propagates out of here exactly as it did
+        before this memo existed, and each caller's own try/except decides what
+        an unpriced response looks like — so a blip costs one request, not sixty
+        seconds of them.
+      * ``({}, None)`` — no snapshot has finished yet — IS a real answer and IS
+        cached for the full TTL. In-process that costs nothing: the pricing batch
+        calls ``invalidate_price_cache()`` the moment it commits. But a snapshot
+        finished by ANOTHER process (a script, a second web dyno) stays invisible
+        here for up to ``_PRICE_TTL_S``, which for battles means
+        ``_require_prices`` keeps returning 409 for that long after prices really
+        do exist. A minute of that is the accepted price of not re-reading the
+        whole CardPrice table per frame; anything that needs it sooner should
+        call ``invalidate_price_cache()``."""
     hit = _price_cache
     if hit is not None and time.monotonic() < hit[0]:
         return hit[1], hit[2]

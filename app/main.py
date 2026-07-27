@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 import httpx
@@ -77,7 +77,7 @@ async def _warm_catalog() -> None:
     against the same query, and a False row whose catalog IS prefixed breaks
     identically), and a set with no rows at all is only a WARNING — that is an
     un-ingested catalog, not a contradiction."""
-    from app.cards import get_set_numerators, normalize_local_id  # noqa: F401
+    from app.cards import get_set_numerators
     from app.pack import constraints  # noqa: F401  (deferred in _apply_constraints)
     from app.pack.set_resolution import load_denominator_table
 
@@ -175,8 +175,13 @@ async def _lifespan(app: FastAPI):
     yield
     if not warm.done():
         # Shutdown mid-warm (a deploy that dies young, or a TestClient closing its
-        # lifespan): cancel so the loop doesn't close under a pending task.
+        # lifespan): cancel AND await, or the loop can still close under a task that
+        # has only been asked to stop. cancel() just schedules the CancelledError;
+        # the task is not finished until it has been stepped one more time, which is
+        # what awaiting it here guarantees.
         warm.cancel()
+        with suppress(asyncio.CancelledError):
+            await warm
 
 
 app = FastAPI(

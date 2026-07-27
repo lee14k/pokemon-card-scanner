@@ -136,7 +136,35 @@ class NameIndex:
         unique ``denominator`` (card_count_official) identifies. Recovers prefixed
         "Trainer's Pokemon" names — a bare "oddish" partial-matches "erika's oddish"
         within Ascended Heroes instead of a commoner Oddish elsewhere. Returns None
-        when the scope can't be pinned to a single set."""
+        when the scope can't be pinned to a single set.
+
+        A TOP-SCORE TIE BETWEEN DISTINCT CARDS IS AMBIGUOUS, and that is the whole
+        safety of this method. Scoping to one set is exactly the situation where
+        near-identical names cluster — a set's "Trainer's Pokemon" cycle
+        ("N's Klink", "N's Klinklang"), its evolution lines, its Pokemon-plus-suffix
+        pairs — so a query that half-matches the family scores the SAME against
+        several of them. Picking one of those is a coin flip that the caller then
+        treats as a resolved identity:
+
+          * scoped to sv09, a read "KLINK" tied "n s klink" (#103) and
+            "n s klinklang" (#105) and returned one confidently;
+          * scoped to svp, a read "LILLIE'S DETERMINATION" (a real me01 card) tied
+            "hop s snorlax" (#184) and "n s darmanitan" (#181) at 85.5, and paired
+            with a misread "SVP184" that is a confident WRONG identity.
+
+        Worse, WHICH one it returned depended on the process: the candidate keys
+        came out of a ``set``, whose iteration order moves with Python's per-process
+        string hash seed. The same photo could resolve differently on two runs of
+        the same code, and a test could pass all day and fail in production. So the
+        keys are now SORTED (deterministic ranking input) and a tie is reported
+        rather than broken.
+
+        ``ambiguous`` therefore now means "this name does not pick out one card
+        here" for BOTH of its reasons: several printings of the same name (its
+        original meaning), or several DIFFERENT names the query fits equally well.
+        Both callers — the identify ladder's scoped re-match and the binder's
+        name-vs-number veto — already refuse an ambiguous match, so a tie simply
+        withholds the recovery instead of guessing."""
         q = normalize_name(ocr_text)
         if len(q) < 3 or not any(c.isalpha() for c in q):
             return None
@@ -152,14 +180,16 @@ class NameIndex:
         pool = self._by_set.get(set_id)
         if not pool:
             return None
-        keys = list({k for k, _e in pool})
-        best = process.extractOne(q, keys, scorer=fuzz.WRatio, score_cutoff=min_score)
-        if best is None:
+        keys = sorted({k for k, _e in pool})
+        top = process.extract(q, keys, scorer=fuzz.WRatio,
+                              score_cutoff=min_score, limit=2)
+        if not top:
             return None
-        key, score, _ = best
+        key, score, _ = top[0]
+        tied = len(top) > 1 and top[1][1] >= score
         matched = [e for k, e in pool if k == key]
         s, sn, lid, cn, _o = matched[0]
-        return NameMatch(s, sn, lid, cn, score, ambiguous=len(matched) > 1)
+        return NameMatch(s, sn, lid, cn, score, ambiguous=len(matched) > 1 or tied)
 
 
 _index: NameIndex | None = None

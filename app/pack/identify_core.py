@@ -24,19 +24,6 @@ from app.pokewallet import get_api_key
 
 log = logging.getLogger("pokemon_scanner.pack.identify")
 
-# Fuzzy-match floor for a name re-matched inside a PROMO set (see resolve_identity).
-# A promo pool is large (swshp 302 cards, svp 226) and its names are unusually
-# collidable — dozens share the "Trainer's Pokemon" possessive shape — so
-# match_in_set's default 80 is far too generous there: "LILLIE'S DETERMINATION",
-# a real me01 card, scores 85.5 against svp's "Hop's Snorlax" AND "N's Darmanitan"
-# (a tie broken by set-iteration order, i.e. differently per process). Paired with
-# a misread "SVP184" that lands on whichever one it picked, that is a confident
-# WRONG identity built entirely out of noise.
-# Measured against the legitimate cases this scoping exists for: all 392 of them —
-# every mep, svp and swshp card whose own name is unique within its set — score
-# exactly 100.0. So the floor costs nothing real and the margin is 14.5 points.
-_PROMO_NAME_MIN_SCORE = 95
-
 
 @dataclass
 class SessionPrior:
@@ -186,11 +173,16 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
     # identifies one, re-match scoped to that set's cards.
     if (name_match is None or name_match.ambiguous) and top_name_text:
         by_promo = promo_set is not None and not (prior and prior.set_id)
+        # No special score floor for the promo scope: the hazard it was standing
+        # in for is a top-score TIE between different cards in the pool, which
+        # match_in_set now reports as ambiguous for every scoping (see its
+        # docstring). A floor separates on the wrong axis — it also refuses the
+        # honest recoveries this scoping exists for, whose scores are legitimately
+        # well under 100 (a dropped "Hop's" possessive scores 90.0).
         scoped = idx.match_in_set(
             top_name_text,
             set_id=(prior.set_id if prior and prior.set_id else promo_set),
-            denominator=den,
-            **({"min_score": _PROMO_NAME_MIN_SCORE} if by_promo else {}))
+            denominator=den)
         if scoped is not None and not scoped.ambiguous and (
                 # A PROMO-scoped re-match is adopted only when it makes the card's
                 # name and its printed number AGREE. The promo prefix exists here

@@ -40,7 +40,7 @@ from app.pack import vlm_client
 from app.pack.card_crop import refine_card_box
 from app.pack.confidence import pack_confidence
 from app.pack.identify_core import IdentityResult, SessionPrior, resolve_identity
-from app.pack.name_index import get_name_index, normalize_name
+from app.pack.name_index import _alpha_prefix, get_name_index, normalize_name
 from app.pack.ocr import NumberReading, parse_number
 from app.pack.pipeline import OCR_GATE, _decode
 from app.pack.rapidocr_reader import detect_lines_xy
@@ -611,14 +611,26 @@ async def _name_contradicts_numerator(read: CellRead, prior: SessionPrior) -> bo
         exactly one printing and is still ``ambiguous=True`` — so gating on it
         would switch this guard off almost everywhere.
 
-    Printings are narrowed by the effective denominator the same way
-    ``NameIndex.match`` narrows (``card_count_official``), so the question asked
-    is the precise one: *in a set of this size, is the card this name names
-    printed at the number this cell read?* Tangela/004 -> no (contradiction);
-    Pinsir/168, Dipplin/170, Infernape/173 -> yes. The narrowing falls back to
-    the unscoped printings when it would empty the list, and the private
-    ``_entries`` access mirrors ``resolve_identity``'s own use of
-    ``idx._official_to_sets``."""
+    Printings are narrowed to the DENOMINATOR'S SCOPE the same way
+    ``NameIndex`` narrows — by ``card_count_official`` for a digit denominator,
+    by the sets that use the alpha prefix (``_alpha_den_to_sets``, what
+    ``match_in_set`` uses) for a gallery one like "GG70"/"SV122". The question
+    asked is then the precise one: *in a set of this shape, is the card this
+    name names printed at the number this cell read?* Tangela/004 -> no
+    (contradiction); Pinsir/168, Dipplin/170, Infernape/173 -> yes.
+
+    An EMPTY narrowing is a contradiction, not a reason to widen. The name
+    having no printing at all in a set of this shape is the STRONGEST form of
+    the contradiction this guard exists to catch — the name simply is not in
+    that set. An earlier version fell back to the unscoped printings there, which
+    inverted the test: "Pikachu" has no printing in any 167-card set, so a
+    ``PIKACHU 017/167`` cell on a Twilight Masquerade page widened to every
+    Pikachu in the catalog, found My First Battle's #17, and was promoted to a
+    confident "Twilight Masquerade 017" — which is Applin. Same for 025 and for
+    ``LAPRAS 131/167``. So the narrowing stands on its own.
+
+    The private ``_entries`` / ``_alpha_den_to_sets`` access mirrors
+    ``resolve_identity``'s own use of ``idx._official_to_sets``."""
     if not read.name_texts or not (read.reading and read.reading.numerator):
         return False
     idx = await get_name_index()
@@ -638,10 +650,14 @@ async def _name_contradicts_numerator(read: CellRead, prior: SessionPrior) -> bo
             name_match = scoped
     if name_match is None:
         return False
+    # (set_id, set_name, local_id, card_name, card_count_official)
     printings = idx._entries.get(normalize_name(name_match.card_name), ())
-    if den and den.isdigit():
-        # (set_id, set_name, local_id, card_name, card_count_official)
-        printings = [e for e in printings if e[4] == int(den)] or printings
+    if den:
+        if den.isdigit():
+            printings = [e for e in printings if e[4] == int(den)]
+        else:
+            sets = idx._alpha_den_to_sets.get(_alpha_prefix(den)) or set()
+            printings = [e for e in printings if e[0] in sets]
     num = normalize_local_id(read.reading.numerator)
     return all(normalize_local_id(e[2]) != num for e in printings)
 

@@ -6,9 +6,9 @@ import {
   saveToCollection,
   scanPack,
   scanPackStream,
-  type BinderCard,
   type BinderScan,
   type CaptureMeta,
+  type CollectionSaveCard,
   type CollectionSaveOut,
   type Encounter,
   type PackCard,
@@ -137,7 +137,7 @@ export default function App() {
     }
   };
 
-  const doSaveCollection = async (cards: BinderCard[]) => {
+  const doSaveCollection = async (cards: CollectionSaveCard[]) => {
     // Auth gate mirrors doSave: open the login modal and bail; BinderReview
     // keeps the (possibly edited) cards, so re-clicking Save after login saves.
     if (!trainer) {
@@ -235,6 +235,17 @@ export default function App() {
                 {" · "}
                 {step.out.total_cards} cards total.
               </p>
+              {(step.out.skipped ?? 0) > 0 && (
+                // The server skipped these: a flagged cell nobody confirmed, or one
+                // with no identity to file under. Say so — the alternative is the
+                // user counting the collection and finding cards missing.
+                <p style={{ color: "var(--danger)" }}>
+                  {step.out.skipped} card{step.out.skipped === 1 ? "" : "s"} skipped
+                  because {step.out.skipped === 1 ? "it" : "they"} still needed review.
+                  Scan the page again and fix (or keep) {step.out.skipped === 1 ? "it" : "them"} to add
+                  {step.out.skipped === 1 ? " it" : " them"}.
+                </p>
+              )}
               {step.out.encounters.length > 0 && (
                 <ul className="card-rows">
                   {step.out.encounters.map((e) => (

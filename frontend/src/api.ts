@@ -462,6 +462,20 @@ export interface CollectionSaveOut {
   incremented: number;
   total_cards: number;
   encounters: Encounter[];
+  // Cards the server refused to save: a flagged cell the user never confirmed,
+  // or a cell with no identity at all. Optional so a client that is newer than
+  // the server it is talking to still type-checks — read them with `?? 0`.
+  skipped?: number;
+  skipped_rows?: number[];
+}
+
+// What POST /collection accepts: the reviewed card plus the user's verdict.
+// `confirmed` is meaningful only for a FLAGGED card — it says the user fixed it
+// or explicitly kept it. Absent/false on a flagged card means the server skips
+// it (nothing the scanner was unsure about lands in the collection by default).
+// Unflagged cards ignore the field entirely.
+export interface CollectionSaveCard extends BinderCard {
+  confirmed?: boolean;
 }
 
 // Scan one binder page into a grid of PackCard-shaped cells (with thumbnails).
@@ -480,7 +494,7 @@ export async function scanBinder(page: Blob): Promise<BinderScan> {
   return parse<BinderScan>(res);
 }
 
-export async function saveToCollection(cards: BinderCard[]): Promise<CollectionSaveOut> {
+export async function saveToCollection(cards: CollectionSaveCard[]): Promise<CollectionSaveOut> {
   return parse(
     await fetch(`${base}/collection`, {
       method: "POST",

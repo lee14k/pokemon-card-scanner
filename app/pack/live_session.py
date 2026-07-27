@@ -56,7 +56,7 @@ _vlm_tasks: dict[str, asyncio.Task] = {}
 @dataclass
 class LiveCard:
     card: PackCard
-    identity_key: str
+    identity_key: str | None   # None = no identity resolved; never equal to another
     state: _State
     captured_at: float           # time.monotonic() of the frame that produced this row
     replaceable: bool
@@ -134,15 +134,25 @@ class LiveSession:
 
         # res.kind == "card"
         card = res.card
-        key = res.identity_key or ""
+        # None = the ladder resolved NO identity evidence (no set, no numerator, no
+        # name). It is not a key and must never compare equal to another one: two
+        # unreadable cards are not the same card. It used to arrive as the shared
+        # literal "?:unknown", so the second unidentified hold-up of a session was
+        # deduped into the first (inside the 2s window) or raised a bogus
+        # "duplicate?" prompt (outside it). Rung 1 and rung 3 below are therefore
+        # keyed on `key is not None`; rung 2 (the row the user explicitly asked to
+        # replace) is the one place an identity-less card may still land on an
+        # existing row — see its comment.
+        key = res.identity_key
         now = time.monotonic()
 
         # 1. Dedup against the most-recent NON-replaceable row with this identity.
         dup = None
-        for lc in self.cards:
-            if not lc.replaceable and lc.identity_key == key:
-                if dup is None or lc.captured_at > dup.captured_at:
-                    dup = lc
+        if key is not None:
+            for lc in self.cards:
+                if not lc.replaceable and lc.identity_key == key:
+                    if dup is None or lc.captured_at > dup.captured_at:
+                        dup = lc
         if dup is not None:
             if now - dup.captured_at <= DUP_WINDOW_S:
                 # Same hold-up, refining read -> silently keep the better confidence.
@@ -157,6 +167,13 @@ class LiveSession:
             return LiveEvent("duplicate_prompt", card, False)
 
         # 2. A replaceable row with this identity -> overwrite it in place.
+        # An identity-LESS card overwrites an identity-less replaceable row: the
+        # user pressed "replace this row" and then showed a card, which is an
+        # explicit instruction rather than an identity claim, so the one thing
+        # rung 1 must not do (treat two unreadable cards as the same card) is
+        # exactly what this rung is being told to do. It stays narrow: only rows
+        # the user marked, and only when the incoming card has no identity either
+        # (an identified card must still match a key to replace a row).
         for lc in self.cards:
             if lc.replaceable and lc.identity_key == key:
                 row = lc.card.row_index

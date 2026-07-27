@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, getBinderFollowup, type BinderCard, type BinderScan } from "../api";
+import {
+  ApiError,
+  getBinderFollowup,
+  type BinderCard,
+  type BinderScan,
+  type CollectionSaveCard,
+} from "../api";
 import FixCardForm from "./FixCardForm";
 
 const POLL_MS = 2000; // mirrors ReviewScreen / LiveScanScreen's pending_vlm poll
@@ -32,7 +38,7 @@ const REASON_TEXT: Record<string, string> = {
 interface Props {
   scan: BinderScan;
   photo: Blob;
-  onConfirm: (cards: BinderCard[]) => void;
+  onConfirm: (cards: CollectionSaveCard[]) => void;
   onRetake: () => void;
 }
 
@@ -40,6 +46,17 @@ interface Props {
 // outline colour and the "needs review" count in lockstep with the cells below.
 function isFlagged(c: BinderCard): boolean {
   return c.needs_review ?? c.low_confidence_reason !== null;
+}
+
+// Does this cell carry ANY identity? The server refuses to file a card with no
+// set, no number and no name — there is nothing to key it on, and every such
+// card would key the same — so "keep as is" is not on offer for one: keeping it
+// would promise a save the server is going to refuse. Deliberately the loose
+// version of the server's rule (app/collection.py::_DEGENERATE_KEYS); a name
+// that survives here but normalizes to nothing there is caught by the skipped
+// count in the save summary.
+function hasIdentity(c: BinderCard): boolean {
+  return Boolean(c.set_code || c.set_name || c.card_number || c.name);
 }
 
 // A cell is drawable only if its geometry is a finite [x, y, w, h] tuple.
@@ -64,9 +81,13 @@ function priceText(c: BinderCard): string | null {
 export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props) {
   const [cards, setCards] = useState<BinderCard[]>(scan.cards);
   const [fixing, setFixing] = useState<number | null>(null);
-  // Rows the USER has settled by applying a fix. A late VLM answer must never
-  // overwrite one — the human looked at the card, the model didn't.
-  const [fixedRows, setFixedRows] = useState<Set<number>>(new Set());
+  // Rows the USER has settled — by applying a fix, or by keeping a flagged cell
+  // as it is. Two jobs, and they are the same set on purpose:
+  //   1. a late VLM answer must never overwrite one (the human looked at the
+  //      card, the model didn't);
+  //   2. a still-flagged row is sent up `confirmed: true` ONLY if it is in here,
+  //      and the server persists a flagged card only when it is confirmed.
+  const [settledRows, setSettledRows] = useState<Set<number>>(new Set());
 
   // ── Background-VLM follow-up poll ────────────────────────────────────────
   // The scan answered before the VLM did (see binder._finish); the flagged
@@ -77,8 +98,8 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
   const scanId = scan.scan_id ?? null;
   const cardsRef = useRef<BinderCard[]>(cards);
   cardsRef.current = cards;
-  const fixedRef = useRef<Set<number>>(fixedRows);
-  fixedRef.current = fixedRows;
+  const settledRef = useRef<Set<number>>(settledRows);
+  settledRef.current = settledRows;
 
   useEffect(() => {
     if (!scanId) return;
@@ -111,9 +132,9 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
         let changed = false;
         const next = prev.map((c) => {
           // Eligible ONLY while this row is still locally pending and the user
-          // hasn't fixed it: that makes the merge idempotent and makes a manual
+          // hasn't settled it: that makes the merge idempotent and makes a manual
           // fix (which sets state "ok" below) permanently authoritative.
-          if (c.state !== "pending_vlm" || fixedRef.current.has(c.row_index)) return c;
+          if (c.state !== "pending_vlm" || settledRef.current.has(c.row_index)) return c;
           const match = st.cards.find((m) => m.row_index === c.row_index);
           if (!match || match.state === "pending_vlm") return c;
           changed = true;
@@ -296,13 +317,32 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
   const cols = scan.grid.cols || 1;
   const foundN = cards.length;
   const needReview = cards.filter(isFlagged).length;
+  // Flagged AND untouched: the server will skip exactly these. Counted here so
+  // the number on the button matches the number in the save summary.
+  const unsettled = cards.filter((c) => isFlagged(c) && !settledRows.has(c.row_index));
+
+  // The save payload: a flagged card carries the user's explicit go-ahead, and
+  // nothing else carries the field at all. Untouched flagged cards are sent too
+  // (rather than filtered out here) so the server is the single place that
+  // decides what persists — and the skipped count comes back from the same pass
+  // that made the decision.
+  const confirmPayload = (): CollectionSaveCard[] =>
+    cards.map((c) =>
+      isFlagged(c) && settledRows.has(c.row_index) ? { ...c, confirmed: true } : c
+    );
+
+  // "I looked at it, save it anyway." Only reachable for a flagged cell that has
+  // something to file under — see hasIdentity.
+  const keepAsIs = (rowIndex: number) => {
+    setSettledRows((prev) => new Set(prev).add(rowIndex));
+  };
 
   return (
     <section>
       <h2>Review your binder page</h2>
       <p>
-        {scan.grid.rows}×{scan.grid.cols} page · tap a card to fix it. Flags don&apos;t
-        block saving.
+        {scan.grid.rows}×{scan.grid.cols} page · tap a card to fix it. A flagged card
+        is saved only after you fix it or keep it.
       </p>
 
       {overlayOk && drawableCells.length > 0 && (
@@ -357,6 +397,10 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
           const pending = c.state === "pending_vlm";
           const price = priceText(c);
           const highlighted = highlight === c.row_index;
+          // A flagged cell the user has settled: still flagged (nothing about the
+          // card got better), but it WILL be saved, so it must not read the same
+          // as one that is about to be skipped.
+          const kept = flagged && settledRows.has(c.row_index);
           return (
             <div
               key={c.row_index}
@@ -424,9 +468,34 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
                 </em>
               ) : (
                 flagged && (
-                  <em style={{ color: "var(--danger)", fontSize: "0.8rem" }}>
-                    {REASON_TEXT[c.low_confidence_reason!] ?? "Needs review"}
-                  </em>
+                  <>
+                    <em style={{ color: "var(--danger)", fontSize: "0.8rem" }}>
+                      {REASON_TEXT[c.low_confidence_reason!] ?? "Needs review"}
+                    </em>
+                    {kept ? (
+                      <em style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                        Keeping as-is — will be saved
+                      </em>
+                    ) : hasIdentity(c) ? (
+                      // Escape hatch for a card that cannot be fixed (an unreadable
+                      // number the user can still read off the card in their hand).
+                      // stopPropagation: the whole cell opens the fix form.
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          keepAsIs(c.row_index);
+                        }}
+                        style={{ fontSize: "0.8rem", padding: "0.15rem 0.4rem" }}
+                      >
+                        Keep as is
+                      </button>
+                    ) : (
+                      <em style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                        Nothing readable — fix it to add it
+                      </em>
+                    )}
+                  </>
                 )
               )}
             </div>
@@ -440,8 +509,10 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
           onApply={(fixed) => {
             // Reuse the pack FixCardForm, but keep the binder-only fields it
             // doesn't know about (cell geometry + thumbnail) and the row_index.
-            // state "ok" + fixedRows both retire the row from the VLM poll: the
-            // user's answer is final, whatever the worker eventually says.
+            // state "ok" + settledRows both retire the row from the VLM poll: the
+            // user's answer is final, whatever the worker eventually says. The
+            // looked-up card comes back unflagged, so it saves on its own merits;
+            // settling it also covers the case where it does not.
             setCards((prev) =>
               prev.map((c) =>
                 c.row_index === fixing
@@ -455,19 +526,33 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
                   : c
               )
             );
-            setFixedRows((prev) => new Set(prev).add(fixing));
+            setSettledRows((prev) => new Set(prev).add(fixing));
             setFixing(null);
           }}
           onCancel={() => setFixing(null)}
         />
       )}
 
+      {unsettled.length > 0 && (
+        <p style={{ color: "var(--danger)", fontSize: "0.9rem", marginTop: "1rem" }}>
+          {unsettled.length} card{unsettled.length === 1 ? "" : "s"} still need
+          {unsettled.length === 1 ? "s" : ""} review and won&apos;t be saved — fix
+          {unsettled.length === 1 ? " it" : " them"}, or tap “Keep as is”.
+        </p>
+      )}
+
       <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
         <button type="button" onClick={onRetake}>
           Retake photo
         </button>
-        <button type="button" className="primary" onClick={() => onConfirm(cards)}>
-          Save to collection
+        <button
+          type="button"
+          className="primary"
+          onClick={() => onConfirm(confirmPayload())}
+        >
+          {unsettled.length > 0
+            ? `Save ${cards.length - unsettled.length} to collection`
+            : "Save to collection"}
         </button>
       </div>
     </section>

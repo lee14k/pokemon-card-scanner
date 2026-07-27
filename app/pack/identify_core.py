@@ -42,7 +42,11 @@ class IdentityResult:
     set_name: str | None
     fields: dict
     low_confidence_reason: str | None
-    identity_key: str
+    # None when the cell resolved NO identity evidence at all (no set, no
+    # numerator, no name) — there is nothing to dedup on, and two such cells are
+    # not the same card just because neither could be read. See the key's
+    # construction at the bottom of resolve_identity.
+    identity_key: str | None
     name_match_score: float | None
 
 
@@ -403,7 +407,21 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
     else:
         reason = "no_db_match"
 
-    key = f"{set_code or set_name or '?'}:{numerator or normalize_key(fields.get('name'))}"
+    # IDENTITY KEY, OR NONE — a cell with nothing to key on gets nothing.
+    # The key is a dedup handle ("is this the same card I already have?"), so it
+    # may only be built out of evidence. When the set is unresolved AND no
+    # numerator survived AND no name resolved, there is no evidence: the old
+    # fallback minted the same literal "?:unknown" for every such cell, which
+    # made two DIFFERENT unidentified cards compare EQUAL — silently merging them
+    # in live dedup (or raising a "duplicate?" prompt about two cards that have
+    # nothing in common). None means "no identity"; consumers must treat it as
+    # never-equal rather than as a key (see live_session.add_frame_result).
+    # Every other shape is byte-identical to what this line built before: a
+    # resolved name still keys on the name, and a known set with an unresolved
+    # name still keys on "<set>:unknown" (that key carries real set evidence).
+    name_key = normalize_key(fields.get("name"))
+    key = None if not (set_code or set_name or numerator or name_key) else \
+        f"{set_code or set_name or '?'}:{numerator or name_key or 'unknown'}"
     return IdentityResult(
         confident=confident, numerator=numerator, display_number=display_number,
         set_id=set_id, set_code=set_code, set_name=set_name, fields=fields,
@@ -412,5 +430,11 @@ async def resolve_identity(name_texts: list[tuple[str, float]],
 
 
 def normalize_key(name: str | None) -> str:
+    """The name in dedup-key form — EMPTY when there is no usable name.
+
+    It used to substitute the literal "unknown" for a missing name, which is why
+    a nameless, numberless, setless cell keyed as "?:unknown"; the caller now
+    decides what a missing name means in each position (nothing at all when the
+    set is unknown too, "unknown" when the set is known)."""
     from app.pack.name_index import normalize_name
-    return normalize_name(name or "unknown")
+    return normalize_name(name or "")

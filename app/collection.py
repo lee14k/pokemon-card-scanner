@@ -5,7 +5,11 @@ A binder photo is scanned (``scan_binder_page``) into PackCard-shaped cells; the
 client confirms them and POSTs them here, where each card is upserted into
 ``collection_card`` keyed by a server-derived ``identity_key`` (re-saving the
 same card bumps ``qty`` instead of duplicating the row). Auth/ownership/error
-idioms mirror ``app/pulls.py``."""
+idioms mirror ``app/pulls.py``.
+
+A cell the scanner FLAGGED is persisted only with the user's explicit go-ahead
+(``confirmed``); everything the save path refuses is counted back to the client
+rather than dropped silently — see ``save_collection``."""
 
 from __future__ import annotations
 
@@ -38,8 +42,25 @@ _MAX_UPLOAD = 15 * 1024 * 1024
 
 
 # ── Request / response models ────────────────────────────────────────────────
+class CollectionSaveCardIn(PackCard):
+    """A card the client is asking to save, plus the review verdict.
+
+    ``confirmed`` is the user's explicit "yes, save this one" for a cell the
+    scanner FLAGGED — it is set only by an action the user took in review (fixing
+    the card, or keeping it as-is). It defaults to False so an old client, which
+    sends no such field, is read as "not confirmed" and its flagged cells are
+    skipped rather than persisted: the failure mode of this guard has to be a
+    card missing from the collection, never a wrong card silently in it.
+
+    It lives on THIS model rather than on PackCard because PackCard is the shape
+    of every scan RESPONSE; adding a field there would put ``"confirmed": false``
+    into every card of every scan payload (see PackCard._drop_unset_state for the
+    same argument about ``state``)."""
+    confirmed: bool = False
+
+
 class CollectionSaveIn(BaseModel):
-    cards: list[PackCard]
+    cards: list[CollectionSaveCardIn]
 
 
 class CollectionSaveOut(BaseModel):
@@ -47,6 +68,11 @@ class CollectionSaveOut(BaseModel):
     incremented: int
     total_cards: int
     encounters: list[EncounterOut] = []
+    # Cards the server refused to persist: flagged-but-unconfirmed, or carrying no
+    # usable identity at all. New fields with defaults, so an old client that
+    # ignores them sees exactly the response it always saw.
+    skipped: int = 0
+    skipped_rows: list[int] = []
 
 
 class QtyIn(BaseModel):
@@ -97,6 +123,26 @@ def _identity_key(set_code: str | None, set_name: str | None,
     left = set_code or set_name or "?"
     right = numerator or normalize_name(name or "")
     return f"{left}:{right}"
+
+
+# Keys with no identity in them at all. They are what _identity_key produces for a
+# cell that resolved no set, no number and no usable name — and they are the SAME
+# string for every such cell, so persisting one would file two unrelated unknown
+# cards as one collection row (qty 2). "?:unknown" is the same shape arriving from
+# a client that spells its blank name out (identify_core's old fallback did).
+_DEGENERATE_KEYS = frozenset({"?:", "?:unknown"})
+
+
+def _is_flagged(card: CollectionSaveCardIn) -> bool:
+    """Did the scanner tell the user this card needs checking?
+
+    Mirrors BinderReview's own test (``needs_review ?? low_confidence_reason !==
+    null``) so the cell the user saw outlined in red is exactly the cell this
+    guard protects, and adds the two background-VLM states: a row still being
+    identified — or one whose identification gave up — is by definition not a
+    card the user vouched for."""
+    return bool(card.needs_review) or card.low_confidence_reason is not None \
+        or card.state in ("pending_vlm", "vlm_failed")
 
 
 def _tcgdex_card_id(card: PackCard, numerator: str | None) -> str | None:
@@ -200,8 +246,23 @@ async def scan_binder_followup(trainer: CurrentTrainer, scan_id: str) -> dict:
 async def save_collection(
     trainer: CurrentTrainer, body: CollectionSaveIn
 ) -> CollectionSaveOut:
-    """Upsert confirmed cards into the trainer's Collection. Re-saving a card
-    bumps its qty (ON CONFLICT (trainer_id, identity_key) DO UPDATE qty+1)."""
+    """Upsert CONFIRMED cards into the trainer's Collection. Re-saving a card
+    bumps its qty (ON CONFLICT (trainer_id, identity_key) DO UPDATE qty+1).
+
+    Two cards never reach the database:
+
+    * a FLAGGED card the user did not confirm. The scanner told the user this one
+      was uncertain; saving it anyway is how a mis-read becomes a permanent wrong
+      row in the collection, indistinguishable from a card the user checked. The
+      client marks a flagged card ``confirmed`` only when the user fixed it or
+      explicitly kept it, so "the user never touched the flag" now means "not
+      saved" rather than "saved as if confirmed".
+    * a card whose identity key would be DEGENERATE — no set, no number, no
+      usable name. That key is a constant, so the row it would create is a
+      shared bucket that a second unknown card would increment.
+
+    Both are reported back as ``skipped``/``skipped_rows`` so the client can say
+    what happened instead of silently dropping cells the user pressed save on."""
     cards = body.cards
     async with async_session_maker() as session:
         existing = set(
@@ -214,15 +275,20 @@ async def save_collection(
         )
         seen = set(existing)
         added = incremented = 0
+        saved: list[PackCard] = []
+        skipped_rows: list[int] = []
         for card in cards:
             numerator = _numerator(card.card_number)
-            # A cell with NO resolved identity at all (no set, no number, no name)
-            # carries zero information — skipping beats collapsing every such
-            # unknown into one shared "?:" row via the degenerate identity_key.
-            # The cell was visibly flagged in review; fixing it there is the path.
-            if not (card.set_code or card.set_name) and numerator is None and not card.name:
-                continue
             identity_key = _identity_key(card.set_code, card.set_name, numerator, card.name)
+            if identity_key in _DEGENERATE_KEYS:
+                # Zero information: nothing to file it under, and every such cell
+                # would file under the same thing. The cell was visibly flagged in
+                # review; fixing it there is the path.
+                skipped_rows.append(card.row_index)
+                continue
+            if _is_flagged(card) and not card.confirmed:
+                skipped_rows.append(card.row_index)
+                continue
             species = species_of(card.name) if card.name else None
             if identity_key in seen:
                 incremented += 1
@@ -253,6 +319,7 @@ async def save_collection(
                 )
             )
             await session.execute(stmt)
+            saved.append(card)
         await session.commit()
 
         total_cards = (
@@ -263,13 +330,21 @@ async def save_collection(
         ).scalar_one()
 
         try:
-            encounters = await _collection_encounters(session, trainer.id, cards)
+            # SAVED cards only. A skipped card is not in the collection, so
+            # announcing a wild encounter for it would register a Pokédex moment
+            # for a species the trainer does not own — the encounter count reads
+            # from the stored rows and would fall back to the batch count.
+            encounters = await _collection_encounters(session, trainer.id, saved)
         except Exception:  # the dex moment must never break persistence
             encounters = []
 
+    if skipped_rows:
+        log.info("collection.skipped trainer=%s n=%d rows=%s (flagged-unconfirmed "
+                 "or no identity)", trainer.id, len(skipped_rows), skipped_rows)
     return CollectionSaveOut(
         added=added, incremented=incremented,
         total_cards=int(total_cards), encounters=encounters,
+        skipped=len(skipped_rows), skipped_rows=skipped_rows,
     )
 
 

@@ -21,6 +21,10 @@ NUMBER_RE = re.compile(r"([A-Z]{0,3}\d{1,3})\s*/\s*([A-Z]{0,3}\d{1,3})")
 # ("SWSH123"), svp ("SVP001"..."SVP500") and mep ("MEP 037", the me-era set).
 # Keep in step with the promo_prefix values in app/pack/data/set_denominators.json
 # — that table is what turns a matched prefix into a set.
+# THIS LIST IS LOAD-BEARING, not a cache of the table: binder._promo_line_re
+# derives its prefix ALTERNATION from the table, but the string it rejoins is
+# parsed here, so a promo set added to the table and not to this pattern reads as
+# no number at all. Both must change together.
 PROMO_RE = re.compile(r"\b(SWSH|SVP|MEP)\s*0*(\d{1,3})\b")
 _WHITELIST = "0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ "
 _NUM_CONFIG = f"--psm 7 -c tessedit_char_whitelist={_WHITELIST}"

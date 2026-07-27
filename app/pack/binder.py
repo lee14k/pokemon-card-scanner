@@ -287,12 +287,19 @@ def _promo_line_re() -> re.Pattern | None:
     match the EMPTY prefix and turn every short token into a promo line).
 
     The prefixes are the denominator table's ``promo_prefix`` column — the same
-    rows ``_prior_denominator_ok`` turns into a set — so the project keeps ONE
-    list of promo prefixes and a new promo set becomes readable by adding its row
-    (``PROMO_RE`` in ocr.py carries the same three and says so). The middle group
-    absorbs the printed LANGUAGE CODE, which OCR glues onto the prefix as often
-    as not ("MEPEN", "MEPFR"), or a single mis-recognized glyph ("MEPB037",
-    measured on fixture page_3 cell 0)."""
+    rows ``_prior_denominator_ok`` turns into a set — rather than a second
+    hardcoded list here.
+
+    That is NOT the same as "a new promo set becomes readable by adding its row",
+    and the difference matters to whoever adds one: the rejoined string is handed
+    to ``parse_number``, whose ``PROMO_RE`` hardcodes ``SWSH|SVP|MEP``. A fourth
+    table row would be recognised as a prefix LINE here and then produce no
+    reading at all. Adding a promo set means editing both, and ``PROMO_RE``'s own
+    comment says to keep them in step.
+
+    The middle group absorbs the printed LANGUAGE CODE, which OCR glues onto the
+    prefix as often as not ("MEPEN", "MEPFR"), or a single mis-recognized glyph
+    ("MEPB037", measured on fixture page_3 cell 0)."""
     prefixes = sorted(load_denominator_table().by_promo_prefix, key=len, reverse=True)
     if not prefixes:
         return None

@@ -146,9 +146,12 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
             #     verbatim is the strong evidence; the denominator is the field
             #     this worker demonstrably fabricates (the Mega Latias ex /
             #     "130/162" -> Skitty production case). Discard the denominator,
-            #     keep the name.
+            #     keep the name — but a discarded denominator condemns the
+            #     claimed NUMERATOR with it, so display-only is the ceiling for
+            #     that card (see the selection below).
             #   * FUZZY hit: the name itself is a guess about a guess — the
             #     original veto stands and the name path is abandoned.
+            den_discarded = False
             if cands and den is not None and str(den).isdigit():
                 den_i = int(str(den))
                 with_den = [c for c in cands if c[4] == den_i]
@@ -165,6 +168,7 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
                         # sets, which is exactly how 'Mega Latias ex' (me01 x3 +
                         # mep x1) fell through to the number-first path anyway.
                         cands = [c for c in cands if c[4]] or cands
+                        den_discarded = True
                         log.info("vlm.den_discarded name=%r den=%s row=%s "
                                  "(exact name hit outweighs claimed denominator)",
                                  vlm_name, den, getattr(card, "row_index", None))
@@ -172,7 +176,17 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
                         cands = []
             m = None
             display_only = None
-            if len(cands) == 1:
+            if den_discarded:
+                # Numerator and denominator were read as ONE glyph run, so
+                # ruling the denominator fabricated condemns the numerator too:
+                # it must not be allowed to pick a printing. Left to the variant
+                # test below, a claimed "163/162" would mint an ACCEPTED me01
+                # #163 — confidence cleared, pixel corroboration skipped — off
+                # the very fabrication this branch just rejected. Display-only
+                # is the ceiling: honest name + set, still flagged, and the
+                # printed number left exactly as pass 1 read it.
+                display_only = cands[0] if len({c[0] for c in cands}) == 1 else None
+            elif len(cands) == 1:
                 m = cands[0]
             elif cands and len({c[0] for c in cands}) == 1:
                 # Same-set variants (regular vs secret print share the name):
@@ -285,8 +299,11 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
             except Exception as e:
                 log.warning("vlm.tcgdex_fallback_failed err=%r", e)
     # Pixel corroboration applies to NUMBER-claimed identities only. A
-    # name-resolved identity is anchored on the catalog name + denominator veto;
-    # its number came from the catalog, so OCR misreads must not block it.
+    # name-resolved identity took its number from the catalog, and it can only
+    # have got here on a denominator that CORROBORATED the name or never
+    # contended (absent/non-numeric/unknown official count) — a denominator this
+    # merge had to discard caps the card at display-only and never sets
+    # name_resolved. So OCR misreads must not block it.
     corroborated = True
     if ocr_texts and not name_resolved:
         corroborated = _numerator_corroborated(num, ocr_texts)

@@ -59,11 +59,19 @@ def _load():
 def _identify(model, processor, img: Image.Image, hint_set, hint_den,
               kind=None, strip_img: Image.Image | None = None) -> dict:
     content = [{"type": "image", "image": img}]
-    if strip_img is not None:
+    # The second image ships only when the prompt will actually mention it:
+    # prompts.build_prompt appends the strip sentence under `with_strip and
+    # k == "full_card"`, resolving every other/unknown kind to "strip". Gate the
+    # image on the SAME condition or the two halves desync — an unrecognized
+    # kind would get a strip prompt with two images, and the model is told the
+    # first image IS the strip. Mirrors prompts.py's resolution rule; this file
+    # cannot import _LEADS, so keep the literal in step with it.
+    with_strip = strip_img is not None and kind == "full_card"
+    if with_strip:
         content.append({"type": "image", "image": strip_img})
     content.append({"type": "text",
                     "text": build_prompt(kind, hint_set, hint_den,
-                                         with_strip=strip_img is not None)})
+                                         with_strip=with_strip)})
     messages = [{"role": "user", "content": content}]
     text = processor.apply_chat_template(messages, tokenize=False,
                                          add_generation_prompt=True)

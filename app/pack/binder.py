@@ -1108,10 +1108,20 @@ def _vlm_payload(cells: list[BinderCell], reads: list[CellRead],
         # demonstrably fabricates — while the strip at _STRIP_RETRY_LONG is the
         # geometry _retry_strip_number already proved legible. Encoded here, up
         # front, for the same reason as the card crop (see docstring).
+        #
+        # _STRIP_RETRY_LONG is a FLOOR here, not a resize. _retry_strip_number
+        # scales up AND down to it because the local OCR engine was tuned at that
+        # size and costs the same either way; the VLM is not — its upload bytes
+        # and its visual token count both scale with pixels. Real fixture strips
+        # already come off the page 1000-1350px wide, so unconditional scaling to
+        # 1400 bought ~38% more payload and ~2x the visual tokens for zero new
+        # pixel information. Narrow crops still get floored to the OCR-proven
+        # 1400; anything already above it is sent native.
         ch = r.crop.shape[0]
         strip = r.crop[max(0, int(ch * (1.0 - _NUM_STRIP))):]
-        strip_b64 = (vlm_client.jpeg_b64(_scale_long(strip, _STRIP_RETRY_LONG))
-                     if strip.size else None)
+        if strip.size and max(strip.shape[:2]) < _STRIP_RETRY_LONG:
+            strip = _scale_long(strip, _STRIP_RETRY_LONG)
+        strip_b64 = vlm_client.jpeg_b64(strip) if strip.size else None
         # kind="full_card": a binder cell crop is a whole card, never a strip.
         payload.append({"row_index": c.card.row_index, "image_b64": b64,
                         "strip_b64": strip_b64,

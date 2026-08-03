@@ -307,6 +307,14 @@ async def main(argv: list[str] | None = None) -> int:
                     help="enable INFO logging so timing.binder.* lines print")
     args = ap.parse_args(argv)
 
+    # The pins below are OCR-and-merge pins; they must not depend on whether the
+    # caller happened to have a VLM endpoint exported. They would in fact survive
+    # one — binder._finish copies the scored response dicts before the VLM
+    # follow-up is spawned, so a late worker answer can never move a pinned
+    # number — but "would survive" is not "is deterministic", and an acceptance
+    # script has no business firing billable RunPod jobs on 24 fixtures.
+    os.environ.pop("VLM_ENDPOINT", None)
+
     if not os.environ.get("DATABASE_URL"):
         _blocked("DATABASE_URL is unset")
 

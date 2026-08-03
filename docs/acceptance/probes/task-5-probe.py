@@ -427,6 +427,23 @@ def main() -> int:
         strips = [c for b in batches for c in b["cards"] if c["kind"] == "strip"]
         check(bool(full), "the binder page sent no full_card cards")
         check(bool(strips), "the pack scan sent no strip cards")
+
+        # The optional SECOND image is half of the kind contract, so it is
+        # asserted in both directions: a binder cell must carry a magnified
+        # bottom strip (the worker's prompt promises the model one), and a pack
+        # strip must NOT — that card already IS the strip, and a second copy
+        # would be paid-for tokens pointing at nothing new.
+        print(f"  binder (full_card) strip_bytes: "
+              f"{sorted({c['strip_bytes'] > 0 for c in full})} "
+              f"min={min((c['strip_bytes'] for c in full), default=0)}")
+        check(all(c["strip_bytes"] > 0 for c in full),
+              "a full_card binder cell reached the worker with no strip_b64 — "
+              "the prompt tells the model to read the number from a second "
+              "image that was never sent")
+        print(f"  pack (strip) strip_bytes: "
+              f"{sorted({c['strip_bytes'] for c in strips})}")
+        check(all(c["strip_bytes"] == 0 for c in strips),
+              "a pack strip card carried a redundant second image")
         # The synthetic page's 7 confident cells are me05 x2, me02.5 x2 and three
         # singletons — a 2-2 TIE, so the page has no dominant set and must send NO
         # hint. (Before the strict-maximum rule this shipped 'Pitch Black'/'84',

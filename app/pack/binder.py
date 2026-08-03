@@ -1048,6 +1048,13 @@ def _vlm_payload(cells: list[BinderCell], reads: list[CellRead],
     through them, whatever the decoder allocated for a multi-megapixel page) for
     the whole RunPod round trip.
 
+    Each cell also carries its magnified bottom strip as a SECOND image
+    (``strip_b64``), because the collector number — the field the worker
+    demonstrably fabricates — is only ~10px tall in the full-card crop. That
+    field is OPTIONAL on the wire: a worker built before it simply ignores it and
+    behaves exactly as today, so shipping the worker half needs the RunPod image
+    rebuilt (deploy checklist) but the two halves are independently safe.
+
     The page's modal set rides along as a HINT — the pack flow has always sent
     one and the binder sent nulls, so the worker got no context at all for
     exactly the cells that read worst. ``prior`` is the page prior ``_finish``
@@ -1096,8 +1103,28 @@ def _vlm_payload(cells: list[BinderCell], reads: list[CellRead],
             continue
         hint = prior if (prior and _prior_denominator_ok(r.reading, prior)) else None
         hinted += hint is not None
+        # The magnified bottom strip rides along as a SECOND image: the collector
+        # number is ~10px tall in the full-card crop — the field the worker
+        # demonstrably fabricates — while the strip at _STRIP_RETRY_LONG is the
+        # geometry _retry_strip_number already proved legible. Encoded here, up
+        # front, for the same reason as the card crop (see docstring).
+        #
+        # _STRIP_RETRY_LONG is a FLOOR here, not a resize. _retry_strip_number
+        # scales up AND down to it because the local OCR engine was tuned at that
+        # size and costs the same either way; the VLM is not — its upload bytes
+        # and its visual token count both scale with pixels. Real fixture strips
+        # already come off the page 1000-1350px wide, so unconditional scaling to
+        # 1400 bought ~38% more payload and ~2x the visual tokens for zero new
+        # pixel information. Narrow crops still get floored to the OCR-proven
+        # 1400; anything already above it is sent native.
+        ch = r.crop.shape[0]
+        strip = r.crop[max(0, int(ch * (1.0 - _NUM_STRIP))):]
+        if strip.size and max(strip.shape[:2]) < _STRIP_RETRY_LONG:
+            strip = _scale_long(strip, _STRIP_RETRY_LONG)
+        strip_b64 = vlm_client.jpeg_b64(strip) if strip.size else None
         # kind="full_card": a binder cell crop is a whole card, never a strip.
         payload.append({"row_index": c.card.row_index, "image_b64": b64,
+                        "strip_b64": strip_b64,
                         "hint_set": hint.set_name if hint else None,
                         "hint_denominator": hint.denominator if hint else None,
                         "kind": "full_card"})
@@ -1236,10 +1263,16 @@ async def _finish(reads: list[CellRead], rows: int, cols: int,
     rest of this page's ``timing.binder.*`` lines — it is NOT the follow-up id."""
     cells: list[BinderCell] = []
     texts_by_row: dict[int, list[str]] = {}
-    for idx, r in enumerate(reads):
+    # One thread hop for all cells: a thumb is cv2.resize + JPEG + base64 of a
+    # full-res crop — real CPU that was silently blocking the event loop once
+    # per cell, in the same request that is already OCR-bound.
+    with stage("binder", "thumbs", scan_id):
+        thumbs = await asyncio.to_thread(
+            lambda: [_thumb(r.crop) for r in reads])
+    for idx, (r, tb) in enumerate(zip(reads, thumbs)):
         texts_by_row[idx] = r.texts
         cells.append(BinderCell(cell=r.box, card=_pack_card(idx, r.res),
-                                thumb_b64=_thumb(r.crop),
+                                thumb_b64=tb,
                                 needs_vlm=not r.res.confident))
 
     # A3 — the page's own set as a prior for the cells that failed. Elected from

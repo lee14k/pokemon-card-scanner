@@ -23,8 +23,10 @@ from pydantic import BaseModel
 app = FastAPI(title="VLM stub")
 
 # One entry per runsync call: {"cards": [{row_index, kind, hint_set,
-# hint_denominator, bytes}]}. Image b64 is REPLACED by its length — a probe that
-# drives several multi-megapixel pages must not accumulate them in memory.
+# hint_denominator, bytes, strip_bytes}]}. BOTH images' b64 is REPLACED by its
+# length — a probe that drives several multi-megapixel pages must not accumulate
+# them in memory — and a length still answers the only question asked of them:
+# was the image sent at all.
 REQUESTS: list[dict] = []
 
 
@@ -40,7 +42,12 @@ async def runsync(endpoint_id: str, body: RunInput,
     REQUESTS.append({"cards": [
         {"row_index": c.get("row_index"), "kind": c.get("kind"),
          "hint_set": c.get("hint_set"), "hint_denominator": c.get("hint_denominator"),
-         "bytes": len(c.get("image_b64") or "")}
+         "bytes": len(c.get("image_b64") or ""),
+         # The optional SECOND image (a magnified bottom strip) is recorded the
+         # same length-only way, and recorded at ALL because a field the stub
+         # drops is a field no probe can assert: whether a binder cell carries
+         # one and a pack strip does not is part of the wire contract.
+         "strip_bytes": len(c.get("strip_b64") or "")}
         for c in body.input.get("cards", [])]})
     delay = float(os.environ.get("VLM_STUB_DELAY_S", "0") or 0)
     if delay > 0:

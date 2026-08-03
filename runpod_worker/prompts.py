@@ -22,6 +22,12 @@ KINDS (the app's per-card `kind` field, app/pack/vlm_client.identify):
 Anything else (including None, and a kind a future app invents) falls back to
 "strip" — the pre-existing behavior, so an old app talking to a new worker is
 byte-identical to today.
+
+A "full_card" may additionally arrive with a SECOND image, a magnified crop of
+the same card's bottom strip (``with_strip``; app/pack/binder._vlm_payload sends
+it because the collector number is ~10px tall in the full-card crop). It is
+optional in both directions: no second image ⇒ the prompt is byte-identical to
+the one-image version.
 """
 
 _STRIP_LEAD = (
@@ -51,6 +57,15 @@ _REPLY = (
 
 _LEADS = {"strip": _STRIP_LEAD, "full_card": _FULL_CARD_LEAD}
 
+# Only ever appended to a full_card lead: it names "the second image", so it is
+# a lie without one, and a "strip" card IS the strip — it has no second image to
+# point at.
+_STRIP_ATTACH = (
+    "The second image is a magnified crop of the same card's bottom strip — "
+    "read the collector number from the second image, and the name and set "
+    "from the first. "
+)
+
 # The strip hint kept its original "this pack is likely" wording verbatim: pack
 # scans are the only flow that has ever sent hints, and their accuracy is
 # measured against that exact string. A full-card hint says "this card" instead —
@@ -61,14 +76,19 @@ _HINT_LEAD = {"strip": "Context: this pack is likely ",
 
 def build_prompt(kind: str | None,
                  hint_set: str | None = None,
-                 hint_den: str | None = None) -> str:
+                 hint_den: str | None = None,
+                 with_strip: bool = False) -> str:
     """The full prompt string for one card. ``hint_set``/``hint_den`` are HINTS
     (the caller's modal-set guess) and only ever appear as trailing context —
-    never as an instruction to answer with them."""
+    never as an instruction to answer with them. ``with_strip`` says a second,
+    magnified bottom-strip image accompanies the card (binder cells; see
+    app/pack/binder._vlm_payload) — with it, the number instruction points at
+    the image the number is actually legible in."""
     k = kind if kind in _LEADS else "strip"
     hint = ""
     if hint_set or hint_den:
         hint = _HINT_LEAD[k] + \
             (f"the set '{hint_set}'. " if hint_set else "") + \
             (f"denominator {hint_den}. " if hint_den else "")
-    return _LEADS[k] + _REPLY + hint
+    attach = _STRIP_ATTACH if (with_strip and k == "full_card") else ""
+    return _LEADS[k] + attach + _REPLY + hint

@@ -130,7 +130,9 @@ def jpeg_b64(img) -> str | None:
 
 async def identify(cards: list[dict], timeout: float = 90.0) -> dict[int, dict] | None:
     """cards: [{"row_index": int, "image": bgr ndarray, "hint_set": str|None,
-    "hint_denominator": str|None, "kind": "strip"|"full_card"}]. Returns
+    "hint_denominator": str|None, "kind": "strip"|"full_card",
+    "strip_b64": str|None (optional — a magnified bottom-strip crop, already
+    ``jpeg_b64``-encoded, sent as a SECOND image; see binder._vlm_payload)}]. Returns
     {row_index: {number, denominator, set_name, confidence}} or None (disabled /
     no cards / error). Timeout is generous for serverless cold start.
 
@@ -155,13 +157,15 @@ async def identify(cards: list[dict], timeout: float = 90.0) -> dict[int, dict] 
             "row_index": c["row_index"], "image_b64": b,
             "hint_set": c.get("hint_set"), "hint_denominator": c.get("hint_denominator"),
             "kind": c.get("kind") or "strip",
+            "strip_b64": c.get("strip_b64"),
         })
     if not payload_cards:
         return None
     # Round-trip cost of the remote worker, with the request weight that drives it
     # (serverless cold start + b64 upload dominate this call). Logged in a `finally`
     # so a timeout/error records its wall time too — the slow cases matter most.
-    payload_bytes = sum(len(c["image_b64"]) for c in payload_cards)
+    payload_bytes = sum(len(c["image_b64"]) + len(c.get("strip_b64") or "")
+                        for c in payload_cards)
     t0 = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

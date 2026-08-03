@@ -4,6 +4,7 @@ start; one generate() per card.
 
 Contract (matches app/pack/vlm_client.py):
   input:  {"cards": [{"row_index": int, "image_b64": str,
+                      "strip_b64": str|null (optional),
                       "hint_set": str|null, "hint_denominator": str|null,
                       "kind": "strip"|"full_card"|null}]}
   output: {"cards": [{"row_index": int, "number": str|null,
@@ -15,6 +16,10 @@ image is a bottom strip (binder cells and live frames are whole cards). It is
 OPTIONAL in both directions: absent/unknown ⇒ "strip", today's prompt, so an old
 app driving this worker is unchanged. The prompt text itself lives in the
 dependency-free ``prompts`` module so it is reviewable/testable without a GPU.
+
+``strip_b64`` is an equally optional SECOND image: a magnified crop of the same
+card's bottom strip, sent because the collector number is ~10px tall in a
+full-card crop. Absent (an old app) ⇒ one image and today's prompt exactly.
 
 An empty ``cards`` list is a legitimate request: the app's warm-up ping
 (vlm_client.warmup) sends one to trigger the ``_load()`` below and nothing else.
@@ -52,11 +57,22 @@ def _load():
 
 
 def _identify(model, processor, img: Image.Image, hint_set, hint_den,
-              kind=None) -> dict:
-    messages = [{"role": "user", "content": [
-        {"type": "image", "image": img},
-        {"type": "text", "text": build_prompt(kind, hint_set, hint_den)},
-    ]}]
+              kind=None, strip_img: Image.Image | None = None) -> dict:
+    content = [{"type": "image", "image": img}]
+    # The second image ships only when the prompt will actually mention it:
+    # prompts.build_prompt appends the strip sentence under `with_strip and
+    # k == "full_card"`, resolving every other/unknown kind to "strip". Gate the
+    # image on the SAME condition or the two halves desync — an unrecognized
+    # kind would get a strip prompt with two images, and the model is told the
+    # first image IS the strip. Mirrors prompts.py's resolution rule; this file
+    # cannot import _LEADS, so keep the literal in step with it.
+    with_strip = strip_img is not None and kind == "full_card"
+    if with_strip:
+        content.append({"type": "image", "image": strip_img})
+    content.append({"type": "text",
+                    "text": build_prompt(kind, hint_set, hint_den,
+                                         with_strip=with_strip)})
+    messages = [{"role": "user", "content": content}]
     text = processor.apply_chat_template(messages, tokenize=False,
                                          add_generation_prompt=True)
     from qwen_vl_utils import process_vision_info
@@ -98,8 +114,15 @@ def handler(job):
         t_card = time.perf_counter()
         try:
             img = Image.open(io.BytesIO(base64.b64decode(c["image_b64"]))).convert("RGB")
+            strip_img = None
+            if c.get("strip_b64"):
+                try:
+                    strip_img = Image.open(
+                        io.BytesIO(base64.b64decode(c["strip_b64"]))).convert("RGB")
+                except Exception:
+                    strip_img = None   # a corrupt assist must not cost the card
             res = _identify(model, processor, img, c.get("hint_set"),
-                            c.get("hint_denominator"), c.get("kind"))
+                            c.get("hint_denominator"), c.get("kind"), strip_img)
         except Exception as e:  # one bad card never fails the batch
             res = {"number": None, "denominator": None, "set_name": None,
                    "name": None, "confidence": 0.0, "error": str(e)}

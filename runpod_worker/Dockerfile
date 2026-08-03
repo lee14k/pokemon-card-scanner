@@ -16,6 +16,10 @@
 #      VLM_API_KEY=<runpod-api-key>
 #   The model (~16GB) downloads from HuggingFace on first cold start and is
 #   cached on the worker volume thereafter. Set VLM_MODEL to override.
+#   An app that sends `strip_b64` (the magnified bottom-strip second image) gets
+#   NO benefit from it until this image is rebuilt and the endpoint repointed —
+#   a worker running an older image ignores the unknown field, safely and
+#   silently, so the only symptom is unchanged accuracy.
 FROM runpod/base:0.6.2-cuda12.1.0
 
 # torch + torchvision must be installed together from the cu121 index —

@@ -1048,6 +1048,13 @@ def _vlm_payload(cells: list[BinderCell], reads: list[CellRead],
     through them, whatever the decoder allocated for a multi-megapixel page) for
     the whole RunPod round trip.
 
+    Each cell also carries its magnified bottom strip as a SECOND image
+    (``strip_b64``), because the collector number — the field the worker
+    demonstrably fabricates — is only ~10px tall in the full-card crop. That
+    field is OPTIONAL on the wire: a worker built before it simply ignores it and
+    behaves exactly as today, so shipping the worker half needs the RunPod image
+    rebuilt (deploy checklist) but the two halves are independently safe.
+
     The page's modal set rides along as a HINT — the pack flow has always sent
     one and the binder sent nulls, so the worker got no context at all for
     exactly the cells that read worst. ``prior`` is the page prior ``_finish``
@@ -1096,8 +1103,18 @@ def _vlm_payload(cells: list[BinderCell], reads: list[CellRead],
             continue
         hint = prior if (prior and _prior_denominator_ok(r.reading, prior)) else None
         hinted += hint is not None
+        # The magnified bottom strip rides along as a SECOND image: the collector
+        # number is ~10px tall in the full-card crop — the field the worker
+        # demonstrably fabricates — while the strip at _STRIP_RETRY_LONG is the
+        # geometry _retry_strip_number already proved legible. Encoded here, up
+        # front, for the same reason as the card crop (see docstring).
+        ch = r.crop.shape[0]
+        strip = r.crop[max(0, int(ch * (1.0 - _NUM_STRIP))):]
+        strip_b64 = (vlm_client.jpeg_b64(_scale_long(strip, _STRIP_RETRY_LONG))
+                     if strip.size else None)
         # kind="full_card": a binder cell crop is a whole card, never a strip.
         payload.append({"row_index": c.card.row_index, "image_b64": b64,
+                        "strip_b64": strip_b64,
                         "hint_set": hint.set_name if hint else None,
                         "hint_denominator": hint.denominator if hint else None,
                         "kind": "full_card"})

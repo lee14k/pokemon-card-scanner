@@ -3,8 +3,9 @@
 One-shot regression and measurement scripts for behaviour the pytest suite
 deliberately does not cover. The suite stays small and VLM-free (7 passed /
 1 skipped) and `binder_gate.py` scores accuracy on committed fixtures; these
-probes cover everything in between — the VLM follow-up path, the binder page
-prior, the OCR gate, the name-index caches and the collection save guard.
+probes cover everything in between — the VLM follow-up path and merge guards,
+the binder page prior, the OCR gate, the name-index caches and the collection
+save guard.
 
 Each probe is a script, not a test: it prints its evidence and **exits 0 only
 when every assertion held**. Several print measurements alongside the
@@ -139,3 +140,17 @@ processes, because the app's async engine binds to the first event loop that
 uses it; those names also work as direct subcommands. `save` creates a trainer
 row and deletes it at the end, taking the collection rows with it via
 `ON DELETE CASCADE`.
+
+### `vlm-merge-name-first-probe.py` — the merge never displays what it rejected
+
+No subcommands; calls `apply_vlm_answer` directly against the local catalog, so
+it needs no VLM and no HTTP. Covers the polarity of the denominator veto (an
+exact name hit outranks a contradicting denominator, a fuzzy one does not), the
+display-only branch being terminal for identity fields, and the rollback of a
+number-first merge whose name cross-check fails. Exits 2 = BLOCKED when the
+catalog DB is unreachable or `me01` is not ingested.
+
+Case 2 deliberately uses denominator 132 rather than the production 162: with
+no `POKEWALLET_API_KEY` and no `tcgdex_id` on Temporal Forces, 162 resolves a
+set but never a name, so the cross-check has nothing to compare and the
+rollback would go unexercised.

@@ -98,8 +98,10 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
     in which case it also clears needs_review/low_confidence_reason and raises
     confidence. Otherwise it returns False WITHOUT touching needs_review: the
     best-effort number/set/name is still merged for review display, but the card
-    stays flagged. A missing or number-less answer is a no-op returning False, so
-    the card keeps its Phase-1 identity.
+    stays flagged — EXCEPT when the name cross-check refuses a number-first
+    identity, which is rolled all the way back, because a self-contradictory
+    identity is worse than none. A missing or number-less answer is a no-op
+    returning False, so the card keeps its Phase-1 identity.
 
     ``ocr_texts`` is the cell/card's own OCR'd lines (uppercase). When None (a
     caller that can't supply it) the corroboration check is skipped — behavior is
@@ -115,9 +117,14 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
     # large printed NAME near-verbatim but fabricates the tiny gold collector
     # number ('Mega Latias ex' claimed with a number resolving to Skitty). So when
     # the worker supplies a name, identity comes from OUR name index — the VLM
-    # denominator narrows, the same denominator-contradiction veto as the local
-    # ladder guards it, and the CATALOG supplies the true number. The number-first
+    # denominator narrows, and the CATALOG supplies the true number. The number-first
     # path below remains for nameless (older-worker) answers.
+    #
+    # When the two claims contradict each other the merge keeps the one this
+    # worker does not fabricate: an EXACT normalized-key name hit outranks the
+    # claimed denominator (see the polarity rule at the filter below), and a
+    # number-first identity that the name cross-check later refuses is rolled
+    # back rather than displayed.
     name_resolved = False
     name_display_only = False
     if vlm_name:
@@ -126,20 +133,43 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
             # Candidates for the claimed name: exact normalized key first, fuzzy
             # (unambiguous only) as fallback for near-miss reads.
             cands = list(idx._entries.get(normalize_name(vlm_name)) or [])
+            exact_hit = bool(cands)
             if not cands:
                 fz = idx.match(vlm_name, denominator=str(den) if den else None)
                 if fz is not None and not fz.ambiguous:
                     cands = list(idx._entries.get(normalize_name(fz.card_name)) or [])
-            # Denominator filter/veto: keep candidates whose set official count
-            # matches the claimed denominator; if it contradicts EVERY candidate
-            # the name hit is garbage-adjacent — drop the name path entirely.
+            # Denominator filter — with a POLARITY rule. Keep candidates whose set
+            # official count matches the claimed denominator; when the claimed
+            # denominator contradicts EVERY candidate, one of the two claims is
+            # fabricated, and which one depends on how the name was hit:
+            #   * EXACT normalized-key hit: a multi-token printed name read
+            #     verbatim is the strong evidence; the denominator is the field
+            #     this worker demonstrably fabricates (the Mega Latias ex /
+            #     "130/162" -> Skitty production case). Discard the denominator,
+            #     keep the name.
+            #   * FUZZY hit: the name itself is a guess about a guess — the
+            #     original veto stands and the name path is abandoned.
             if cands and den is not None and str(den).isdigit():
                 den_i = int(str(den))
                 with_den = [c for c in cands if c[4] == den_i]
                 if with_den:
                     cands = with_den
                 elif all(c[4] is not None and c[4] != den_i for c in cands):
-                    cands = []
+                    if exact_hit:
+                        # Discarding the denominator also discards the printings
+                        # it was the only thing keeping in play: a Black Star
+                        # promo set prints no count at all (official 0, no
+                        # denominators in the table), so it can neither
+                        # corroborate nor contradict the claim — and leaving it
+                        # in splits the same-set variant test below across two
+                        # sets, which is exactly how 'Mega Latias ex' (me01 x3 +
+                        # mep x1) fell through to the number-first path anyway.
+                        cands = [c for c in cands if c[4]] or cands
+                        log.info("vlm.den_discarded name=%r den=%s row=%s "
+                                 "(exact name hit outweighs claimed denominator)",
+                                 vlm_name, den, getattr(card, "row_index", None))
+                    else:
+                        cands = []
             m = None
             display_only = None
             if len(cands) == 1:
@@ -193,12 +223,23 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
         except Exception as e:
             log.warning("vlm.name_first_failed err=%r", e)
 
+    # Number-first merges are provisional: if the worker ALSO read a printed
+    # name and that name disagrees with the card the number resolves to, the
+    # merge is self-contradictory — displaying it anyway is how a flagged cell
+    # showed "Skitty" over a Mega Latias ex. Snapshot here; the cross-check
+    # below decides whether the writes stand.
+    before = card.model_copy() if not name_resolved else None
+
+    # Everything from here to the re-lookup is number-keyed, so a display-only
+    # name hit is TERMINAL for identity fields: its name/set came from the name
+    # index and the claimed number is the field under suspicion.
     if not name_resolved:
         if not num:
             return False
-        card.card_number = f"{num}/{den}" if den else num
+        if not name_display_only:
+            card.card_number = f"{num}/{den}" if den else num
     set_id = card.set_id
-    if not name_resolved and ans.get("set_name"):
+    if not name_resolved and not name_display_only and ans.get("set_name"):
         sn = str(ans["set_name"]).casefold()
         match = next((s for s in table.sets if s.set_name.casefold() == sn), None) or \
             next((s for s in table.sets
@@ -210,13 +251,14 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
     # The VLM can't name sets released after its training cutoff (set_name=null),
     # so fall back to a unique denominator to pin the set. Keys are stored stripped.
     # (Never overrides a name-resolved identity — the claimed den may be fabricated.)
-    if not name_resolved and (set_id is None or card.set_name is None) and den is not None:
+    if not name_resolved and not name_display_only \
+            and (set_id is None or card.set_name is None) and den is not None:
         entries = table.by_denominator.get(str(den).lstrip("0") or "0", ())
         if len(entries) == 1:
             e = entries[0]
             card.set_id, card.set_code, card.set_name = e.set_id, e.set_code, e.set_name
             set_id = e.set_id
-    if set_id and num.isdigit():
+    if set_id and num.isdigit() and not name_display_only:
         try:
             m = await cached_lookup_card(set_id, num, api_key=get_api_key())
             if m:
@@ -262,6 +304,18 @@ async def apply_vlm_answer(card: PackCard, ans: dict, table: DenominatorTable,
         if not name_ok:
             log.info("vlm.name_mismatch vlm=%r catalog=%r row=%s (kept flagged)",
                      vlm_name, card.name, getattr(card, "row_index", None))
+
+    # A refused number-first identity leaves no fingerprints. Name-resolved
+    # merges take no snapshot at all, and a display-only merge is cross-checking
+    # a name against the catalog name that name itself selected — so the only
+    # writes this can undo are the number-keyed ones.
+    if before is not None and not name_ok:
+        for f in type(card).model_fields:
+            setattr(card, f, getattr(before, f))
+        log.info("vlm.merge_rolled_back vlm=%r row=%s (number-first identity "
+                 "contradicted the worker's own name read)",
+                 vlm_name, getattr(card, "row_index", None))
+        return False
 
     if float(ans.get("confidence") or 0) >= VLM_ACCEPT \
             and (card.set_id is not None or (name_resolved and card.set_code)) \

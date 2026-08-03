@@ -1253,10 +1253,16 @@ async def _finish(reads: list[CellRead], rows: int, cols: int,
     rest of this page's ``timing.binder.*`` lines — it is NOT the follow-up id."""
     cells: list[BinderCell] = []
     texts_by_row: dict[int, list[str]] = {}
-    for idx, r in enumerate(reads):
+    # One thread hop for all cells: a thumb is cv2.resize + JPEG + base64 of a
+    # full-res crop — real CPU that was silently blocking the event loop once
+    # per cell, in the same request that is already OCR-bound.
+    with stage("binder", "thumbs", scan_id):
+        thumbs = await asyncio.to_thread(
+            lambda: [_thumb(r.crop) for r in reads])
+    for idx, (r, tb) in enumerate(zip(reads, thumbs)):
         texts_by_row[idx] = r.texts
         cells.append(BinderCell(cell=r.box, card=_pack_card(idx, r.res),
-                                thumb_b64=_thumb(r.crop),
+                                thumb_b64=tb,
                                 needs_vlm=not r.res.confident))
 
     # A3 — the page's own set as a prior for the cells that failed. Elected from

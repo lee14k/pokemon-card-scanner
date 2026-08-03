@@ -28,6 +28,9 @@ Gate (non-zero exit):
   * a real page's cell count != its truth card count,
   * a real page's NUMDIFF count ABOVE its pinned baseline (a decrease is an
     improvement — it is printed and passes),
+  * a real page's MISDISPLAY count — flagged cells displaying a name that is on
+    no truth entry for that page — ABOVE its pinned baseline (same ratchet; see
+    ``MISDISPLAY_BASELINE``),
   * synthetic confident-correct < 7 of 9.
 
 Exit codes: 0 = PASS, 1 = gate failure, 2 = BLOCKED (env/DB not usable — a
@@ -84,6 +87,41 @@ NUMDIFF_BASELINE: dict[str, int] = {
     "page_5.jpeg": 0,
 }
 _NUMDIFF_DEFAULT = 0         # a page with no pin must have zero numdiffs
+
+# Pinned per-page MISDISPLAY baseline: a FLAGGED cell whose displayed name is not
+# on the page at all. A flagged cell is allowed to be uncertain — it is NOT
+# allowed to advertise a card that isn't there (production case: a flagged cell
+# displaying "Skitty" over a Mega Latias ex after a VLM merge its own guards had
+# rejected). A displayed name of None/"" is fine — honest uncertainty. Ratcheted
+# exactly like NUMDIFF_BASELINE; no pin means zero.
+#
+# Baseline measured 2026-08-03. This gate runs VLM-LESS, so everything pinned here is
+# a PASS-1 misdisplay — a fuzzy name match that lost, on a cell that then flagged
+# itself. Fixing the VLM merge did not and cannot reach these; they arrive by the
+# other route.
+#
+# The worst of them is page_2 cell 2, which displays "Pikachu on the Ball" over the
+# truth's "Hearthflame Mask Ogerpon ex 148/131": the printed number is RIGHT and the
+# card is unrelated — pass 1 picked a name that shares a numerator across sets, then
+# flagged only `set_ambiguous`. That is the same user-visible defect as the Skitty
+# case above, so it is pinned as debt, not blessed as correct.
+#
+# The other three are near-miss variants — the right Pokémon, the wrong printing:
+# page_1 cell 0 "Hydreigon" for Hydreigon ex, page_1 cell 3 "Greninja ☆" for Mega
+# Greninja ex, page_4 cell 7 "Wooloo" for Hop's Wooloo. Distinct catalog cards, so
+# they count; milder, so they are not split into their own bucket — one bucket, one
+# ratchet, and the pins carry the difference visibly.
+#
+# WHEN YOU IMPROVE THE SCANNER: lower the pin to the new count in the same commit.
+# The gate prints the exact line to change.
+MISDISPLAY_BASELINE: dict[str, int] = {
+    "page_1.jpeg": 2,
+    "page_2.jpeg": 1,
+    "page_3.jpeg": 0,
+    "page_4.jpeg": 1,
+    "page_5.jpeg": 0,
+}
+_MISDISPLAY_DEFAULT = 0      # a page with no pin must have zero misdisplays
 
 EXIT_PASS, EXIT_FAIL, EXIT_BLOCKED = 0, 1, 2
 
@@ -168,8 +206,8 @@ def _real_key(card: dict) -> tuple:
     return (normalize_name(card.get("name") or ""), _numerator(card.get("card_number")))
 
 
-def _score_real(cards: list[dict], page_truth: dict) -> tuple[int, int, int, int, list[str]]:
-    """Real pages -> (correct, numdiff, wrong, flagged, report lines).
+def _score_real(cards: list[dict], page_truth: dict) -> tuple[int, int, int, int, int, list[str]]:
+    """Real pages -> (correct, numdiff, wrong, flagged, misdisplay, report lines).
 
     On a real page the NAME is the identity — that is what the truth file asserts
     ("every listed card identified-or-flagged, ZERO confident-wrong") — so the
@@ -187,15 +225,25 @@ def _score_real(cards: list[dict], page_truth: dict) -> tuple[int, int, int, int
       WRONG    the cell confidently names a card that is not on the page at all.
                This is the gate: a confident-wrong identity is the one failure the
                binder flow must never produce.
+
+    A flagged cell is not scored against the truth multiset — it asked for review,
+    so it consumes nothing — but the name it DISPLAYS is still checked: a flagged
+    cell showing a name absent from the page is a MISDISPLAY, counted separately
+    and ratcheted against ``MISDISPLAY_BASELINE``.
     """
+    truth_names = {e[0] for e in _real_keys(page_truth)}
     remaining = _real_keys(page_truth)
-    correct = numdiff = wrong = flagged = 0
+    correct = numdiff = wrong = flagged = misdisplay = 0
     lines: list[str] = []
     for c in cards:
         got_name, got_num = _real_key(c)
         if c.get("needs_review"):
             flagged += 1
-            verdict = "flagged"
+            if got_name and got_name not in truth_names:
+                misdisplay += 1
+                verdict = "flagged(MISDISPLAY)"
+            else:
+                verdict = "flagged"
         else:
             # Prefer a truth entry that agrees on the number; fall back to a
             # name-only hit so the same entry can't be scored twice.
@@ -219,7 +267,7 @@ def _score_real(cards: list[dict], page_truth: dict) -> tuple[int, int, int, int
         )
     if remaining:
         lines.append(f"    truth entries not confidently identified: {remaining}")
-    return correct, numdiff, wrong, flagged, lines
+    return correct, numdiff, wrong, flagged, misdisplay, lines
 
 
 # ── runner ───────────────────────────────────────────────────────────────────
@@ -298,6 +346,7 @@ async def main(argv: list[str] | None = None) -> int:
     improvements: list[str] = []
     summaries: list[str] = []
     tot_correct = tot_numdiff = tot_pin = tot_wrong = tot_flagged = 0
+    tot_misdisplay = tot_mpin = 0
     tot_ms = 0.0
 
     for name, path, kind in fixtures:
@@ -318,13 +367,17 @@ async def main(argv: list[str] | None = None) -> int:
             correct, wrong, flagged, lines = _score(
                 cards, _synthetic_keys(synth_truth), _synthetic_key)
             numdiff, pin = 0, None
+            # Synthetic truth carries no names, so "displays a name that is not on
+            # the page" is not a question this fixture can answer.
+            misdisplay, mpin = 0, None
             page_fail = [] if correct >= SYNTH_MIN_CORRECT else [
                 f"{name}: confident-correct {correct}/{expected_n} "
                 f"< required {SYNTH_MIN_CORRECT}"]
         else:
             page_truth = real_truth[name]
             expected_n = len(page_truth["cards"])
-            correct, numdiff, wrong, flagged, lines = _score_real(cards, page_truth)
+            correct, numdiff, wrong, flagged, misdisplay, lines = _score_real(
+                cards, page_truth)
             page_fail = []
             if wrong:
                 page_fail.append(f"{name}: {wrong} confident-WRONG cell(s)")
@@ -341,6 +394,17 @@ async def main(argv: list[str] | None = None) -> int:
                 improvements.append(
                     f"{name}: numdiff {pin} -> {numdiff}; lower its pin in "
                     f"NUMDIFF_BASELINE (docs/acceptance/binder_gate.py)")
+            # And the same ratchet over what flagged cells DISPLAY (MISDISPLAY_BASELINE).
+            mpin = MISDISPLAY_BASELINE.get(name, _MISDISPLAY_DEFAULT)
+            if misdisplay > mpin:
+                page_fail.append(
+                    f"{name}: {misdisplay} flagged cell(s) DISPLAY a card that is "
+                    f"not on the page (pin {mpin}) — a flagged row must not "
+                    f"advertise a wrong identity")
+            elif misdisplay < mpin:
+                improvements.append(
+                    f"{name}: misdisplay {mpin} -> {misdisplay}; lower its pin in "
+                    f"MISDISPLAY_BASELINE (docs/acceptance/binder_gate.py)")
 
         print(f"  grid={grid['rows']}x{grid['cols']} cells={len(cards)}/{expected_n} "
               f"page_conf={res['page_confidence']:.3f} wall={wall_ms:.0f}ms")
@@ -352,23 +416,33 @@ async def main(argv: list[str] | None = None) -> int:
         tot_pin += pin or 0
         tot_wrong += wrong
         tot_flagged += flagged
+        tot_misdisplay += misdisplay
+        tot_mpin += mpin or 0
         summaries.append(
             f"{'PASS' if not page_fail else 'FAIL'} {name:18s} "
             f"cells={len(cards)}/{expected_n} correct={correct} "
             f"numdiff={numdiff}/{'-' if pin is None else pin} "
-            f"wrong={wrong} flagged={flagged} wall={wall_ms:8.0f}ms")
+            f"wrong={wrong} flagged={flagged} "
+            f"misdisplay={misdisplay}/{'-' if mpin is None else mpin} "
+            f"wall={wall_ms:8.0f}ms")
 
     print("\n=== summary ===")
     print("  (numdiff=<found>/<pinned baseline>; above the pin fails, below improves)")
+    print("  (misdisplay=<found>/<pin>: flagged cells displaying a name not on the page)")
     for s in summaries:
         print("  " + s)
     print(f"  TOTAL correct={tot_correct} numdiff={tot_numdiff}/{tot_pin} "
-          f"confident-wrong={tot_wrong} flagged={tot_flagged} wall={tot_ms:.0f}ms "
+          f"confident-wrong={tot_wrong} flagged={tot_flagged} "
+          f"misdisplay={tot_misdisplay}/{tot_mpin} wall={tot_ms:.0f}ms "
           f"({tot_ms / max(1, len(fixtures)):.0f}ms/page avg)")
     if tot_numdiff:
         print(f"  NOTE {tot_numdiff} numdiff cell(s) at/below the pinned baseline: "
               f"right card, wrong printed numerator — a tracked defect held flat by "
               f"the ratchet, not yet fixed.")
+    if tot_misdisplay:
+        print(f"  NOTE {tot_misdisplay} misdisplay cell(s) at/below the pinned "
+              f"baseline: a flagged cell advertising a card that is not on the page "
+              f"— tracked debt held flat by the ratchet, not yet fixed.")
     if improvements:
         print("\nIMPROVED (passes — pin is now stale):")
         for i in improvements:

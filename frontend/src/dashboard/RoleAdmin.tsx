@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { adminTrainers, setTrainerRole, type AdminTrainer } from "../api";
+import { SectionTitle } from "../ui/kit";
 
 export default function RoleAdmin() {
   const [q, setQ] = useState("");
@@ -8,20 +9,21 @@ export default function RoleAdmin() {
   const change = async (id: string, role: string) => { await setTrainerRole(id, role); search(); };
 
   return (
-    <div>
-      <h3>Trainer roles</h3>
-      <input value={q} placeholder="email or handle" onChange={(e) => setQ(e.target.value)} />
-      <button type="button" onClick={search}>Search</button>
-      <ul className="card-rows">
+    <div className="stack">
+      <SectionTitle>Trainer roles</SectionTitle>
+      <form className="row" onSubmit={(e) => { e.preventDefault(); void search(); }}>
+        <input className="grow" style={{ width: "auto" }} value={q} placeholder="email or handle" onChange={(e) => setQ(e.target.value)} />
+        <button type="submit">Search</button>
+      </form>
+      <ul className="dash-list">
         {rows.map((t) => (
-          <li key={t.id} className="card-row">
-            <div className="card-row-body">
-              <strong>@{t.handle}</strong><span>{t.email} · {t.role}</span>
-              <div className="card-row-flag">
-                {["trainer", "analyst", "admin"].map((r) => (
-                  <button key={r} type="button" disabled={r === t.role} onClick={() => change(t.id, r)}>{r}</button>
-                ))}
-              </div>
+          <li key={t.id} className="panel stack" style={{ gap: 6 }}>
+            <strong>@{t.handle}</strong>
+            <span className="small-text muted">{t.email} · {t.role}</span>
+            <div className="segmented">
+              {["trainer", "analyst", "admin"].map((r) => (
+                <button key={r} type="button" className="small" aria-pressed={r === t.role} disabled={r === t.role} onClick={() => change(t.id, r)}>{r}</button>
+              ))}
             </div>
           </li>
         ))}

@@ -17,13 +17,13 @@ interface Template { set_id: string; set_code: string | null; set_name: string; 
 export default function TrainingData() {
   const [view, setView] = useState<"pools" | "refs" | "synth" | "eval">("pools");
   return (
-    <section>
-      <h3>Training Data</h3>
-      <nav className="app-header">
-        <button type="button" onClick={() => setView("pools")}>Intake &amp; Pools</button>
-        <button type="button" onClick={() => setView("refs")}>References</button>
-        <button type="button" onClick={() => setView("synth")}>Synthetic</button>
-        <button type="button" onClick={() => setView("eval")}>Eval</button>
+    <section className="stack">
+      <h3 className="section-title">Training data</h3>
+      <nav className="segmented">
+        <button type="button" className="small" aria-pressed={view === "pools"} onClick={() => setView("pools")}>Intake &amp; Pools</button>
+        <button type="button" className="small" aria-pressed={view === "refs"} onClick={() => setView("refs")}>References</button>
+        <button type="button" className="small" aria-pressed={view === "synth"} onClick={() => setView("synth")}>Synthetic</button>
+        <button type="button" className="small" aria-pressed={view === "eval"} onClick={() => setView("eval")}>Eval</button>
       </nav>
       {view === "pools" && <Pools />}
       {view === "refs" && <References />}
@@ -106,7 +106,7 @@ function Pools() {
 
   return (
     <div>
-      <div className="auth-form">
+      <div className="form">
         <label>Photo (any card count)
           <input type="file" accept="image/*,.heic" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         </label>
@@ -137,7 +137,7 @@ function Pools() {
         </p>
       )}
       {labelTarget && (
-        <div className="auth-form">
+        <div className="form">
           <strong>Labels for {labelTarget.photo_id.slice(0, 8)}…</strong>
           <textarea rows={8} value={labelJson} onChange={(e) => setLabelJson(e.target.value)}
                     style={{ width: "100%", maxWidth: "100%", boxSizing: "border-box",

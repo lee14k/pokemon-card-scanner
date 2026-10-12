@@ -1,0 +1,67 @@
+{
+  "expo": {
+    "name": "Pack Scanner",
+    "slug": "pack-scanner",
+    "scheme": "packscanner",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#14102b",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.packscanner.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Pack Scanner uses the camera to photograph and identify your cards.",
+        "NSPhotoLibraryUsageDescription": "Pack Scanner lets you pick an existing photo of your cards to scan."
+      }
+    },
+    "android": {
+      "package": "com.packscanner.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#14102b",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "backgroundColor": "#14102b"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Pack Scanner uses the camera to photograph and identify your cards.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Pack Scanner lets you pick an existing photo of your cards to scan.",
+          "cameraPermission": "Pack Scanner uses the camera to photograph and identify your cards.",
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

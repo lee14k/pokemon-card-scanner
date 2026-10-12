@@ -15,6 +15,8 @@ import {
   type CodeCardResult,
 } from "../api";
 import LiveCapture from "./LiveCapture";
+import { priceRange } from "@shared/format";
+import { Loader, LoadingScreen, ScreenTitle, SectionTitle, Toast } from "../ui/kit";
 
 // frontend/src/capture/LiveScanScreen.tsx — owns the live-scan session + tray.
 // One card at a time: LiveCapture fires a (card, strip, secondBest) triple per
@@ -586,11 +588,15 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
 
   return (
     <section className="live-scan">
-      <h2>Live scan</h2>
+      <ScreenTitle
+        kicker="Live scan"
+        title="Show me your cards"
+        sub="Hold one card at a time inside the box. Auto-fire grabs it once it's steady and sharp."
+      />
       <p className="sr-only" aria-live="polite">{announcement}</p>
-      {toast && <p className="live-toast" role="status">{toast}</p>}
+      <Toast message={toast} />
 
-      {phase === "init" && <p className="status">Starting camera session…</p>}
+      {phase === "init" && <LoadingScreen label="Starting camera session…" />}
 
       {phase !== "init" && sessionId && (
         <>
@@ -605,36 +611,40 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
             </p>
           )}
 
-          <div className="live-toolbar">
+          <div className="panel tight live-toolbar">
             <label>
               <input
                 type="checkbox"
                 checked={autoFire}
                 onChange={(e) => setAutoFire(e.target.checked)}
-              />{" "}
+              />
               Auto-fire
             </label>
             <span className="live-count">
-              {cardCount} card{cardCount === 1 ? "" : "s"} · {codeCard ? "code ✓" : "no code yet"}
+              <span className="badge gold">{cardCount} card{cardCount === 1 ? "" : "s"}</span>
+              {codeCard ? <span className="badge green">Code ✓</span> : <span className="badge outline">No code yet</span>}
             </span>
           </div>
 
           {phase === "code_choice" && (
-            <div className="warn-banner code-choice">
-              <p>Scan code card (needed to battle &amp; count in stats)</p>
-              <div className="code-choice-actions">
+            <div className="panel warn stack">
+              <p>
+                <strong>Scan the code card too?</strong> It's needed to battle and to count in stats.
+              </p>
+              <div className="row">
                 <button type="button" className="primary" onClick={() => setPhase("scanning")}>
                   Keep scanning
                 </button>
                 <button type="button" onClick={() => void doFinish()}>
-                  Save anyway — this pull can&apos;t battle
+                  Save anyway — no battles
                 </button>
               </div>
             </div>
           )}
 
+          {tray.length > 0 && <SectionTitle>Caught this session</SectionTitle>}
           <ul className="card-rows live-tray">
-            {tray.map((chip) => (
+            {[...tray].reverse().map((chip) => (
               <ChipRow
                 key={chip.clientId}
                 chip={chip}
@@ -644,7 +654,8 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
             ))}
           </ul>
 
-          <div className="camera-actions">
+          <div className="sticky-actions">
+            <button type="button" onClick={handleCancel}>Cancel</button>
             <button
               type="button"
               className="primary"
@@ -653,12 +664,11 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
             >
               Finish scanning
             </button>
-            <button type="button" onClick={handleCancel}>Cancel</button>
           </div>
         </>
       )}
 
-      {phase === "finishing" && <p className="status">Building your pull…</p>}
+      {phase === "finishing" && <LoadingScreen label="Building your pull…" />}
     </section>
   );
 }
@@ -666,30 +676,35 @@ export default function LiveScanScreen({ onDone, onCancel }: Props) {
 function ChipRow({ chip, onAdd, onIgnore }: { chip: TrayChip; onAdd: () => void; onIgnore: () => void }) {
   const row = chip.row;
   const isDup = chip.state === "dup_prompt";
+  const price = priceRange(row?.price_usd_low, row?.price_usd_high);
   return (
-    <li className={`card-row live-chip${isDup ? " flagged" : ""}`}>
+    <li className={`card-row live-chip${isDup ? " flagged" : ""}${chip.state === "pending_vlm" || chip.state === "capturing" ? " pending" : ""}`}>
       <img src={chip.thumbUrl} alt={row?.name ?? "captured card"} className="card-thumb" />
       <div className="card-row-body">
         {chip.state === "capturing" ? (
           <span className="live-chip-status">
-            <span className="spinner" /> Reading…
+            <Loader small /> Reading…
           </span>
         ) : (
           <>
-            <strong>{row?.name ?? (chip.state === "pending_vlm" ? "Identifying…" : "Unknown card")}</strong>
-            <span>
+            <span className="card-name">
+              {row?.name ?? (chip.state === "pending_vlm" ? "Identifying…" : "Unknown card")}
+            </span>
+            <span className="card-meta">
               {row?.card_number ?? "—"} · {row?.set_name ?? "Unknown set"}
-              {chip.state === "pending_vlm" && " · ❓"}
-              {chip.state === "vlm_failed" && " · needs review"}
-              {row?.price_usd_low != null && ` · $${row.price_usd_low.toFixed(2)}`}
+            </span>
+            <span className="row" style={{ gap: 6 }}>
+              {price && <span className="price">{price}</span>}
+              {chip.state === "pending_vlm" && <span className="badge cyan">Identifying</span>}
+              {chip.state === "vlm_failed" && <span className="badge red">Needs review</span>}
             </span>
           </>
         )}
         {isDup && row && (
           <div className="card-row-flag">
-            <em>Another copy of {row.name ?? "this card"}?</em>
-            <button type="button" onClick={onAdd}>Add</button>
-            <button type="button" onClick={onIgnore}>Ignore</button>
+            <span className="reason">Another copy of {row.name ?? "this card"}?</span>
+            <button type="button" className="small" onClick={onAdd}>Add</button>
+            <button type="button" className="small ghost" onClick={onIgnore}>Ignore</button>
           </div>
         )}
       </div>

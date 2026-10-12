@@ -1,4 +1,5 @@
 import CameraCapture from "./CameraCapture";
+import { ScreenTitle } from "../ui/kit";
 
 interface Props {
   onDone: (photo: Blob) => void;
@@ -8,12 +9,18 @@ interface Props {
 // alignment guides or card-count needed — just a clear photo of the fan.
 export default function StaircaseCapture({ onDone }: Props) {
   return (
-    <section>
-      <h2>Snap your pack</h2>
-      <p>
-        Fan your cards in a staircase so each card&apos;s bottom edge — the number
-        and set symbol — is visible, then take one photo.
-      </p>
+    <section className="stack-lg">
+      <ScreenTitle
+        kicker="One photo · Step 1/2"
+        title="Snap your pack"
+        sub="Fan your cards in a staircase so each card's bottom edge — the number and set symbol — is visible, then take one photo."
+      >
+        <div className="tips">
+          <span className="badge outline">Good light</span>
+          <span className="badge outline">No glare</span>
+          <span className="badge outline">Edges visible</span>
+        </div>
+      </ScreenTitle>
       <CameraCapture
         drawOverlay={() => {}}
         captureLabel="Capture pack"

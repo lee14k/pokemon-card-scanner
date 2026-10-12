@@ -1,4 +1,5 @@
 import CameraCapture from "./CameraCapture";
+import { ScreenTitle } from "../ui/kit";
 
 interface Props {
   onDone: (photo: Blob) => void;
@@ -9,9 +10,14 @@ interface Props {
 // free shot of the page. Mirrors StaircaseCapture's CameraCapture + upload flow.
 export default function BinderCapture({ onDone }: Props) {
   return (
-    <section>
-      <h2>Snap your binder page</h2>
-      <p>Lay the page flat, fill the frame, avoid glare.</p>
+    <section className="stack-lg">
+      <ScreenTitle kicker="Binder page" title="Snap your page" sub="Lay the page flat, fill the frame, and avoid glare.">
+        <div className="tips">
+          <span className="badge outline">Flat page</span>
+          <span className="badge outline">Fill the frame</span>
+          <span className="badge outline">No glare</span>
+        </div>
+      </ScreenTitle>
       <CameraCapture
         drawOverlay={() => {}}
         captureLabel="Capture page"

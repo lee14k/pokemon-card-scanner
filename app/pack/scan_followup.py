@@ -139,7 +139,7 @@ def _drain_done(scan_id: str, task: asyncio.Task) -> None:
 def _sweep() -> None:
     """Lazy TTL sweep (from ``create``): drop expired entries and cancel any
     drain still attached to them. A drain outlives its entry only if the VLM call
-    hangs past the TTL — 30 min against a 90s client timeout — but cancelling
+    hangs past the TTL — 30 min against a 180s client budget — but cancelling
     costs nothing and keeps the task dict from leaking."""
     now = time.time()
     expired = [sid for sid, e in _entries.items() if e.expires_at <= now]

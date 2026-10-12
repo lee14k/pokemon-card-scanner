@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from app.pack.set_resolution import SetResolution
-from app.pokewallet import make_async_client, pokewallet_image_url
+from app.pokewallet import pokewallet_image_url
 
 log = logging.getLogger("pokemon_scanner.pack.matching")
 
@@ -40,28 +40,29 @@ async def lookup_resolved_cards(
             return await lookup_card_exact(set_id, numerator, set_name=set_name,
                                            api_key=api_key, client=client)
 
-    async with make_async_client() as client:
+    # client=None: the process-wide PokéWallet pool (app.pokewallet.shared_client),
+    # like every other lookup. A client opened per scan paid a fresh TCP connect
+    # and TLS handshake to api.pokewallet.io on every pack scan.
+    async def one(numerator: str | None, res: SetResolution) -> dict[str, Any] | None:
+        if not numerator or not res.set_id:
+            return None
+        try:
+            return await _lookup(
+                res.set_id, numerator,
+                set_name=res.set_name, api_key=api_key, client=None,
+            )
+        # httpx.HTTPError = transport/status; ValueError = JSONDecodeError on a
+        # non-JSON 200 (e.g. an upstream maintenance page).
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("matching.lookup_failed set=%s num=%s err=%s",
+                        res.set_id, numerator, e)
+            return None
 
-        async def one(numerator: str | None, res: SetResolution) -> dict[str, Any] | None:
-            if not numerator or not res.set_id:
-                return None
-            try:
-                return await _lookup(
-                    res.set_id, numerator,
-                    set_name=res.set_name, api_key=api_key, client=client,
-                )
-            # httpx.HTTPError = transport/status; ValueError = JSONDecodeError on a
-            # non-JSON 200 (e.g. an upstream maintenance page).
-            except (httpx.HTTPError, ValueError) as e:
-                log.warning("matching.lookup_failed set=%s num=%s err=%s",
-                            res.set_id, numerator, e)
-                return None
-
-        # return_exceptions=True: an unexpected error in one row degrades that row to
-        # None instead of cancelling every other row's lookup.
-        results = await asyncio.gather(
-            *(one(n, r) for n, r in items), return_exceptions=True
-        )
+    # return_exceptions=True: an unexpected error in one row degrades that row to
+    # None instead of cancelling every other row's lookup.
+    results = await asyncio.gather(
+        *(one(n, r) for n, r in items), return_exceptions=True
+    )
 
     out: list[dict[str, Any] | None] = []
     for r in results:

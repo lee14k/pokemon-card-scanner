@@ -107,6 +107,52 @@ def get_api_key() -> str | None:
     return os.environ.get("POKEWALLET_API_KEY", "").strip() or None
 
 
+# --- one /search request: a per-attempt budget and a single retry -------------
+# Every scan flow awaits this on its response path — a live frame cannot answer,
+# and the next card cannot be shown, until it returns — so the shared client's
+# 30s default was 30s of a frozen scanner whenever PokéWallet stalled, and any
+# blip (a reset pooled connection, a 502, a 429) cost the card its name, image
+# and price for good: a failed lookup is not cached, but the scan has already
+# answered without it. Healthy searches answer in well under a second, so each
+# attempt gets 8s, and a failure that is plausibly gone a moment later gets ONE
+# more try. Worst case is ~16.5s instead of 30s; the common transient case
+# becomes invisible. The client's own 30s default is untouched (per-request
+# override), so callers that bring their own client keep everything else.
+_SEARCH_TIMEOUT = httpx.Timeout(8.0, connect=4.0)
+_RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
+_RETRY_BACKOFF_S = 0.5
+_RETRY_AFTER_CAP_S = 3.0   # a scan will not sit out a longer Retry-After; it fails
+
+
+def _retry_delay(resp: httpx.Response) -> float:
+    try:
+        wait = float(resp.headers.get("retry-after", ""))
+    except ValueError:      # absent, or an HTTP-date we do not bother parsing
+        wait = _RETRY_BACKOFF_S
+    return min(max(wait, 0.0), _RETRY_AFTER_CAP_S)
+
+
+async def _get_with_retry(client: httpx.AsyncClient, path: str, *,
+                          params: dict, headers: dict) -> httpx.Response:
+    """GET with ONE retry on a transport error (connect/read timeout, a pooled
+    keep-alive connection the server already closed) or a 429/5xx. Safe because
+    /search is a read. The second attempt's outcome is final either way."""
+    try:
+        resp = await client.get(path, params=params, headers=headers,
+                                timeout=_SEARCH_TIMEOUT)
+    except httpx.TransportError as e:
+        log.warning("pokewallet.retry err=%r", e)
+        await asyncio.sleep(_RETRY_BACKOFF_S)
+    else:
+        if resp.status_code not in _RETRY_STATUSES:
+            return resp
+        delay = _retry_delay(resp)
+        log.warning("pokewallet.retry status=%s wait=%.1fs", resp.status_code, delay)
+        await asyncio.sleep(delay)
+    return await client.get(path, params=params, headers=headers,
+                            timeout=_SEARCH_TIMEOUT)
+
+
 def _sanitize_query_fragment(term: str) -> str:
     cleaned = re.sub(r"[^\w\s\-/]", " ", term, flags=re.UNICODE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -141,7 +187,7 @@ async def search_cards(
     if client is None:
         client = await shared_client()
 
-    resp = await client.get("/search", params=params, headers=headers)
+    resp = await _get_with_retry(client, "/search", params=params, headers=headers)
     resp.raise_for_status()
     data = resp.json()
     n = len(data.get("results") or [])

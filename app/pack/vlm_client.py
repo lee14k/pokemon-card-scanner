@@ -128,13 +128,57 @@ def jpeg_b64(img) -> str | None:
     return base64.b64encode(buf.tobytes()).decode() if ok else None
 
 
-async def identify(cards: list[dict], timeout: float = 90.0) -> dict[int, dict] | None:
+# --- a job that outlives /runsync ----------------------------------------------
+# /runsync holds the request open for at most its wait window and then answers
+# with the job's id and a NON-terminal status (IN_QUEUE / IN_PROGRESS) — which is
+# exactly what a cold worker produces, since loading the ~16GB model takes 30-120s.
+# identify() used to read that body as "no output": the card was marked
+# vlm_failed while the job went on running, and billing, on the GPU for an answer
+# nobody would ever fetch. It now polls /status/{id} until the job settles or the
+# caller's budget runs out, and cancels a job it has stopped waiting for.
+#
+# The default budget is sized for that cold start. Every caller runs off the
+# response path (scan_followup / the live session's drain), so a longer wait
+# delays nothing but the review row it eventually patches.
+_RUNSYNC_WAIT_S = 60.0
+_POLL_INTERVAL_S = 2.0
+_PENDING = ("IN_QUEUE", "IN_PROGRESS")
+IDENTIFY_TIMEOUT_S = 180.0
+
+
+async def _until_settled(client: httpx.AsyncClient, base: str, body: dict,
+                         deadline: float) -> dict:
+    """Poll /status/{id} while the job is still queued or running. Returns the
+    last body seen — terminal, or still pending if the deadline came first (in
+    which case the job is cancelled, best effort). RunPod keeps a runsync result
+    for only about a minute, so the poll interval stays short."""
+    job_id = body.get("id")
+    while body.get("status") in _PENDING and job_id:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            try:
+                await client.post(f"{base}/cancel/{job_id}", headers=_auth(), timeout=10.0)
+            except httpx.HTTPError as e:
+                log.warning("vlm.cancel_failed id=%s err=%r", job_id, e)
+            return body
+        await asyncio.sleep(min(_POLL_INTERVAL_S, remaining))
+        r = await client.get(f"{base}/status/{job_id}", headers=_auth(),
+                             timeout=min(30.0, max(remaining, 1.0)))
+        r.raise_for_status()
+        body = r.json()
+        log.info("vlm.poll id=%s status=%s", job_id, body.get("status"))
+    return body
+
+
+async def identify(cards: list[dict],
+                   timeout: float = IDENTIFY_TIMEOUT_S) -> dict[int, dict] | None:
     """cards: [{"row_index": int, "image": bgr ndarray, "hint_set": str|None,
     "hint_denominator": str|None, "kind": "strip"|"full_card",
     "strip_b64": str|None (optional — a magnified bottom-strip crop, already
     ``jpeg_b64``-encoded, sent as a SECOND image; see binder._vlm_payload)}]. Returns
     {row_index: {number, denominator, set_name, confidence}} or None (disabled /
-    no cards / error). Timeout is generous for serverless cold start.
+    no cards / error). ``timeout`` is the whole budget — the runsync request plus
+    any /status polling — and its default covers a serverless cold start.
 
     ``"image_b64"`` may be supplied instead of ``"image"`` (already
     ``jpeg_b64``-encoded) — the background follow-up path does that so the crop
@@ -167,16 +211,28 @@ async def identify(cards: list[dict], timeout: float = 90.0) -> dict[int, dict] 
     payload_bytes = sum(len(c["image_b64"]) + len(c.get("strip_b64") or "")
                         for c in payload_cards)
     t0 = time.perf_counter()
+    deadline = time.monotonic() + timeout
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
+            # ?wait= keeps runsync's own hold under our budget, so a slow job
+            # comes back as an id to poll rather than as a client-side timeout
+            # that loses the id (RunPod accepts 1000-300000ms; default 90000).
+            wait_ms = int(max(1.0, min(_RUNSYNC_WAIT_S, timeout - 5.0)) * 1000)
             r = await client.post(
-                f"{base}/runsync", json={"input": {"cards": payload_cards}},
-                headers=_auth())
-        if r.status_code == 401:
-            log.warning("vlm.unauthorized (check VLM_API_KEY)")
+                f"{base}/runsync", params={"wait": wait_ms},
+                json={"input": {"cards": payload_cards}}, headers=_auth())
+            if r.status_code == 401:
+                log.warning("vlm.unauthorized (check VLM_API_KEY)")
+                return None
+            r.raise_for_status()
+            body = await _until_settled(client, base, r.json(), deadline)
+        if body.get("status") not in (None, "COMPLETED"):
+            # FAILED / CANCELLED / TIMED_OUT, or still queued at our deadline. Used
+            # to read as "answered=0" with no reason anywhere in the app's logs.
+            log.warning("vlm.job_unsettled id=%s status=%s error=%r", body.get("id"),
+                        body.get("status"), str(body.get("error") or "")[:300])
             return None
-        r.raise_for_status()
-        out = (r.json().get("output") or {}).get("cards") or []
+        out = (body.get("output") or {}).get("cards") or []
         result = {c["row_index"]: c for c in out if c.get("row_index") is not None}
         log.info("vlm.identify cards=%s answered=%s", len(payload_cards), len(result))
         return result or None

@@ -330,7 +330,7 @@ class LiveSession:
                     row_map[row] = lc
                 if not payload:
                     continue
-                result = await vlm_client.identify(payload, timeout=90)
+                result = await vlm_client.identify(payload)
                 if result:
                     # Zero 3+ identical claims before merge (hallucination guard).
                     result = collapse_duplicate_answers(result)

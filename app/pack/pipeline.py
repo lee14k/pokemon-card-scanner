@@ -109,20 +109,31 @@ def _display_number(numerator: str | None, denominator: str | None,
     return None
 
 
-def detect_first(img):
-    """Detection-first card finding: PP-OCR's real-photo-trained detector
-    localizes and reads every card number across the whole photo; each becomes a
-    card with a cropped number-row band (for set resolution / review / save).
-    Returns (strips, readings) top->bottom, or None when it finds too few cards
-    (caller falls back to Hough segmentation)."""
-    from app.pack.ocr import parse_number
-    from app.pack.segmentation import Strip
+def whole_photo_lines(img) -> list[tuple[float, str, float]] | None:
+    """PP-OCR's (y, text, conf) lines over the WHOLE photo, or None when the
+    detector itself failed. The upload path computes this ONCE and hands it to
+    both detect_first and, when that finds too few cards, _read_numbers' fill
+    pass — which used to run the identical detection again on the identical
+    image (~4-5s for a 12MP photo, paid on exactly the photos that read worst)."""
     try:
         from app.pack.rapidocr_reader import detect_lines
 
-        lines = detect_lines(img)
+        return detect_lines(img)
     except Exception as e:
-        log.warning("pipeline.detect_first_failed err=%r", e)
+        log.warning("pipeline.wholephoto_failed err=%r", e)
+        return None
+
+
+def detect_first(img, lines):
+    """Detection-first card finding: PP-OCR's real-photo-trained detector
+    localizes and reads every card number across the whole photo; each becomes a
+    card with a cropped number-row band (for set resolution / review / save).
+    ``lines`` is ``whole_photo_lines(img)``. Returns (strips, readings)
+    top->bottom, or None when it finds too few cards (caller falls back to Hough
+    segmentation)."""
+    from app.pack.ocr import parse_number
+    from app.pack.segmentation import Strip
+    if lines is None:
         return None
 
     parsed = [(y, r) for y, text, conf in lines
@@ -153,29 +164,26 @@ def detect_first(img):
     return (strips, readings) if len(strips) >= 3 else None
 
 
-async def _read_numbers(img, strips, bounded, use_wholephoto: bool):
+async def _read_numbers(strips, bounded, photo_lines):
     """Per-strip OCR for every strip, then (upload path only) fill the strips it
     failed on with PP-OCR's whole-photo number detections — its real-photo-
     trained detector localizes number rows geometric cropping misses. Union
-    beats either source; per-strip stays primary so precise crops win."""
+    beats either source; per-strip stays primary so precise crops win.
+
+    ``photo_lines`` is ``whole_photo_lines`` of the photo, already computed for
+    detect_first; None skips the fill (the guided path, or a failed detector)."""
     from app.pack.ocr import NumberReading, parse_number
 
     readings = list(await asyncio.gather(
         *(bounded(read_card_number, s.image) for s in strips)))
-    if not use_wholephoto:
+    if photo_lines is None:
         return readings
 
     boxes: list = []
-    try:
-        from app.pack.rapidocr_reader import detect_lines
-
-        for y, text, conf in await asyncio.to_thread(detect_lines, img):
-            r = parse_number(text, conf)
-            if r is not None and r.pattern_ok:
-                boxes.append((y, r))
-    except Exception as e:
-        log.warning("pipeline.wholephoto_failed err=%r", e)
-        return readings
+    for y, text, conf in photo_lines:
+        r = parse_number(text, conf)
+        if r is not None and r.pattern_ok:
+            boxes.append((y, r))
 
     # Fill only the strips per-strip OCR failed on, claiming the nearest unused
     # box (within ~1.5 strip-heights, to tolerate the strip/number misalignment
@@ -369,7 +377,7 @@ async def _vlm_followup(followup_id: str, cards: list[PackCard], payload: list[d
                         scan_id: str | None) -> None:
     """The background half of a pack scan: the VLM batch that used to be awaited
     inside the request. Every card it owns ends TERMINAL — ``ok`` or
-    ``vlm_failed`` — and ``finish`` runs in a ``finally`` so a crash or a 90s
+    ``vlm_failed`` — and ``finish`` runs in a ``finally`` so a crash or a
     timeout still stops the client's poll instead of spinning it forever."""
     try:
         with stage("pack", "vlm", scan_id):
@@ -449,171 +457,187 @@ async def scan_pack(
     # that reuse them are untouched.
     scan_id = new_scan_id()
 
-    with stage("pack", "total", scan_id):
-        with stage("pack", "decode", scan_id):
-            # A 12MP HEIC decode is 100s of ms of pure CPU; on the loop it stalls
-            # every other request in the process (see the thread offload rationale
-            # below, which applies just as much to decoding as to OCR).
-            stair = await asyncio.to_thread(_decode, staircase_bytes)
-        if stair is None:
-            raise ValueError("staircase image could not be decoded")
-        _emit({"stage": "decoded"})
+    # Segmentation (fastNlMeansDenoising + Hough), OCR, and symbol matching are all
+    # blocking CPU/subprocess work; offload to threads so this async path (a FastAPI
+    # endpoint) doesn't pin the event loop for the whole pack.
+    # Bound OCR concurrency: each strip read spawns a Tesseract subprocess over
+    # 3x-upscaled variants; a 12-card pack running unbounded peaks near 1GB in a
+    # small container. Two or three in flight saturate a cloud vCPU anyway.
 
-        # Segmentation (fastNlMeansDenoising + Hough), OCR, and symbol matching are all
-        # blocking CPU/subprocess work; offload to threads so this async path (a FastAPI
-        # endpoint) doesn't pin the event loop for the whole pack.
-        # Bound OCR concurrency: each strip read spawns a Tesseract subprocess over
-        # 3x-upscaled variants; a 12-card pack running unbounded peaks near 1GB in a
-        # small container. Two or three in flight saturate a cloud vCPU anyway.
+    async def _bounded(fn, *args):
+        async with OCR_GATE:
+            return await asyncio.to_thread(fn, *args)
 
-        async def _bounded(fn, *args):
-            async with OCR_GATE:
-                return await asyncio.to_thread(fn, *args)
-
-        # Detection-first (upload path): PP-OCR detection finds+reads the cards
-        # directly. Falls back to Hough segmentation + per-strip OCR for the guided
-        # path or when detection finds too few cards.
-        strips = readings = None
-        seg_warning = None
-        if capture_meta is None:
-            with stage("pack", "detect_first", scan_id):
-                df = await asyncio.to_thread(detect_first, stair)
-            if df is not None:
-                strips, readings = df
-        if strips is None:
-            with stage("pack", "find_strips", scan_id):
-                seg = await asyncio.to_thread(find_strips, stair, capture_meta)
-            strips = seg.strips
-            seg_warning = seg.warning
-            with stage("pack", "read_numbers", scan_id):
-                readings = await _read_numbers(stair, strips, _bounded,
-                                               use_wholephoto=capture_meta is None)
-        _emit({"stage": "cards_found", "count": len(strips)})
-
-        # Per-card "identifying" progress: resolve_set is the natural per-card unit
-        # of work remaining after strip/number detection, and cards still finish at
-        # staggered times (each strip's resolution is a different amount of work and
-        # they complete as their threads do). asyncio.gather preserves input order in
-        # `resolutions` regardless of completion order, so this changes nothing about
-        # the result — only adds a side-effect callback.
-        #
-        # NOT behind OCR_GATE: resolve_set runs no OCR. It is table lookups plus, only
-        # when a denominator is ambiguous, one perceptual hash of a small crop — while
-        # holding an OCR slot it delayed the work the gate exists to admit (per-strip
-        # Tesseract, the code-card read, a concurrent scanner's live frame) behind
-        # work that never needed one.
-        _done = 0
-
-        async def _resolve_with_progress(r, s):
-            nonlocal _done
-            res = await asyncio.to_thread(resolve_set, r, s.image)
-            _done += 1
-            _emit({"stage": "identifying", "done": _done, "total": len(strips)})
-            return res
-
-        with stage("pack", "resolve_set", scan_id):
-            resolutions = list(
-                await asyncio.gather(
-                    *(_resolve_with_progress(r, s) for r, s in zip(readings, strips))
-                )
-            )
-
-        # Pack-level constraint repair: cards in one pack share a denominator and
-        # their numerators exist in the set catalog — priors that fix OCR glyph
-        # confusions the reader can't. Corrects readings in place before lookup.
-        with stage("pack", "constraints", scan_id):
-            valid_nums, modal_entry = await _apply_constraints(readings, resolutions)
-
-        with stage("pack", "art_match", scan_id):
-            art = await _match_art(strips, resolutions)  # None when disabled/unavailable
-        art_ids = [a["id"] for a in (art or []) if a]
-        from app.cards import get_cached_by_match_ids
-        art_payloads = await get_cached_by_match_ids(art_ids) if art_ids else {}
-
-        with stage("pack", "lookup", scan_id):
-            matches = await lookup_resolved_cards(
-                # The keyed lookup wants the card's numerator as the DB stores it. For promo
-                # cards (SWSH/SVP) that's the prefixed form "SWSH123" (the DB has no separate
-                # denominator); for normal cards it's the bare numerator "012" (NOT "012/202").
-                [(_lookup_numerator(r), res) for r, res in zip(readings, resolutions)],
-                api_key=get_api_key(),
-            )
-
-        cards: list[PackCard] = []
-        for i, (strip, reading, res, match) in enumerate(zip(strips, readings, resolutions, matches)):
-            art_hit = art[i] if art else None
-            payload = art_payloads.get(art_hit["id"]) if art_hit else None
-            if art_hit and payload:
-                info = payload.get("card_info") or {}
-                art_num = str(info.get("card_number") or "")
-                ocr_num = _display_number(reading.numerator, reading.denominator, reading.prefix)
-                agrees = bool(ocr_num) and ocr_num.split("/")[0].lstrip("0") == art_num.split("/")[0].lstrip("0")
-                conf = 0.97 if agrees else max(0.9 * art_hit["score"], 0.75)
-                reason = None if agrees or not ocr_num else "art_ocr_disagree"
-                cards.append(PackCard(
-                    row_index=strip.row_index,
-                    card_number=art_num or ocr_num,
-                    set_id=res.set_id, set_code=res.set_code, set_name=res.set_name,
-                    confidence=round(conf, 3), low_confidence_reason=reason,
-                    needs_review=reason is not None,
-                    **card_fields_from_match(payload),
-                ))
-                continue
-            conf, reason = score_card(reading, res, match is not None)
-            cards.append(PackCard(  # unchanged OCR-first path
-                row_index=strip.row_index,
-                card_number=_display_number(reading.numerator, reading.denominator,
-                                            reading.prefix),
-                set_id=res.set_id,
-                set_code=res.set_code,
-                set_name=res.set_name,
-                confidence=conf,
-                low_confidence_reason=reason,
-                needs_review=_needs_review(reading, res, valid_nums, modal_entry),
-                **card_fields_from_match(match),
-            ))
-
-        # Confidence-gated VLM fallback: only the still-uncertain cards go to the
-        # RunPod worker for definitive ID. Off when VLM_ENDPOINT unset. NON-BLOCKING
-        # since the follow-up store landed: awaiting it here put a serverless cold
-        # start (90s timeout) inside the HTTP response for exactly the packs that
-        # read worst. The response now ships the Phase-1 cards with
-        # state="pending_vlm" on the flagged rows plus a scan_id, and one background
-        # task patches the follow-up entry the client polls. The `vlm` timing stage
-        # moved with the work — it now measures the background call.
-        with stage("pack", "vlm_dispatch", scan_id):
-            followup_id = await _start_vlm_followup(cards, strips, resolutions,
-                                                    readings, scan_id)
-
+    async def _read_code() -> CodeCardResult:
+        # The single heaviest blocking call in a scan (QR pass + up to ~6 serial
+        # Tesseract subprocesses), so it belongs in a thread — and behind the same
+        # OCR_GATE as every other Tesseract call, or N concurrent scans could each
+        # fork ~6 subprocesses and blow the small container's memory. Like the
+        # other _bounded stage (read_numbers), this stage's timing therefore
+        # includes any gate queueing. Reading through the memo also lets
+        # the save path (POST /pulls) reuse this exact reading instead of OCR'ing
+        # the same photo a second time.
         with stage("pack", "code_ocr", scan_id):
-            # The single heaviest blocking call in a scan (QR pass + up to ~6 serial
-            # Tesseract subprocesses), so it belongs in a thread — and behind the same
-            # OCR_GATE as every other Tesseract call, or N concurrent scans could each
-            # fork ~6 subprocesses and blow the small container's memory. Like the
-            # other _bounded stage (read_numbers), this stage's timing therefore
-            # includes any gate queueing. Reading through the memo also lets
-            # the save path (POST /pulls) reuse this exact reading instead of OCR'ing
-            # the same photo a second time.
             code_img = await asyncio.to_thread(_decode, code_bytes)
             if code_img is None:
-                code_result = CodeCardResult(code=None, confidence=0.0, format_ok=False)
-            else:
-                cr = await _bounded(cached_read_code_card, code_bytes, code_img)
-                code_result = CodeCardResult(code=cr.code, confidence=round(cr.confidence, 3),
-                                             format_ok=cr.format_ok)
+                return CodeCardResult(code=None, confidence=0.0, format_ok=False)
+            cr = await _bounded(cached_read_code_card, code_bytes, code_img)
+            return CodeCardResult(code=cr.code, confidence=round(cr.confidence, 3),
+                                  format_ok=cr.format_ok)
 
-        resp = PackScanResponse(
-            cards=cards,
-            code_card=code_result,
-            # Phase-1 confidence: a background VLM merge can only raise a card's
-            # confidence, so this is the floor, not the final word, when a
-            # follow-up is running (the poll carries the per-card truth).
-            pack_confidence=pack_confidence([c.confidence for c in cards]),
-            segmentation_warning=seg_warning,
-            scan_id=followup_id,
-        )
-        log.info("pipeline.done rows=%s flagged=%s pack_conf=%.3f code=%s followup=%s",
-                 len(cards), sum(1 for c in cards if c.low_confidence_reason),
-                 resp.pack_confidence, code_result.code, followup_id or "-")
-        _emit({"stage": "done"})
-        return resp
+    with stage("pack", "total", scan_id):
+        # The code card shares nothing with the staircase, so it is read
+        # CONCURRENTLY with the whole staircase pipeline rather than after it, as
+        # it used to be. On the committed corpus pair (IMG_7102 + IMG_7103) that
+        # serial tail was ~7s of a ~12s scan on 4 cores and ~10s of ~15s on 2.
+        # `timing.pack.code_wait` is what the response still waits on it once
+        # the staircase is done.
+        code_task = asyncio.create_task(_read_code())
+        try:
+            with stage("pack", "decode", scan_id):
+                # A 12MP HEIC decode is 100s of ms of pure CPU; on the loop it stalls
+                # every other request in the process (see the thread offload rationale
+                # above, which applies just as much to decoding as to OCR).
+                stair = await asyncio.to_thread(_decode, staircase_bytes)
+            if stair is None:
+                raise ValueError("staircase image could not be decoded")
+            _emit({"stage": "decoded"})
+
+            # Detection-first (upload path): PP-OCR detection finds+reads the cards
+            # directly. Falls back to Hough segmentation + per-strip OCR for the guided
+            # path or when detection finds too few cards.
+            strips = readings = photo_lines = None
+            seg_warning = None
+            if capture_meta is None:
+                with stage("pack", "detect_first", scan_id):
+                    photo_lines = await asyncio.to_thread(whole_photo_lines, stair)
+                    df = await asyncio.to_thread(detect_first, stair, photo_lines)
+                if df is not None:
+                    strips, readings = df
+            if strips is None:
+                with stage("pack", "find_strips", scan_id):
+                    seg = await asyncio.to_thread(find_strips, stair, capture_meta)
+                strips = seg.strips
+                seg_warning = seg.warning
+                with stage("pack", "read_numbers", scan_id):
+                    readings = await _read_numbers(strips, _bounded, photo_lines)
+            _emit({"stage": "cards_found", "count": len(strips)})
+
+            # Per-card "identifying" progress: resolve_set is the natural per-card unit
+            # of work remaining after strip/number detection, and cards still finish at
+            # staggered times (each strip's resolution is a different amount of work and
+            # they complete as their threads do). asyncio.gather preserves input order in
+            # `resolutions` regardless of completion order, so this changes nothing about
+            # the result — only adds a side-effect callback.
+            #
+            # NOT behind OCR_GATE: resolve_set runs no OCR. It is table lookups plus, only
+            # when a denominator is ambiguous, one perceptual hash of a small crop — while
+            # holding an OCR slot it delayed the work the gate exists to admit (per-strip
+            # Tesseract, the code-card read, a concurrent scanner's live frame) behind
+            # work that never needed one.
+            _done = 0
+
+            async def _resolve_with_progress(r, s):
+                nonlocal _done
+                res = await asyncio.to_thread(resolve_set, r, s.image)
+                _done += 1
+                _emit({"stage": "identifying", "done": _done, "total": len(strips)})
+                return res
+
+            with stage("pack", "resolve_set", scan_id):
+                resolutions = list(
+                    await asyncio.gather(
+                        *(_resolve_with_progress(r, s) for r, s in zip(readings, strips))
+                    )
+                )
+
+            # Pack-level constraint repair: cards in one pack share a denominator and
+            # their numerators exist in the set catalog — priors that fix OCR glyph
+            # confusions the reader can't. Corrects readings in place before lookup.
+            with stage("pack", "constraints", scan_id):
+                valid_nums, modal_entry = await _apply_constraints(readings, resolutions)
+
+            with stage("pack", "art_match", scan_id):
+                art = await _match_art(strips, resolutions)  # None when disabled/unavailable
+            art_ids = [a["id"] for a in (art or []) if a]
+            from app.cards import get_cached_by_match_ids
+            art_payloads = await get_cached_by_match_ids(art_ids) if art_ids else {}
+
+            with stage("pack", "lookup", scan_id):
+                matches = await lookup_resolved_cards(
+                    # The keyed lookup wants the card's numerator as the DB stores it. For promo
+                    # cards (SWSH/SVP) that's the prefixed form "SWSH123" (the DB has no separate
+                    # denominator); for normal cards it's the bare numerator "012" (NOT "012/202").
+                    [(_lookup_numerator(r), res) for r, res in zip(readings, resolutions)],
+                    api_key=get_api_key(),
+                )
+
+            cards: list[PackCard] = []
+            for i, (strip, reading, res, match) in enumerate(zip(strips, readings, resolutions, matches)):
+                art_hit = art[i] if art else None
+                payload = art_payloads.get(art_hit["id"]) if art_hit else None
+                if art_hit and payload:
+                    info = payload.get("card_info") or {}
+                    art_num = str(info.get("card_number") or "")
+                    ocr_num = _display_number(reading.numerator, reading.denominator, reading.prefix)
+                    agrees = bool(ocr_num) and ocr_num.split("/")[0].lstrip("0") == art_num.split("/")[0].lstrip("0")
+                    conf = 0.97 if agrees else max(0.9 * art_hit["score"], 0.75)
+                    reason = None if agrees or not ocr_num else "art_ocr_disagree"
+                    cards.append(PackCard(
+                        row_index=strip.row_index,
+                        card_number=art_num or ocr_num,
+                        set_id=res.set_id, set_code=res.set_code, set_name=res.set_name,
+                        confidence=round(conf, 3), low_confidence_reason=reason,
+                        needs_review=reason is not None,
+                        **card_fields_from_match(payload),
+                    ))
+                    continue
+                conf, reason = score_card(reading, res, match is not None)
+                cards.append(PackCard(  # unchanged OCR-first path
+                    row_index=strip.row_index,
+                    card_number=_display_number(reading.numerator, reading.denominator,
+                                                reading.prefix),
+                    set_id=res.set_id,
+                    set_code=res.set_code,
+                    set_name=res.set_name,
+                    confidence=conf,
+                    low_confidence_reason=reason,
+                    needs_review=_needs_review(reading, res, valid_nums, modal_entry),
+                    **card_fields_from_match(match),
+                ))
+
+            # Confidence-gated VLM fallback: only the still-uncertain cards go to the
+            # RunPod worker for definitive ID. Off when VLM_ENDPOINT unset. NON-BLOCKING
+            # since the follow-up store landed: awaiting it here put a serverless cold
+            # start (90s timeout) inside the HTTP response for exactly the packs that
+            # read worst. The response now ships the Phase-1 cards with
+            # state="pending_vlm" on the flagged rows plus a scan_id, and one background
+            # task patches the follow-up entry the client polls. The `vlm` timing stage
+            # moved with the work — it now measures the background call.
+            with stage("pack", "vlm_dispatch", scan_id):
+                followup_id = await _start_vlm_followup(cards, strips, resolutions,
+                                                        readings, scan_id)
+
+            with stage("pack", "code_wait", scan_id):
+                code_result = await code_task
+
+            resp = PackScanResponse(
+                cards=cards,
+                code_card=code_result,
+                # Phase-1 confidence: a background VLM merge can only raise a card's
+                # confidence, so this is the floor, not the final word, when a
+                # follow-up is running (the poll carries the per-card truth).
+                pack_confidence=pack_confidence([c.confidence for c in cards]),
+                segmentation_warning=seg_warning,
+                scan_id=followup_id,
+            )
+            log.info("pipeline.done rows=%s flagged=%s pack_conf=%.3f code=%s followup=%s",
+                     len(cards), sum(1 for c in cards if c.low_confidence_reason),
+                     resp.pack_confidence, code_result.code, followup_id or "-")
+            _emit({"stage": "done"})
+            return resp
+        finally:
+            if not code_task.done():
+                code_task.cancel()     # the staircase failed; nobody wants the code
+            elif not code_task.cancelled():
+                code_task.exception()  # retrieved, so a failed read never warns as unretrieved

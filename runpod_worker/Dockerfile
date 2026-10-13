@@ -16,6 +16,12 @@
 #      VLM_API_KEY=<runpod-api-key>
 #   The model (~16GB) downloads from HuggingFace on first cold start and is
 #   cached on the worker volume thereafter. Set VLM_MODEL to override.
+#   VLM_MAX_BATCH (default 4) is how many cards share one generate() call. The
+#   worker logs `timing.worker.generate cards=N s=...` per call: raise it while
+#   those seconds stay flat, lower it if `worker.batch_failed` (an out-of-memory
+#   batch, retried one card at a time) starts showing up.
+#   Before changing requirements.txt or handler.py, run verify_batching.py (CPU,
+#   no download: build its model with tiny_model.py) — see its docstring.
 #   An app that sends `strip_b64` (the magnified bottom-strip second image) gets
 #   NO benefit from it until this image is rebuilt and the endpoint repointed —
 #   a worker running an older image ignores the unknown field, safely and

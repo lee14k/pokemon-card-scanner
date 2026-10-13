@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { statsSets, statsSetDetail, type SetDetail, type SetSummary } from "../api";
+import { SectionTitle } from "../ui/kit";
 
 const pct = (r: number) => `${(r * 100).toFixed(1)}%`;
 
@@ -12,36 +13,40 @@ export default function SetStats() {
   useEffect(() => { if (sel) statsSetDetail(sel).then(setDetail).catch(() => setDetail(null)); }, [sel]);
 
   return (
-    <div>
-      <h3>Sets</h3>
-      {sets.length === 0 && <p>No stats yet — run a recompute.</p>}
-      <ul className="card-rows">
+    <div className="stack-lg">
+      <SectionTitle>Sets</SectionTitle>
+      {sets.length === 0 && <p className="muted">No stats yet — run a recompute.</p>}
+      <div className="segmented">
         {sets.map((s) => (
-          <li key={s.set_id} className="card-row">
-            <button type="button" onClick={() => setSel(s.set_id)}>
-              {s.set_id} · {s.verified_pack_count} packs
-            </button>
-          </li>
+          <button key={s.set_id} type="button" className="small" aria-pressed={sel === s.set_id} onClick={() => setSel(s.set_id)}>
+            {s.set_id} · {s.verified_pack_count} packs
+          </button>
         ))}
-      </ul>
+      </div>
       {detail && (
-        <div>
-          <h3>Set {detail.set_id} — {detail.verified_pack_count} verified packs</h3>
-          <h4>Rarity odds</h4>
-          <table><tbody>
-            {detail.rarities.map((r) => (
-              <tr key={r.rarity}><td>{r.rarity}</td><td>{pct(r.blended_rate)}</td><td>(raw {pct(r.raw_rate)})</td></tr>
-            ))}
-          </tbody></table>
-          <h4>Cards</h4>
-          <table><tbody>
-            {detail.cards.map((c) => (
-              <tr key={c.match_id}>
-                <td>{c.name ?? c.match_id}</td><td>{c.card_number}</td>
-                <td>{pct(c.blended_rate)}</td><td>({c.hits}/{c.packs})</td>
-              </tr>
-            ))}
-          </tbody></table>
+        <div className="panel stack">
+          <h3 className="pixel" style={{ fontSize: "0.7rem", lineHeight: 1.6 }}>
+            {detail.set_id} — {detail.verified_pack_count} verified packs
+          </h3>
+          <SectionTitle>Rarity odds</SectionTitle>
+          <div className="table-wrap">
+            <table><tbody>
+              {detail.rarities.map((r) => (
+                <tr key={r.rarity}><td>{r.rarity}</td><td className="price">{pct(r.blended_rate)}</td><td className="muted">raw {pct(r.raw_rate)}</td></tr>
+              ))}
+            </tbody></table>
+          </div>
+          <SectionTitle>Cards</SectionTitle>
+          <div className="table-wrap">
+            <table><tbody>
+              {detail.cards.map((c) => (
+                <tr key={c.match_id}>
+                  <td>{c.name ?? c.match_id}</td><td className="muted">{c.card_number}</td>
+                  <td className="price">{pct(c.blended_rate)}</td><td className="muted">{c.hits}/{c.packs}</td>
+                </tr>
+              ))}
+            </tbody></table>
+          </div>
         </div>
       )}
     </div>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import PixelIcon from "../ui/PixelIcon";
 
 // frontend/src/capture/LiveCapture.tsx — live camera with auto-fire.
 // Key numbers (from the design spec):
@@ -228,8 +229,8 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
       phase === "fired"
         ? "rgba(255, 255, 255, 0.5)"
         : phase === "locking"
-          ? "rgba(52, 211, 153, 0.18)"
-          : "rgba(59, 130, 246, 0.10)";
+          ? "rgba(94, 227, 127, 0.18)"
+          : "rgba(63, 208, 255, 0.10)";
     ctx.fillStyle = tint;
     ctx.fillRect(gx, gy, gw, gh);
 
@@ -237,9 +238,9 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
       phase === "fired"
         ? "rgba(255, 255, 255, 0.95)"
         : phase === "locking"
-          ? "rgba(52, 211, 153, 0.95)"
-          : "rgba(59, 130, 246, 0.8)";
-    ctx.lineWidth = 3;
+          ? "rgba(94, 227, 127, 0.95)"
+          : "rgba(63, 208, 255, 0.85)";
+    ctx.lineWidth = 4;
     ctx.strokeRect(gx, gy, gw, gh);
 
     const stripY = gy + gh * (1 - STRIP_FRAC);
@@ -657,29 +658,43 @@ export default function LiveCapture({ onFire, paused, autoFire, onCameraInfo }: 
           <canvas ref={overlayRef} className="camera-overlay" />
           {interrupted && (
             <button type="button" className="live-resume" onClick={resume}>
-              Camera paused — tap to resume
+              Camera paused
+              <br />
+              Tap to resume
             </button>
           )}
         </div>
       )}
-      {cameraError && <p className="camera-error">{cameraError}</p>}
-      <div className="camera-actions">
-        {!cameraError && (
-          <button type="button" className="primary" onClick={manualFire} disabled={paused || interrupted}>
-            Capture
-          </button>
-        )}
-        {!cameraError && (
+      {cameraError && (
+        <div className="panel camera-error-box">
+          <PixelIcon name="camera" size={48} className="muted" />
+          <p className="camera-error">{cameraError}</p>
+        </div>
+      )}
+      {!cameraError && (
+        <div className="camera-actions">
+          <span />
           <button
             type="button"
-            className="secondary live-flip"
+            className="shutter"
+            aria-label="Capture"
+            onClick={manualFire}
+            disabled={paused || interrupted}
+          >
+            <PixelIcon name="camera" size={24} />
+            SNAP
+          </button>
+          <button
+            type="button"
+            className="small live-flip"
             onClick={flipCamera}
             aria-label={facing === "environment" ? "Switch to front camera" : "Switch to back camera"}
           >
-            Flip camera{facing === "user" ? " (front)" : ""}
+            <PixelIcon name="flip" size={16} />
+            {facing === "user" ? "Front" : "Flip"}
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

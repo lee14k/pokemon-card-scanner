@@ -156,3 +156,18 @@ Case 3 deliberately uses denominator 132 rather than the production 162: with
 no `POKEWALLET_API_KEY` and no `tcgdex_id` on Temporal Forces, 162 resolves a
 set but never a name, so the cross-check has nothing to compare and the
 rollback would go unexercised.
+
+### `api-speed-probe.py` — API resilience and the photo-path speedups
+
+No subcommands, and unlike the others it needs **no Postgres**: in-process
+stubs stand in for PokéWallet and RunPod, and a missing DB only costs
+`cached_lookup_card` its (logged) cache read. Covers PokéWallet's single retry
+(503, 429 with `Retry-After`, a per-attempt read timeout; never a 4xx), the
+completed-miss memo in `cached_lookup_card` (and that a *failed* lookup is not
+memoized), RunPod `/runsync` jobs followed through `/status` to an answer, a
+`FAILED` job, and a job cancelled at its deadline. On the corpus photos it
+reads the code card at native, 1/2 and 1/4 scale (printing each time), checks
+a Tesseract call past its timeout degrades to no tokens, and runs `scan_pack`
+on `IMG_7102` + `IMG_7103` to show the code read overlaps the staircase
+(`code_wait` < `code_ocr`) and that a fallback upload runs whole-photo PP-OCR
+once. Read the printed timings as well as the verdict.

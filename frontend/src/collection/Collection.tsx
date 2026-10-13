@@ -1,34 +1,28 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { compactUsd, friendlyError, priceRange, shortDate } from "@shared/format";
 import {
   getCollection,
   patchCollectionQty,
   deleteCollectionCard,
-  type CollectionCardOut,
   type CollectionOut,
 } from "../api";
+import PixelIcon from "../ui/PixelIcon";
+import { CardArt, EmptyState, ErrorBox, LoadingScreen, ScreenTitle, StatTile } from "../ui/kit";
 
-// Same low/high price formatting the pack + binder rows use, so a collection
-// card's price reads identically to the rest of the app.
-function priceText(c: CollectionCardOut): string {
-  const lo = c.price_usd_low ?? null;
-  const hi = c.price_usd_high ?? null;
-  if (lo == null && hi == null) return "—";
-  if (lo != null && hi != null) {
-    return lo === hi ? `$${lo.toFixed(2)}` : `$${lo.toFixed(2)}–$${hi.toFixed(2)}`;
-  }
-  return `$${((lo ?? hi) as number).toFixed(2)}`;
-}
-
-export default function Collection() {
+export default function Collection({ onScanBinder }: { onScanBinder: () => void }) {
   const [data, setData] = useState<CollectionOut | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // id being mutated
+  const [query, setQuery] = useState("");
 
-  const load = () => getCollection().then(setData).catch((e) => setError(String(e)));
+  const load = useCallback(
+    () => getCollection().then(setData).catch((e) => setError(friendlyError(e))),
+    []
+  );
 
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   // Optimistic qty change: apply locally, PATCH, roll back + reload on failure.
   const changeQty = async (id: string, qty: number) => {
@@ -63,10 +57,25 @@ export default function Collection() {
     }
   };
 
-  if (error) return <p className="camera-error">{error}</p>;
-  if (!data) return <p className="status">Loading your collection…</p>;
-  if (data.cards.length === 0)
-    return <p>No cards in your collection yet — scan a binder page!</p>;
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!data || !q) return data?.cards ?? [];
+    return data.cards.filter((c) =>
+      [c.name, c.set_name, c.card_number].some((f) => f?.toLowerCase().includes(q))
+    );
+  }, [data, query]);
+
+  if (error)
+    return (
+      <ErrorBox
+        message={error}
+        onRetry={() => {
+          setError(null);
+          load();
+        }}
+      />
+    );
+  if (!data) return <LoadingScreen label="Opening your collection…" />;
 
   // Distinct-card count and total qty track optimistic edits; the estimated
   // value is the server's priced snapshot (labeled "≈ · prices as of …").
@@ -74,119 +83,95 @@ export default function Collection() {
   const totalQty = data.cards.reduce((sum, c) => sum + c.qty, 0);
 
   return (
-    <section>
-      <h2>My Collection</h2>
-      <p style={{ color: "var(--text-muted)" }}>
-        {distinct} card{distinct === 1 ? "" : "s"} · {totalQty} total
-        {data.estimated_value != null && (
-          <>
-            {" · "}≈ ${data.estimated_value.toFixed(2)}
-            {data.priced_as_of && (
-              <> (prices as of {new Date(data.priced_as_of).toLocaleDateString()})</>
-            )}
-          </>
-        )}
-      </p>
-      <div
-        className="collection-grid"
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))",
-          gap: "0.5rem",
-        }}
-      >
-        {data.cards.map((c) => (
-          <div
-            key={c.id}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              padding: "0.5rem",
-              border: "1px solid var(--border)",
-              background: "var(--surface)",
-              borderRadius: "var(--radius)",
-              opacity: busy === c.id ? 0.55 : 1,
-            }}
-          >
-            {c.image_url ? (
-              <img
-                src={c.image_url}
-                alt={c.name ?? "card"}
-                style={{ width: "100%", aspectRatio: "63 / 88", objectFit: "cover", borderRadius: 4 }}
-              />
-            ) : (
-              <div
-                style={{
-                  width: "100%",
-                  aspectRatio: "63 / 88",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  textAlign: "center",
-                  padding: 4,
-                  background: "var(--bg-elevated)",
-                  color: "var(--text-muted)",
-                  borderRadius: 4,
-                  fontSize: "0.8rem",
-                }}
-              >
-                {c.name ?? "?"}
-              </div>
-            )}
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 6 }}>
-              <strong style={{ fontSize: "0.9rem" }}>{c.name ?? "Unknown card"}</strong>
-              <span
-                style={{
-                  flexShrink: 0,
-                  fontSize: "0.75rem",
-                  fontWeight: 700,
-                  padding: "0.05rem 0.4rem",
-                  borderRadius: 999,
-                  background: "var(--bg-elevated)",
-                  border: "1px solid var(--border)",
-                  color: "var(--text-muted)",
-                }}
-              >
-                ×{c.qty}
-              </span>
-            </div>
-            <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-              {c.card_number ?? "—"} · {c.set_name ?? "Unknown set"}
-            </span>
-            <span style={{ fontSize: "0.8rem" }}>{priceText(c)}</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
-              <button
-                type="button"
-                aria-label="Decrease quantity"
-                disabled={c.qty <= 1 || busy === c.id}
-                onClick={() => changeQty(c.id, c.qty - 1)}
-                style={{ minHeight: 32, minWidth: 32, padding: 0 }}
-              >
-                −
-              </button>
-              <button
-                type="button"
-                aria-label="Increase quantity"
-                disabled={busy === c.id}
-                onClick={() => changeQty(c.id, c.qty + 1)}
-                style={{ minHeight: 32, minWidth: 32, padding: 0 }}
-              >
-                +
-              </button>
-              <button
-                type="button"
-                aria-label="Remove card"
-                disabled={busy === c.id}
-                onClick={() => remove(c.id)}
-                style={{ minHeight: 32, minWidth: 32, padding: 0, marginLeft: "auto" }}
-              >
-                ✕
-              </button>
-            </div>
+    <section className="stack-lg">
+      <ScreenTitle
+        kicker="Card vault"
+        title="My collection"
+        sub={
+          data.priced_as_of
+            ? `Prices as of ${shortDate(data.priced_as_of)}.`
+            : "Scan binder pages to fill it up."
+        }
+      />
+
+      {distinct === 0 ? (
+        <EmptyState icon="chest" title="Your vault is empty">
+          <p className="muted">Snap a binder page and every card on it lands here.</p>
+          <button type="button" className="primary" onClick={onScanBinder}>
+            Scan a binder page
+          </button>
+        </EmptyState>
+      ) : (
+        <>
+          <div className="stat-tiles">
+            <StatTile value={distinct} label="Unique" />
+            <StatTile value={totalQty} label="Total qty" tone="cyan" />
+            {data.estimated_value != null && <StatTile value={compactUsd(data.estimated_value)} label="Est. value" tone="green" />}
           </div>
-        ))}
-      </div>
+
+          <div className="row">
+            <input
+              type="search"
+              style={{ width: "auto", flex: "1 1 160px", minWidth: 0 }}
+              placeholder="Search name, set or number…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              aria-label="Search your collection"
+            />
+            <button type="button" onClick={onScanBinder}>
+              <PixelIcon name="plus" size={14} /> Add page
+            </button>
+          </div>
+
+          {shown.length === 0 && <p className="muted">No cards match “{query}”.</p>}
+
+          <div className="tile-grid">
+            {shown.map((c) => {
+              const price = priceRange(c.price_usd_low, c.price_usd_high);
+              return (
+                <div key={c.id} className={`card-tile${busy === c.id ? " busy" : ""}`}>
+                  <CardArt src={c.image_url} alt={c.name ?? "card"} fallback={c.name ?? "?"} />
+                  <span className="badge gold qty">×{c.qty}</span>
+                  <span className="tile-name">{c.name ?? "Unknown card"}</span>
+                  <span className="tile-meta">
+                    {c.card_number ?? "—"} · {c.set_name ?? "Unknown set"}
+                  </span>
+                  <span className="price">{price ?? "—"}</span>
+                  <div className="qty-stepper">
+                    <button
+                      type="button"
+                      className="small icon-only"
+                      aria-label="Decrease quantity"
+                      disabled={c.qty <= 1 || busy === c.id}
+                      onClick={() => changeQty(c.id, c.qty - 1)}
+                    >
+                      <PixelIcon name="minus" size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      className="small icon-only"
+                      aria-label="Increase quantity"
+                      disabled={busy === c.id}
+                      onClick={() => changeQty(c.id, c.qty + 1)}
+                    >
+                      <PixelIcon name="plus" size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      className="small icon-only ghost remove"
+                      aria-label="Remove card"
+                      disabled={busy === c.id}
+                      onClick={() => remove(c.id)}
+                    >
+                      <PixelIcon name="close" size={12} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
     </section>
   );
 }

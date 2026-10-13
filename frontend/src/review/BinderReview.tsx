@@ -7,58 +7,16 @@ import {
   type CollectionSaveCard,
 } from "../api";
 import FixCardForm from "./FixCardForm";
-
-const POLL_MS = 2000; // mirrors ReviewScreen / LiveScanScreen's pending_vlm poll
-
-// Force every still-pending row terminal, for the cases where no answer can ever
-// arrive: the follow-up 404s (its 30-min TTL expired, or the single-process store
-// died with a server restart), or the server reports `done` with a row somehow
-// still pending. Leaving those rows `pending_vlm` would spin the "identifying…"
-// badge forever AND hide the cell's real flag reason, which is strictly worse
-// than admitting the VLM never answered.
-function settlePending(prev: BinderCard[]): BinderCard[] {
-  let changed = false;
-  const next = prev.map((c) => {
-    if (c.state !== "pending_vlm") return c;
-    changed = true;
-    return { ...c, state: "vlm_failed" as const };
-  });
-  return changed ? next : prev;
-}
-
-// Same machine-reason → friendly-copy map CardRow uses, so a flagged binder
-// cell reads identically to a flagged pack row.
-const REASON_TEXT: Record<string, string> = {
-  unreadable_strip: "Couldn't read this row",
-  number_ambiguous: "Couldn't read the card number",
-  set_ambiguous: "Couldn't tell which set this is from",
-  no_db_match: "Card not found in the database",
-};
+import { priceRange, reasonText } from "@shared/format";
+import { FOLLOWUP_POLL_MS, hasIdentity, isFlagged, keepBinderGeometry, mergeLate, settlePending } from "@shared/review";
+import PixelIcon from "../ui/PixelIcon";
+import { Loader, ScreenTitle } from "../ui/kit";
 
 interface Props {
   scan: BinderScan;
   photo: Blob;
   onConfirm: (cards: CollectionSaveCard[]) => void;
   onRetake: () => void;
-}
-
-// A cell is flagged the same way the grid decides it — keep the overlay's
-// outline colour and the "needs review" count in lockstep with the cells below.
-function isFlagged(c: BinderCard): boolean {
-  return c.needs_review ?? c.low_confidence_reason !== null;
-}
-
-// Does this cell carry an identity the server can file it under? The set alone
-// is NOT one: the key's right-hand side is the number, else the name, and an
-// empty right-hand side ("SVI:" as much as "?:") is a bucket every unreadable
-// card of that set would share, so the server refuses it
-// (app/collection.py::_is_degenerate_key). "Keep as is" is therefore not on
-// offer for such a cell — keeping it would promise a save that is not coming.
-// Deliberately the loose version of the server's rule: a name that is truthy
-// here but normalizes to nothing there (e.g. "???") still gets the button, and
-// its refusal shows up in the save summary's skipped count.
-function hasIdentity(c: BinderCard): boolean {
-  return Boolean(c.card_number || c.name);
 }
 
 // A cell is drawable only if its geometry is a finite [x, y, w, h] tuple.
@@ -68,16 +26,6 @@ function hasCell(c: BinderCard): boolean {
     c.cell.length === 4 &&
     c.cell.every((n) => typeof n === "number" && Number.isFinite(n))
   );
-}
-
-function priceText(c: BinderCard): string | null {
-  const lo = c.price_usd_low ?? null;
-  const hi = c.price_usd_high ?? null;
-  if (lo == null && hi == null) return null;
-  if (lo != null && hi != null) {
-    return lo === hi ? `$${lo.toFixed(2)}` : `$${lo.toFixed(2)}–$${hi.toFixed(2)}`;
-  }
-  return `$${((lo ?? hi) as number).toFixed(2)}`;
 }
 
 export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props) {
@@ -130,22 +78,11 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
         return;
       }
       if (cancelled) return;
-      setCards((prev) => {
-        let changed = false;
-        const next = prev.map((c) => {
-          // Eligible ONLY while this row is still locally pending and the user
-          // hasn't settled it: that makes the merge idempotent and makes a manual
-          // fix (which sets state "ok" below) permanently authoritative.
-          if (c.state !== "pending_vlm" || settledRef.current.has(c.row_index)) return c;
-          const match = st.cards.find((m) => m.row_index === c.row_index);
-          if (!match || match.state === "pending_vlm") return c;
-          changed = true;
-          // Keep the locally-drawn geometry + thumbnail, exactly like the fix
-          // apply below: they describe THIS photo, not the identity.
-          return { ...match, cell: c.cell, thumb_b64: c.thumb_b64 };
-        });
-        return changed ? next : prev;
-      });
+      // Eligible ONLY while a row is still locally pending and the user hasn't
+      // settled it (see mergeLate); keep the locally-drawn geometry + thumbnail,
+      // exactly like the fix apply below — they describe THIS photo, not the
+      // identity.
+      setCards((prev) => mergeLate(prev, st.cards, settledRef.current, keepBinderGeometry));
       if (st.done) {
         // The drain is finished, so this is the last useful poll: settle anything
         // it somehow left pending (it shouldn't) and drop the interval instead of
@@ -154,7 +91,7 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
         setCards(settlePending);
         stop();
       }
-    }, POLL_MS);
+    }, FOLLOWUP_POLL_MS);
     return stop;
   }, [scanId]);
 
@@ -223,9 +160,9 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
         if (!ctx) throw new Error("no 2d context");
 
         const root = getComputedStyle(document.documentElement);
-        const success = root.getPropertyValue("--success").trim() || "#34d399";
-        const danger = root.getPropertyValue("--danger").trim() || "#f87171";
-        const badgeText = root.getPropertyValue("--bg").trim() || "#0f1419";
+        const success = root.getPropertyValue("--green").trim() || "#5ee37f";
+        const danger = root.getPropertyValue("--danger").trim() || "#ff6b6b";
+        const badgeText = root.getPropertyValue("--on-bright").trim() || "#1a1033";
 
         ctx.clearRect(0, 0, dispW, dispH);
         ctx.drawImage(source, 0, 0, dispW, dispH);
@@ -246,7 +183,7 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
 
           // Filled index badge at the cell's top-left, readable when scaled down.
           const label = String(i + 1);
-          ctx.font = "600 14px system-ui, -apple-system, sans-serif";
+          ctx.font = "900 14px Nunito, system-ui, -apple-system, sans-serif";
           const padX = 5;
           const badgeH = 20;
           const badgeW = ctx.measureText(label).width + padX * 2;
@@ -303,15 +240,18 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
   // lives here in the review flow.
   if (cards.length === 0) {
     return (
-      <section>
-        <h2>No cards found</h2>
-        <p>
-          We couldn&apos;t read any cards on that page. Lay the page flat, fill the
-          frame, and avoid glare, then try again.
-        </p>
-        <button type="button" className="primary" onClick={onRetake}>
-          Retake photo
-        </button>
+      <section className="stack-lg">
+        <ScreenTitle kicker="Binder page" title="No cards found" />
+        <div className="panel empty-state">
+          <PixelIcon name="grid" size={48} />
+          <p>
+            We couldn&apos;t read any cards on that page. Lay the page flat, fill the frame, and avoid glare,
+            then try again.
+          </p>
+          <button type="button" className="primary" onClick={onRetake}>
+            Retake photo
+          </button>
+        </div>
       </section>
     );
   }
@@ -340,64 +280,50 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
   };
 
   return (
-    <section>
-      <h2>Review your binder page</h2>
-      <p>
-        {scan.grid.rows}×{scan.grid.cols} page · tap a card to fix it. A flagged card
-        is saved only after you fix it or keep it.
-      </p>
+    <section className="stack-lg">
+      <ScreenTitle
+        kicker="Binder page"
+        title="Review page"
+        sub="Tap a card to fix it. A flagged card is saved only after you fix it or keep it."
+      >
+        <div className="tips">
+          <span className="badge gold">
+            {scan.grid.rows}×{scan.grid.cols} page
+          </span>
+          <span className="badge outline">{foundN} found</span>
+          {needReview > 0 ? (
+            <span className="badge red">{needReview} to review</span>
+          ) : (
+            <span className="badge green">All clear</span>
+          )}
+        </div>
+      </ScreenTitle>
 
       {overlayOk && drawableCells.length > 0 && (
         <details
+          className="panel finder"
           open={overlayOpen}
           onToggle={(e) => setOverlayOpen((e.target as HTMLDetailsElement).open)}
-          style={{
-            border: "1px solid var(--border)",
-            borderRadius: "var(--radius)",
-            background: "var(--surface)",
-            padding: "0.5rem 0.75rem",
-            marginBottom: "1rem",
-          }}
         >
-          <summary style={{ cursor: "pointer", fontWeight: 600 }}>
-            What the scanner found
-          </summary>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", margin: "0.5rem 0" }}>
+          <summary>What the scanner found</summary>
+          <p className="muted small-text" style={{ margin: "0.6rem 0" }}>
             Found {foundN} card{foundN === 1 ? "" : "s"}
-            {needReview > 0 ? ` · ${needReview} need review` : ""} · tap an outline to
-            jump to its card.
+            {needReview > 0 ? ` · ${needReview} need review` : ""} · tap an outline to jump to its card.
           </p>
           <div ref={canvasWrapRef}>
-            <canvas
-              ref={canvasRef}
-              onClick={onCanvasClick}
-              style={{
-                display: "block",
-                maxWidth: "100%",
-                height: "auto",
-                borderRadius: "var(--radius)",
-                cursor: "pointer",
-              }}
-            />
+            <canvas ref={canvasRef} onClick={onCanvasClick} />
           </div>
         </details>
       )}
 
-      <div
-        className="binder-grid"
-        style={{
-          display: "grid",
-          gridTemplateColumns: `repeat(${cols}, 1fr)`,
-          gap: "0.5rem",
-        }}
-      >
+      <div className="binder-grid" style={{ "--cols": cols } as React.CSSProperties}>
         {cards.map((c) => {
-          const flagged = c.needs_review ?? c.low_confidence_reason !== null;
+          const flagged = isFlagged(c);
           // Still being identified in the background: the cell stays outlined as
           // flagged (it IS unconfirmed, and the overlay/count must agree with
           // that), but "needs review" would be the wrong ask — nothing to do yet.
           const pending = c.state === "pending_vlm";
-          const price = priceText(c);
+          const price = priceRange(c.price_usd_low, c.price_usd_high);
           const highlighted = highlight === c.row_index;
           // A flagged cell the user has settled: still flagged (nothing about the
           // card got better), but it WILL be saved, so it must not read the same
@@ -410,9 +336,10 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
                 if (el) cellRefs.current.set(c.row_index, el);
                 else cellRefs.current.delete(c.row_index);
               }}
-              className={`binder-cell${flagged ? " flagged" : ""}`}
+              className={`card-tile binder-cell${flagged && !kept ? " flagged" : ""}${kept ? " kept" : ""}${highlighted ? " highlighted" : ""}`}
               role="button"
               tabIndex={0}
+              aria-label={`${c.name ?? "Unknown card"}${c.card_number ? ` ${c.card_number}` : ""} — edit`}
               onClick={() => setFixing(c.row_index)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -420,64 +347,29 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
                   setFixing(c.row_index);
                 }
               }}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                padding: "0.5rem",
-                border: `1px solid ${flagged ? "var(--danger)" : "var(--border)"}`,
-                background: flagged ? "rgba(248, 113, 113, 0.12)" : "var(--surface)",
-                borderRadius: "var(--radius)",
-                cursor: "pointer",
-                outlineStyle: highlighted ? "solid" : "none",
-                outlineWidth: highlighted ? "3px" : undefined,
-                outlineColor: highlighted ? "var(--accent)" : undefined,
-                outlineOffset: 2,
-                boxShadow: highlighted ? "0 0 0 3px rgba(59, 130, 246, 0.35)" : "none",
-                transition: "outline-color 0.15s, box-shadow 0.15s",
-              }}
             >
               {c.thumb_b64 ? (
-                <img
-                  src={`data:image/jpeg;base64,${c.thumb_b64}`}
-                  alt={c.name ?? "card"}
-                  style={{ width: "100%", aspectRatio: "63 / 88", objectFit: "cover", borderRadius: 4 }}
-                />
+                <img src={`data:image/jpeg;base64,${c.thumb_b64}`} alt={c.name ?? "card"} className="art" />
               ) : (
-                <div
-                  style={{
-                    width: "100%",
-                    aspectRatio: "63 / 88",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    background: "var(--surface)",
-                    color: "var(--text-muted)",
-                    borderRadius: 4,
-                  }}
-                >
-                  ?
-                </div>
+                <div className="art placeholder">?</div>
               )}
-              <strong>{c.name ?? "Unknown card"}</strong>
-              <span style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+              <span className="tile-name">{c.name ?? "Unknown card"}</span>
+              <span className="tile-meta">
                 {c.card_number ?? "—"} · {c.set_name ?? "Unknown set"}
               </span>
-              {price && <span style={{ fontSize: "0.85rem" }}>{price}</span>}
+              {price && <span className="price">{price}</span>}
               {pending ? (
-                <em className="live-chip-status" style={{ fontSize: "0.8rem" }}>
-                  <span className="spinner" /> identifying…
-                </em>
+                <span className="live-chip-status" style={{ fontSize: "0.75rem" }}>
+                  <Loader small /> identifying…
+                </span>
               ) : (
                 flagged && (
                   <>
-                    <em style={{ color: "var(--danger)", fontSize: "0.8rem" }}>
-                      {REASON_TEXT[c.low_confidence_reason!] ?? "Needs review"}
-                    </em>
+                    <span className="reason" style={{ fontSize: "0.75rem" }}>
+                      ! {reasonText(c.low_confidence_reason)}
+                    </span>
                     {kept ? (
-                      <em style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-                        Keeping as-is — will be saved
-                      </em>
+                      <span className="badge gold">Kept — will save</span>
                     ) : hasIdentity(c) ? (
                       // Escape hatch for a card that cannot be fixed (an unreadable
                       // number the user can still read off the card in their hand).
@@ -496,19 +388,19 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
                       //     onClick above still runs and the keep still happens.
                       <button
                         type="button"
+                        className="small"
                         onClick={(e) => {
                           e.stopPropagation();
                           keepAsIs(c.row_index);
                         }}
                         onKeyDown={(e) => e.stopPropagation()}
-                        style={{ fontSize: "0.8rem", padding: "0.15rem 0.4rem" }}
                       >
                         Keep as is
                       </button>
                     ) : (
-                      <em style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
+                      <span className="muted" style={{ fontSize: "0.75rem" }}>
                         Nothing readable — fix it to add it
-                      </em>
+                      </span>
                     )}
                   </>
                 )
@@ -549,16 +441,16 @@ export default function BinderReview({ scan, photo, onConfirm, onRetake }: Props
       )}
 
       {unsettled.length > 0 && (
-        <p style={{ color: "var(--danger)", fontSize: "0.9rem", marginTop: "1rem" }}>
+        <p className="danger-text small-text">
           {unsettled.length} card{unsettled.length === 1 ? "" : "s"} still need
           {unsettled.length === 1 ? "s" : ""} review and won&apos;t be saved — fix
           {unsettled.length === 1 ? " it" : " them"}, or tap “Keep as is”.
         </p>
       )}
 
-      <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
+      <div className="sticky-actions">
         <button type="button" onClick={onRetake}>
-          Retake photo
+          Retake
         </button>
         <button
           type="button"

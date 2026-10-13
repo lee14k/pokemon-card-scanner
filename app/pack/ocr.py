@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import threading
 from collections import OrderedDict
@@ -15,6 +16,15 @@ import numpy as np
 import pytesseract
 
 log = logging.getLogger("pokemon_scanner.pack.ocr")
+
+# One OpenMP thread per Tesseract subprocess. Tesseract 5 (the apt build Railway
+# installs) is compiled with OpenMP and otherwise starts a thread per CPU it can
+# see, for EVERY subprocess — and OCR_GATE admits several at once, next to
+# onnxruntime's own pool. Measured on the corpus code card (IMG_7103) pinned to
+# 2 CPUs: 4.9s unlimited vs 2.5s limited, same reads; on 4 CPUs it was a wash
+# alone and decisive under the pack scan's concurrent load (12s -> 5.5s). The
+# subprocesses inherit this environment; setdefault so a deploy can still override.
+os.environ.setdefault("OMP_THREAD_LIMIT", "1")
 
 NUMBER_RE = re.compile(r"([A-Z]{0,3}\d{1,3})\s*/\s*([A-Z]{0,3}\d{1,3})")
 # Printed promo prefixes, one per Black Star Promos set in the catalog: swshp
@@ -29,6 +39,12 @@ PROMO_RE = re.compile(r"\b(SWSH|SVP|MEP)\s*0*(\d{1,3})\b")
 _WHITELIST = "0123456789/ABCDEFGHIJKLMNOPQRSTUVWXYZ "
 _NUM_CONFIG = f"--psm 7 -c tessedit_char_whitelist={_WHITELIST}"
 _NUM_CONFIG_BLOCK = f"--psm 6 -c tessedit_char_whitelist={_WHITELIST}"
+# Per-call ceiling on a Tesseract subprocess. Every call on the corpus's real
+# strips (IMG_7102, full-width, 3x-upscaled variants up to 7200px) finished in
+# 0.2-1.5s; with no ceiling, one --psm 7 call on a degenerate full-width strip
+# ran past THREE MINUTES, holding its OCR_GATE slot and the scan's response the
+# whole time. A call this far past normal is not about to produce a good read.
+_TESSERACT_TIMEOUT_S = 10
 
 
 @dataclass
@@ -75,11 +91,13 @@ def _prep_variants(strip_bgr: np.ndarray) -> list[np.ndarray]:
 
 def _ocr_tokens(img: np.ndarray, config: str) -> list[tuple[str, float]]:
     try:
-        data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT)
-    except (pytesseract.TesseractError, OSError) as e:
+        data = pytesseract.image_to_data(img, config=config, output_type=pytesseract.Output.DICT,
+                                         timeout=_TESSERACT_TIMEOUT_S)
+    except (pytesseract.TesseractError, OSError, RuntimeError) as e:
         # A single Tesseract subprocess failure (e.g. killed by a signal on a
-        # degenerate strip) degrades to "no tokens read" — one bad strip must
-        # never abort the whole scan.
+        # degenerate strip, or the timeout above — pytesseract raises RuntimeError
+        # for that) degrades to "no tokens read" — one bad strip must never abort
+        # the whole scan.
         log.warning("ocr.tesseract_failed err=%s", e)
         return []
     out = []
@@ -256,6 +274,10 @@ class CodeReading:
 
 
 _CODE_SEGMENT_RE = re.compile(r"[A-Z0-9]{3,6}")
+# QR width (px) the QR-anchored code read normalizes to before its 2x/3x
+# upscales — see _read_code_via_qr. 240 already misread a glyph on the corpus
+# card at native resolution; 150-180 read it at every scale from 1x to 1/4x.
+_QR_REF_W = 180.0
 
 
 def _recover_split_code(tokens: list[tuple[str, float]]) -> CodeReading | None:
@@ -355,8 +377,18 @@ def _read_code_via_qr(image_bgr: np.ndarray) -> CodeReading | None:
     best: CodeReading | None = None
     # Multiple upscales: low-resolution uploads misread single glyphs at one
     # scale ("C" -> "0"); the best-confidence read across scales wins.
+    #
+    # The scales are relative to a QR no wider than _QR_REF_W. A 12MP phone photo
+    # puts the QR at ~550px, so the old fixed 2x/3x fed Tesseract 3160- and
+    # 4740px-wide bands with glyphs far past its sweet spot: on the committed
+    # corpus card (tests/corpus/IMG_7103.heic) that read took 7.0s at confidence
+    # 0.46, against 2.3s at 0.85 normalized. A QR at or under _QR_REF_W — every
+    # low-resolution upload the 2x/3x pair exists for — scales exactly as before.
+    norm = min(1.0, _QR_REF_W / qw)
     for fx in (2, 3):
-        up = cv2.resize(roi, None, fx=fx, fy=fx, interpolation=cv2.INTER_CUBIC)
+        f = fx * norm
+        up = cv2.resize(roi, None, fx=f, fy=f,
+                        interpolation=cv2.INTER_CUBIC if f > 1 else cv2.INTER_AREA)
         for img in (up, cv2.threshold(up, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]):
             tokens = _ocr_tokens(img, _CODE_CONFIG)
             r = _code_from_tokens(tokens) or _recover_split_code(tokens)

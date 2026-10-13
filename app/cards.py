@@ -161,6 +161,26 @@ async def _cache_put(set_id: str, num: str, set_name: str | None, match: dict[st
         await session.commit()
 
 
+# A card PokéWallet ANSWERED and does not carry — a set it does not cover (the
+# July audit found no Mega Evolution sets there), or a number it lists under a
+# different form — is remembered here, because the DB cache above only ever
+# stores hits. Without this every such card went back to the API on every live
+# frame, on both binder passes and on the VLM merge's re-lookup, to be told the
+# same thing. Only a completed "no such card" lands here: a failed request
+# raises out of lookup_card_exact and is retried next time, as before. Ten
+# minutes matches the numerator memo above; bounded, oldest evicted first.
+_LOOKUP_MISS_TTL_S = 600.0
+_LOOKUP_MISS_MAX = 4096
+_lookup_misses: dict[tuple[str, str, str], float] = {}
+
+
+def _remember_miss(key: tuple[str, str, str]) -> None:
+    _lookup_misses.pop(key, None)            # re-insert at the end (dicts keep order)
+    _lookup_misses[key] = time.monotonic() + _LOOKUP_MISS_TTL_S
+    while len(_lookup_misses) > _LOOKUP_MISS_MAX:
+        del _lookup_misses[next(iter(_lookup_misses))]
+
+
 async def cached_lookup_card(
     set_id: str,
     numerator: str,
@@ -185,10 +205,16 @@ async def cached_lookup_card(
 
     if not api_key:
         return None
+    miss_key = (str(set_id), num, (set_name or "").strip().lower())
+    miss_until = _lookup_misses.get(miss_key)
+    if miss_until is not None and time.monotonic() < miss_until:
+        log.info("cards.miss_cached set=%s num=%s", set_id, num)
+        return None
     match = await lookup_card_exact(
         set_id, numerator, set_name=set_name, api_key=api_key, client=client
     )
     if match is None:
+        _remember_miss(miss_key)
         return None
     try:
         await _cache_put(set_id, num, set_name, match)

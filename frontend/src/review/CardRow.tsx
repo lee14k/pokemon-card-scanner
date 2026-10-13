@@ -1,11 +1,7 @@
+import { priceRange, reasonText } from "@shared/format";
+import { isFlagged } from "@shared/review";
 import { liveCardImageUrl, type LiveCard } from "../api";
-
-const REASON_TEXT: Record<string, string> = {
-  unreadable_strip: "Couldn't read this row",
-  number_ambiguous: "Couldn't read the card number",
-  set_ambiguous: "Couldn't tell which set this is from",
-  no_db_match: "Card not found in the database",
-};
+import { Loader } from "../ui/kit";
 
 interface Props {
   card: LiveCard;
@@ -19,14 +15,19 @@ export default function CardRow({ card, resolved, liveSessionId, onFix, onKeep }
   // Pending VLM identification pre-empts the normal flagged/reason display —
   // it's neither "ok" nor a user-actionable flag yet, just "still working".
   const pending = card.state === "pending_vlm" && !resolved;
-  const flagged = (card.needs_review ?? card.low_confidence_reason !== null) && !resolved && !pending;
+  const flagged = isFlagged(card) && !resolved && !pending;
+  const kept = isFlagged(card) && resolved;
+  const price = priceRange(card.price_usd_low, card.price_usd_high);
 
   return (
     <li
-      className={`card-row${flagged ? " flagged" : ""}${pending ? " pending" : ""}`}
+      className={`card-row${flagged ? " flagged" : ""}${pending ? " pending" : ""}${kept ? " kept" : ""}`}
       onClick={onFix}
       role="button"
       tabIndex={0}
+      // Without a label the row would be named after ALL its text, including
+      // the nested Fix / Keep buttons, so "Keep anyway" would name two controls.
+      aria-label={`${card.name ?? "Unknown card"}${card.card_number ? ` ${card.card_number}` : ""} — edit`}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -41,27 +42,34 @@ export default function CardRow({ card, resolved, liveSessionId, onFix, onKeep }
           className="card-thumb review-thumb"
         />
       ) : card.image_url ? (
-        <img src={card.image_url} alt={card.name ?? "card"} className="card-thumb" />
+        <img src={card.image_url} alt={card.name ?? "card"} className="card-thumb review-thumb" />
       ) : (
-        <div className="card-thumb placeholder">?</div>
+        <div className="card-thumb review-thumb placeholder">?</div>
       )}
       <div className="card-row-body">
-        <strong>{card.name ?? "Unknown card"}</strong>
+        <span className="card-name">{card.name ?? "Unknown card"}</span>
         {pending ? (
           <span className="live-chip-status">
-            <span className="spinner" /> still identifying — wait or fix manually
+            <Loader small /> Still identifying — wait or fix it
           </span>
         ) : (
-          <span>
+          <span className="card-meta">
             {card.card_number ?? "—"} · {card.set_name ?? "Unknown set"}
             {card.rarity ? ` · ${card.rarity}` : ""}
           </span>
         )}
+        {!pending && (price || kept) && (
+          <span className="row" style={{ gap: 6 }}>
+            {price && <span className="price">{price}</span>}
+            {kept && <span className="badge gold">Kept</span>}
+          </span>
+        )}
         {flagged && (
           <div className="card-row-flag">
-            <em>{REASON_TEXT[card.low_confidence_reason!] ?? "Needs review"}</em>
+            <span className="reason">! {reasonText(card.low_confidence_reason)}</span>
             <button
               type="button"
+              className="small primary"
               onClick={(e) => {
                 e.stopPropagation();
                 onFix();
@@ -71,6 +79,7 @@ export default function CardRow({ card, resolved, liveSessionId, onFix, onKeep }
             </button>
             <button
               type="button"
+              className="small"
               onClick={(e) => {
                 e.stopPropagation();
                 onKeep();
@@ -80,19 +89,19 @@ export default function CardRow({ card, resolved, liveSessionId, onFix, onKeep }
             </button>
           </div>
         )}
-        {!flagged && !pending && (
-          <button
-            type="button"
-            className="card-row-edit"
-            onClick={(e) => {
-              e.stopPropagation();
-              onFix();
-            }}
-          >
-            Edit
-          </button>
-        )}
       </div>
+      {!flagged && !pending && (
+        <button
+          type="button"
+          className="small ghost row-edit"
+          onClick={(e) => {
+            e.stopPropagation();
+            onFix();
+          }}
+        >
+          Edit
+        </button>
+      )}
     </li>
   );
 }

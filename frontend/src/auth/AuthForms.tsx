@@ -1,7 +1,8 @@
 import { useState } from "react";
+import { friendlyError } from "@shared/format";
 import { useAuth } from "./AuthContext";
 
-export default function AuthForms({ onDone }: { onDone?: () => void }) {
+export default function AuthForms({ onDone, reason }: { onDone?: () => void; reason?: string }) {
   const { login, register } = useAuth();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
@@ -19,27 +20,58 @@ export default function AuthForms({ onDone }: { onDone?: () => void }) {
       else await login(email, password);
       onDone?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(friendlyError(err));
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <form className="auth-form" onSubmit={submit}>
-      <h2>{mode === "login" ? "Trainer login" : "Become a trainer"}</h2>
-      <label>Email<input type="email" value={email} required onChange={(e) => setEmail(e.target.value)} /></label>
+    <form className="form auth-form" onSubmit={submit}>
+      <p className="muted">
+        {reason && mode === "login" ? reason : mode === "login" ? "Welcome back, trainer!" : "New here? Pick a trainer handle."}
+      </p>
+      <label>
+        Email
+        <input type="email" autoComplete="email" value={email} required onChange={(e) => setEmail(e.target.value)} />
+      </label>
       {mode === "register" && (
-        <label>Handle<input value={handle} required placeholder="3-20 chars a-z 0-9 _"
-          onChange={(e) => setHandle(e.target.value)} /></label>
+        <label>
+          Trainer handle
+          <input
+            value={handle}
+            required
+            autoComplete="username"
+            placeholder="ash_ketchum"
+            onChange={(e) => setHandle(e.target.value)}
+          />
+          <span className="form-hint">3–20 characters: a–z, 0–9 or _</span>
+        </label>
       )}
-      <label>Password<input type="password" value={password} required minLength={8}
-        onChange={(e) => setPassword(e.target.value)} /></label>
-      {error && <p className="camera-error">{error}</p>}
-      <button type="submit" className="primary" disabled={busy}>
+      <label>
+        Password
+        <input
+          type="password"
+          value={password}
+          required
+          minLength={8}
+          autoComplete={mode === "login" ? "current-password" : "new-password"}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        {mode === "register" && <span className="form-hint">At least 8 characters.</span>}
+      </label>
+      {error && <p className="camera-error" role="alert">{error}</p>}
+      <button type="submit" className="primary block" disabled={busy}>
         {busy ? "…" : mode === "login" ? "Log in" : "Sign up"}
       </button>
-      <button type="button" onClick={() => setMode(mode === "login" ? "register" : "login")}>
+      <button
+        type="button"
+        className="ghost block"
+        onClick={() => {
+          setError(null);
+          setMode(mode === "login" ? "register" : "login");
+        }}
+      >
         {mode === "login" ? "Need an account? Sign up" : "Have an account? Log in"}
       </button>
     </form>

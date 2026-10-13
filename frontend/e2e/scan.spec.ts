@@ -6,38 +6,49 @@ import { fileURLToPath } from "url";
 const _dir = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.resolve(_dir, "../../tests/fixtures/e2e");
 
-test("upload → review → confirm flow", async ({ page }) => {
+test("sign up → upload → review → save → my pulls", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Pack Scanner" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Pack Scanner/ })).toBeVisible();
 
-  // Step 1: staircase via upload fallback
-  await page
-    .locator('section:has-text("Step 1") input[type="file"]')
-    .setInputFiles(path.join(FIXTURES, "staircase.jpg"));
+  // Saving a pull needs a trainer: sign up through the login modal.
+  const handle = `e2e_${Date.now().toString(36)}`;
+  await page.locator(".topbar").getByRole("button", { name: /Log in/ }).click();
+  const dialog = page.getByRole("dialog", { name: "Trainer login" });
+  await dialog.getByRole("button", { name: /Sign up/ }).click();
+  await dialog.getByLabel("Email").fill(`${handle}@example.com`);
+  await dialog.getByLabel("Trainer handle").fill(handle);
+  await dialog.getByLabel("Password").fill("correct-horse-battery");
+  await dialog.getByRole("button", { name: "Sign up", exact: true }).click();
+  await expect(page.locator(".trainer-chip")).toContainText(`@${handle}`);
 
-  // Step 2: code card via upload fallback
-  await page
-    .locator('section:has-text("Step 2") input[type="file"]')
-    .setInputFiles(path.join(FIXTURES, "code.jpg"));
+  // Mode select → One photo.
+  await page.getByRole("button", { name: /Press start/ }).click();
+  await page.getByRole("button", { name: /One photo/ }).click();
 
-  // Step 3: review renders the 3 real cards with DB names.
+  // Step 1: staircase via the upload fallback; step 2: code card.
+  await expect(page.getByRole("heading", { name: "Snap your pack" })).toBeVisible();
+  await page.locator('input[type="file"]').setInputFiles(path.join(FIXTURES, "staircase.jpg"));
+  await expect(page.getByRole("heading", { name: "Code card" })).toBeVisible();
+  await page.locator('input[type="file"]').setInputFiles(path.join(FIXTURES, "code.jpg"));
+
+  // Review renders the real cards with DB names, and the code.
   await expect(page.getByText("Test Mon A")).toBeVisible({ timeout: 45_000 });
   await expect(page.getByText("Test Mon B")).toBeVisible();
   await expect(page.getByText("Test Mon C")).toBeVisible();
   await expect(page.getByText("TEST1-CODE2-CARD3")).toBeVisible();
 
-  // The upload-fallback path is UNGRIDED (no guide metadata), so segmentation
-  // also detects the top card's top edge as a phantom row, flagged low-confidence.
-  // The confirm button stays disabled until every flagged row is resolved, so we
-  // must "Keep anyway" each one (here, the single phantom). This is required, not
-  // a no-op: ungrided yields 4 rows (3 cards + 1 phantom).
+  // The upload path is ungrided, so a phantom row can come back flagged; the
+  // save button stays disabled until every flagged row is resolved.
   for (const btn of await page.getByRole("button", { name: "Keep anyway" }).all()) {
     await btn.click();
   }
 
-  await page.getByRole("button", { name: "Looks good" }).click();
-  await expect(page.getByText("Pack logged")).toBeVisible();
-  // Count is intentionally not pinned to 3: the ungrided phantom row makes it 4.
-  // (The guided capture path, used in the real app, yields exactly the real count.)
-  await expect(page.getByText(/\d+ cards? confirmed/)).toBeVisible();
+  await page.getByRole("button", { name: /save pack/ }).click();
+  await expect(page.getByRole("heading", { name: "Pack logged!" })).toBeVisible();
+  await expect(page.getByText(/\d+ cards? saved to your pulls/)).toBeVisible();
+
+  // The pull shows up under My Pulls.
+  await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: /PULLS|My Pulls/ }).first().click();
+  await expect(page.getByRole("heading", { name: "My pulls" })).toBeVisible();
+  await expect(page.locator(".pull-card")).toHaveCount(1);
 });

@@ -7,70 +7,18 @@ import {
   type PackCard,
   type PackScanResponse,
 } from "../api";
+import { friendlyWarning } from "@shared/format";
+import { FOLLOWUP_POLL_MS, isFlagged, mergeLate, settlePending } from "@shared/review";
 import CardRow from "./CardRow";
 import FixCardForm from "./FixCardForm";
+import PixelIcon from "../ui/PixelIcon";
+import { ScreenTitle } from "../ui/kit";
 
 interface Props {
   scan: PackScanResponse;
   liveSessionId?: string;
   onConfirm: (cards: PackCard[]) => void;
   onRetake: () => void;
-}
-
-const POLL_MS = 2000; // mirrors LiveScanScreen's pending_vlm poll interval
-
-// Fold late per-row identities (VLM answers) into the rows on screen.
-//
-// A row is eligible ONLY while it is still locally `pending_vlm` and the user
-// hasn't settled it. That single rule does three things: it makes the merge
-// idempotent, it makes a manual fix permanently authoritative (FixCardForm's
-// apply sets state "ok" and marks the row resolved, so no later poll can undo
-// the human's answer), and it lets an unchanged poll return `prev` so nothing
-// re-renders.
-function mergeLate(
-  prev: LiveCard[],
-  late: LiveCard[],
-  resolved: Set<number>
-): LiveCard[] {
-  let changed = false;
-  const next = prev.map((c) => {
-    if (c.state !== "pending_vlm" || resolved.has(c.row_index)) return c;
-    const match = late.find((m) => m.row_index === c.row_index);
-    if (!match || match.state === "pending_vlm") return c;
-    changed = true;
-    return { ...match };
-  });
-  return changed ? next : prev;
-}
-
-// Force every still-pending row terminal, for the cases where no answer can ever
-// arrive: the source of late identities 404s (a pack follow-up whose 30-min TTL
-// expired or whose single-process store died with a restart; a live session that
-// was swept), or the follow-up reports `done` with a row somehow still pending.
-// Leaving those rows `pending_vlm` would spin CardRow's "still identifying"
-// spinner forever AND suppress the row's real flag reason and its Fix/Keep
-// buttons — strictly worse than admitting the VLM never answered.
-function settlePending(prev: LiveCard[]): LiveCard[] {
-  let changed = false;
-  const next = prev.map((c) => {
-    if (c.state !== "pending_vlm") return c;
-    changed = true;
-    return { ...c, state: "vlm_failed" as const };
-  });
-  return changed ? next : prev;
-}
-
-// Turn the backend's machine-readable segmentation_warning into a friendly sentence.
-function friendlyWarning(warning: string): string {
-  const guided = warning.match(/detected (\d+) rows, declared (\d+)/);
-  if (guided) {
-    return `We found ${guided[1]} cards but you said ${guided[2]} — retake or continue?`;
-  }
-  const ungrided = warning.match(/detected (\d+) rows/);
-  if (ungrided) {
-    return `We found ${ungrided[1]} cards — double-check the list, then retake or continue.`;
-  }
-  return "We couldn't read the capture cleanly — retake or continue.";
 }
 
 export default function ReviewScreen({ scan, liveSessionId, onConfirm, onRetake }: Props) {
@@ -147,7 +95,7 @@ export default function ReviewScreen({ scan, liveSessionId, onConfirm, onRetake 
   const unresolved = cards.filter(
     (c) =>
       c.state !== "pending_vlm" &&
-      (c.needs_review ?? c.low_confidence_reason !== null) &&
+      isFlagged(c) &&
       !resolvedRows.has(c.row_index)
   );
 
@@ -204,18 +152,42 @@ export default function ReviewScreen({ scan, liveSessionId, onConfirm, onRetake 
         setCards(settlePending);
         stop();
       }
-    }, POLL_MS);
+    }, FOLLOWUP_POLL_MS);
     return stop;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveSessionId, scanId]);
 
+  const flaggedLeft = unresolved.length;
+
   return (
-    <section>
-      <h2>Step 3 — Review your pulls</h2>
+    <section className="stack-lg">
+      <ScreenTitle
+        kicker="Review"
+        title="Your pulls"
+        sub={
+          flaggedLeft > 0
+            ? `${flaggedLeft} card${flaggedLeft > 1 ? "s" : ""} need${flaggedLeft > 1 ? "" : "s"} a look. Fix ${flaggedLeft > 1 ? "them" : "it"} or keep ${flaggedLeft > 1 ? "them" : "it"} anyway.`
+            : "Tap any card to correct it, then save the pack."
+        }
+      >
+        <div className="tips">
+          <span className="badge gold">{cards.length} cards</span>
+          {flaggedLeft > 0 ? (
+            <span className="badge red">{flaggedLeft} flagged</span>
+          ) : (
+            <span className="badge green">All clear</span>
+          )}
+        </div>
+      </ScreenTitle>
       {scan.segmentation_warning && (
-        <div className="warn-banner">
-          {friendlyWarning(scan.segmentation_warning)}{" "}
-          <button type="button" onClick={onRetake}>Retake photo</button>
+        <div className="panel warn stack">
+          <div className="row">
+            <PixelIcon name="warn" size={24} />
+            <p className="grow">{friendlyWarning(scan.segmentation_warning)}</p>
+          </div>
+          <div className="row row-end">
+            <button type="button" className="small" onClick={onRetake}>Retake photo</button>
+          </div>
         </div>
       )}
       <ul className="card-rows">
@@ -230,10 +202,14 @@ export default function ReviewScreen({ scan, liveSessionId, onConfirm, onRetake 
           />
         ))}
       </ul>
-      <p>
-        Code card: <code>{scan.code_card.code ?? "not read"}</code>
-        {!scan.code_card.format_ok && scan.code_card.code && " (unusual format)"}
-      </p>
+      <div className="code-ticket">
+        <PixelIcon name="pack" size={24} className="muted" />
+        <div className="stack grow" style={{ gap: 4 }}>
+          <span className="stat-label">Code card</span>
+          <code>{scan.code_card.code ?? "not read"}</code>
+        </div>
+        {scan.code_card.code && !scan.code_card.format_ok && <span className="badge outline">Unusual format</span>}
+      </div>
       {fixing !== null && (
         <FixCardForm
           initial={cards.find((c) => c.row_index === fixing)!}
@@ -247,16 +223,18 @@ export default function ReviewScreen({ scan, liveSessionId, onConfirm, onRetake 
           onCancel={() => setFixing(null)}
         />
       )}
-      <button
-        type="button"
-        className="primary"
-        disabled={unresolved.length > 0}
-        onClick={() => onConfirm(cards)}
-      >
-        {unresolved.length > 0
-          ? `Fix ${unresolved.length} flagged card${unresolved.length > 1 ? "s" : ""} first`
-          : "Looks good"}
-      </button>
+      <div className="sticky-actions">
+        <button
+          type="button"
+          className="primary big"
+          disabled={unresolved.length > 0}
+          onClick={() => onConfirm(cards)}
+        >
+          {unresolved.length > 0
+            ? `Fix ${unresolved.length} flagged card${unresolved.length > 1 ? "s" : ""} first`
+            : "Looks good — save pack"}
+        </button>
+      </div>
     </section>
   );
 }

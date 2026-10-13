@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import PixelIcon from "../ui/PixelIcon";
 
 /**
  * Longest side, in pixels, of anything this component encodes.
@@ -219,34 +220,58 @@ export default function CameraCapture({
     }
   };
 
+  // ONE file input for the component's lifetime: the camera-ready and
+  // camera-failed layouts both trigger it, so a pick made while getUserMedia is
+  // still settling isn't lost to a remount. Buttons (not labels) trigger it so
+  // the upload is reachable from the keyboard.
+  const fileRef = useRef<HTMLInputElement>(null);
+  const pickFile = () => fileRef.current?.click();
+
   return (
     <div className="camera-capture">
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = ""; // picking the same file again should still fire
+          if (f) void uploadFile(f);
+        }}
+      />
       {!cameraError && (
         <div className="camera-stage">
           <video ref={videoRef} autoPlay playsInline muted onLoadedMetadata={redraw} />
           <canvas ref={overlayRef} className="camera-overlay" />
+          <div className="viewfinder" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
         </div>
       )}
-      {cameraError && <p className="camera-error">{cameraError}</p>}
-      <div className="camera-actions">
-        {!cameraError && (
-          <button type="button" className="primary" onClick={() => void capture()}>
-            {captureLabel}
+      {cameraError ? (
+        <div className="panel camera-error-box">
+          <PixelIcon name="camera" size={48} className="muted" />
+          <p className="camera-error">{cameraError}</p>
+          <button type="button" className="ghost upload-fallback" onClick={pickFile}>
+            <PixelIcon name="upload" size={18} /> Upload a photo instead
           </button>
-        )}
-        <label className="upload-fallback">
-          Upload instead
-          <input
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void uploadFile(f);
-            }}
-          />
-        </label>
-      </div>
+        </div>
+      ) : (
+        <div className="camera-actions">
+          <button type="button" className="ghost upload-fallback" onClick={pickFile}>
+            <PixelIcon name="upload" size={18} /> Upload instead
+          </button>
+          <button type="button" className="shutter" aria-label={captureLabel} onClick={() => void capture()}>
+            <PixelIcon name="camera" size={24} />
+            SNAP
+          </button>
+          <span />
+        </div>
+      )}
     </div>
   );
 }
